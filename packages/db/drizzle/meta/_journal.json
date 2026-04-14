@@ -15,6 +15,13 @@
       "when": 1776196054194,
       "tag": "0001_typical_punisher",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776198276942,
+      "tag": "0002_quiet_nightcrawler",
+      "breakpoints": true
     }
   ]
 }

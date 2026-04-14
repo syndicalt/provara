@@ -9,6 +9,8 @@ import { createRoutingEngine } from "./routing/index.js";
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
+import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
+import { createTokenRoutes } from "./routes/tokens.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -22,6 +24,10 @@ export function createRouter(ctx: RouterContext) {
   // Enable CORS for web dashboard
   app.use("/*", cors());
 
+  // Auth middleware — checks Bearer token on /v1/* routes
+  // Runs in "open mode" (no auth) when no tokens have been created
+  app.use("/v1/*", createAuthMiddleware(ctx.db));
+
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
 
@@ -30,6 +36,9 @@ export function createRouter(ctx: RouterContext) {
 
   // Mount API key management routes
   app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));
+
+  // Mount token management routes (admin — no auth required)
+  app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
 
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", (c) => {
@@ -66,6 +75,9 @@ export function createRouter(ctx: RouterContext) {
       model: routingResult.model,
     };
 
+    const tokenInfo = getTokenInfo(c.req.raw);
+    const tenantId = tokenInfo?.tenant || null;
+
     const start = performance.now();
     const response = await provider.complete(completionRequest);
     const latencyMs = Math.round(performance.now() - start);
@@ -85,6 +97,7 @@ export function createRouter(ctx: RouterContext) {
         taskType: routingResult.taskType,
         complexity: routingResult.complexity,
         routedBy: routingResult.routedBy,
+        tenantId,
         abTestId: routingResult.abTestId || null,
       })
       .run();
@@ -95,6 +108,7 @@ export function createRouter(ctx: RouterContext) {
       model: response.model,
       inputTokens: response.usage.inputTokens,
       outputTokens: response.usage.outputTokens,
+      tenantId,
     });
 
     // Return OpenAI-compatible response format
