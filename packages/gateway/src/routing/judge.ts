@@ -1,0 +1,125 @@
+import type { ChatMessage } from "../providers/types.js";
+import type { ProviderRegistry } from "../providers/index.js";
+import type { Db } from "@provara/db";
+import { feedback } from "@provara/db";
+import { nanoid } from "nanoid";
+import { getPricing } from "../cost/index.js";
+
+const JUDGE_SAMPLE_RATE = parseFloat(process.env.PROVARA_JUDGE_SAMPLE_RATE || "0.1");
+
+const JUDGE_PROMPT = `You are an impartial quality judge. Rate the AI assistant's response on three dimensions.
+
+Score each dimension from 1 (poor) to 5 (excellent):
+- **Relevance**: Does the response address what was asked?
+- **Accuracy**: Is the information correct and well-reasoned?
+- **Coherence**: Is the response clear, well-structured, and complete?
+
+Respond with ONLY valid JSON, no other text:
+{"relevance": N, "accuracy": N, "coherence": N}`;
+
+interface JudgeResult {
+  relevance: number;
+  accuracy: number;
+  coherence: number;
+  average: number;
+}
+
+function shouldJudge(): boolean {
+  return Math.random() < JUDGE_SAMPLE_RATE;
+}
+
+function findCheapestModel(registry: ProviderRegistry): { provider: string; model: string } | null {
+  let cheapest: { provider: string; model: string; cost: number } | null = null;
+
+  for (const provider of registry.list()) {
+    for (const model of provider.models) {
+      const pricing = getPricing(model);
+      if (!pricing) continue;
+      const totalCost = pricing[0] + pricing[1];
+      if (!cheapest || totalCost < cheapest.cost) {
+        cheapest = { provider: provider.name, model, cost: totalCost };
+      }
+    }
+  }
+
+  return cheapest ? { provider: cheapest.provider, model: cheapest.model } : null;
+}
+
+function parseJudgeResponse(raw: string): JudgeResult | null {
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    const relevance = Number(parsed.relevance);
+    const accuracy = Number(parsed.accuracy);
+    const coherence = Number(parsed.coherence);
+
+    if ([relevance, accuracy, coherence].every((n) => n >= 1 && n <= 5)) {
+      const average = Math.round((relevance + accuracy + coherence) / 3);
+      return { relevance, accuracy, coherence, average };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export interface JudgeContext {
+  requestId: string;
+  tenantId: string | null;
+  messages: ChatMessage[];
+  responseContent: string;
+}
+
+export function createJudge(registry: ProviderRegistry, db: Db) {
+  async function maybeJudge(ctx: JudgeContext): Promise<void> {
+    if (!shouldJudge()) return;
+
+    const target = findCheapestModel(registry);
+    if (!target) return;
+
+    const provider = registry.get(target.provider);
+    if (!provider) return;
+
+    // Build the judge prompt with the original exchange
+    const lastUserMessage = [...ctx.messages].reverse().find((m) => m.role === "user");
+    if (!lastUserMessage) return;
+
+    const judgeMessages: ChatMessage[] = [
+      { role: "system", content: JUDGE_PROMPT },
+      {
+        role: "user",
+        content: `**User's prompt:**\n${lastUserMessage.content}\n\n**Assistant's response:**\n${ctx.responseContent}`,
+      },
+    ];
+
+    try {
+      const response = await provider.complete({
+        model: target.model,
+        messages: judgeMessages,
+        temperature: 0,
+        max_tokens: 100,
+      });
+
+      const result = parseJudgeResponse(response.content);
+      if (!result) return;
+
+      // Store as feedback with source "judge"
+      db.insert(feedback)
+        .values({
+          id: nanoid(),
+          requestId: ctx.requestId,
+          tenantId: ctx.tenantId,
+          score: result.average,
+          comment: `Judge scores — relevance: ${result.relevance}, accuracy: ${result.accuracy}, coherence: ${result.coherence}`,
+          source: "judge",
+        })
+        .run();
+    } catch {
+      // Judge failure is silent — don't affect the main request
+    }
+  }
+
+  return { maybeJudge };
+}
