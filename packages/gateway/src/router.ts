@@ -12,6 +12,7 @@ import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
+import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createJudge } from "./routing/judge.js";
 
 interface RouterContext {
@@ -45,6 +46,9 @@ export function createRouter(ctx: RouterContext) {
 
   // Mount token management routes (admin — no auth required)
   app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
+
+  // Mount custom provider CRUD routes (admin)
+  app.route("/v1/admin/providers", createProviderCrudRoutes(ctx.db));
 
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", (c) => {

@@ -19,6 +19,9 @@ function Nav() {
             <Link href="/dashboard" className="hover:text-zinc-100 transition-colors">
               Dashboard
             </Link>
+            <Link href="/dashboard/providers" className="hover:text-zinc-100 transition-colors">
+              Providers
+            </Link>
             <Link href="/dashboard/routing" className="hover:text-zinc-100 transition-colors">
               Routing
             </Link>

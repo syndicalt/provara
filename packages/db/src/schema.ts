@@ -1,5 +1,32 @@
 import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
 
+export const customProviders = sqliteTable("custom_providers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  baseURL: text("base_url").notNull(),
+  apiKeyRef: text("api_key_ref"), // name of the key in api_keys table, e.g. "TOGETHER_API_KEY"
+  models: text("models").notNull().default("[]"), // JSON array of model names
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const modelRegistry = sqliteTable("model_registry", {
+  id: text("id").primaryKey(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  inputPricePer1M: real("input_price_per_1m"),
+  outputPricePer1M: real("output_price_per_1m"),
+  source: text("source", { enum: ["builtin", "custom", "discovered"] })
+    .notNull()
+    .default("builtin"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const requests = sqliteTable("requests", {
   id: text("id").primaryKey(),
   provider: text("provider").notNull(),

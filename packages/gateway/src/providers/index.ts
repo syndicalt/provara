@@ -6,18 +6,23 @@ import { createMistralProvider } from "./mistral.js";
 import { createXAIProvider } from "./xai.js";
 import { createZAIProvider } from "./zai.js";
 import { createOllamaProvider } from "./ollama.js";
+import { createOpenAICompatibleProvider, type OpenAICompatibleConfig } from "./openai-compatible.js";
 
 export type { Provider, CompletionRequest, CompletionResponse, ChatMessage } from "./types.js";
+export { createOpenAICompatibleProvider, type OpenAICompatibleConfig } from "./openai-compatible.js";
 
 export interface ProviderRegistry {
   get(name: string): Provider | undefined;
   getForModel(model: string): Provider | undefined;
   list(): Provider[];
   reload(): void;
+  addCustom(config: OpenAICompatibleConfig): void;
+  removeCustom(name: string): void;
 }
 
 interface RegistryConfig {
   getKeys?: () => Record<string, string>;
+  getCustomProviders?: () => OpenAICompatibleConfig[];
 }
 
 export function createProviderRegistry(config?: RegistryConfig): ProviderRegistry {
@@ -27,24 +32,32 @@ export function createProviderRegistry(config?: RegistryConfig): ProviderRegistr
     providers = [];
     const dbKeys = config?.getKeys?.() || {};
 
-    // DB keys take precedence, fall back to env vars
+    // Built-in providers: DB keys take precedence, fall back to env vars
     const openaiKey = dbKeys["OPENAI_API_KEY"] || process.env.OPENAI_API_KEY;
     const anthropicKey = dbKeys["ANTHROPIC_API_KEY"] || process.env.ANTHROPIC_API_KEY;
     const googleKey = dbKeys["GOOGLE_API_KEY"] || process.env.GOOGLE_API_KEY;
     const mistralKey = dbKeys["MISTRAL_API_KEY"] || process.env.MISTRAL_API_KEY;
     const xaiKey = dbKeys["XAI_API_KEY"] || process.env.XAI_API_KEY;
+    const zaiKey = dbKeys["ZAI_API_KEY"] || process.env.ZAI_API_KEY;
 
     if (openaiKey) providers.push(createOpenAIProvider(openaiKey));
     if (anthropicKey) providers.push(createAnthropicProvider(anthropicKey));
     if (googleKey) providers.push(createGoogleProvider(googleKey));
     if (mistralKey) providers.push(createMistralProvider(mistralKey));
     if (xaiKey) providers.push(createXAIProvider(xaiKey));
-
-    const zaiKey = dbKeys["ZAI_API_KEY"] || process.env.ZAI_API_KEY;
     if (zaiKey) providers.push(createZAIProvider(zaiKey));
 
     // Ollama is always available (local)
     providers.push(createOllamaProvider());
+
+    // Load custom providers from DB
+    const customProviders = config?.getCustomProviders?.() || [];
+    for (const cp of customProviders) {
+      // Skip if a built-in provider already exists with this name
+      if (!providers.some((p) => p.name === cp.name)) {
+        providers.push(createOpenAICompatibleProvider(cp));
+      }
+    }
   }
 
   load();
@@ -64,6 +77,16 @@ export function createProviderRegistry(config?: RegistryConfig): ProviderRegistr
 
     reload() {
       load();
+    },
+
+    addCustom(customConfig: OpenAICompatibleConfig) {
+      // Remove existing provider with same name if present
+      providers = providers.filter((p) => p.name !== customConfig.name);
+      providers.push(createOpenAICompatibleProvider(customConfig));
+    },
+
+    removeCustom(name: string) {
+      providers = providers.filter((p) => p.name !== name);
     },
   };
 }
