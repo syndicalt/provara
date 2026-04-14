@@ -10,6 +10,9 @@ export const requests = sqliteTable("requests", {
   outputTokens: integer("output_tokens"),
   latencyMs: integer("latency_ms"),
   cost: real("cost"),
+  taskType: text("task_type"),
+  complexity: text("complexity"),
+  routedBy: text("routed_by"),
   abTestId: text("ab_test_id").references(() => abTests.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -36,6 +39,23 @@ export const abTestVariants = sqliteTable("ab_test_variants", {
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   weight: real("weight").notNull().default(1),
+  taskType: text("task_type"),
+  complexity: text("complexity"),
+});
+
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(), // e.g. "OPENAI_API_KEY"
+  provider: text("provider").notNull(), // e.g. "openai"
+  encryptedValue: text("encrypted_value").notNull(),
+  iv: text("iv").notNull(),
+  authTag: text("auth_tag").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
 });
 
 export const costLogs = sqliteTable("cost_logs", {

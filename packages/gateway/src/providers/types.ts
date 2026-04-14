@@ -9,6 +9,7 @@ export interface CompletionRequest {
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
+  routing_hint?: "coding" | "creative" | "summarization" | "qa" | "general";
 }
 
 export interface CompletionResponse {
