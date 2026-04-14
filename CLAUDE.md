@@ -25,20 +25,21 @@ npm run db:studio -w packages/db     # Open Drizzle Studio
 
 ## Providers
 
-OpenAI, Anthropic, Google, Mistral, xAI, Ollama. Each adapter lives in `packages/gateway/src/providers/`. Providers are enabled by setting the corresponding env var:
+OpenAI, Anthropic, Google, Mistral, xAI, Z.ai, Ollama. Each adapter lives in `packages/gateway/src/providers/`. Providers are enabled by setting the corresponding env var or adding keys via the dashboard (`/dashboard/api-keys`):
 
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - `GOOGLE_API_KEY`
 - `MISTRAL_API_KEY`
 - `XAI_API_KEY`
+- `ZAI_API_KEY`
 - `OLLAMA_BASE_URL` (defaults to `http://localhost:11434/v1`)
 
-Ollama is always registered.
+Ollama is always registered. DB-stored keys (encrypted with `PROVARA_MASTER_KEY`) take precedence over env vars.
 
 ## Key Design Decisions
 
 - Gateway exposes an OpenAI-compatible `/v1/chat/completions` endpoint so any existing tool/SDK can point at it as a drop-in replacement.
 - All requests are logged to SQLite with token counts, latency, and cost.
 - A/B tests use weighted random variant selection.
-- Mistral, xAI, and Ollama adapters use the OpenAI SDK with a custom `baseURL` since they expose OpenAI-compatible APIs.
+- Mistral, xAI, Z.ai, and Ollama adapters use the OpenAI SDK with a custom `baseURL` since they expose OpenAI-compatible APIs.

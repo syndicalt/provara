@@ -43,6 +43,21 @@ export const abTestVariants = sqliteTable("ab_test_variants", {
   complexity: text("complexity"),
 });
 
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(), // e.g. "OPENAI_API_KEY"
+  provider: text("provider").notNull(), // e.g. "openai"
+  encryptedValue: text("encrypted_value").notNull(),
+  iv: text("iv").notNull(),
+  authTag: text("auth_tag").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
   requestId: text("request_id").references(() => requests.id),

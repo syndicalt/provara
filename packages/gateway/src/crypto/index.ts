@@ -1,0 +1,68 @@
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+
+const ALGORITHM = "aes-256-gcm";
+const IV_LENGTH = 16;
+
+function deriveKey(secret: string): Buffer {
+  // Accept hex-encoded 256-bit keys directly
+  if (secret.length === 64 && /^[0-9a-f]+$/i.test(secret)) {
+    return Buffer.from(secret, "hex");
+  }
+  // Hash arbitrary strings to 32 bytes
+  return createHash("sha256").update(secret).digest();
+}
+
+function getKey(): Buffer {
+  const key = process.env.PROVARA_MASTER_KEY;
+  if (!key) {
+    throw new Error(
+      "PROVARA_MASTER_KEY is required for API key encryption. " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+  }
+  return deriveKey(key);
+}
+
+export interface EncryptedData {
+  encrypted: string; // hex
+  iv: string; // hex
+  authTag: string; // hex
+}
+
+export function encrypt(plaintext: string): EncryptedData {
+  const key = getKey();
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv(ALGORITHM, key, iv);
+
+  let encrypted = cipher.update(plaintext, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  const authTag = cipher.getAuthTag();
+
+  return {
+    encrypted,
+    iv: iv.toString("hex"),
+    authTag: authTag.toString("hex"),
+  };
+}
+
+export function decrypt(data: EncryptedData): string {
+  const key = getKey();
+  const iv = Buffer.from(data.iv, "hex");
+  const authTag = Buffer.from(data.authTag, "hex");
+  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(authTag);
+
+  let decrypted = decipher.update(data.encrypted, "hex", "utf8");
+  decrypted += decipher.final("utf8");
+
+  return decrypted;
+}
+
+export function maskKey(key: string): string {
+  if (key.length <= 8) return "••••" + key.slice(-4);
+  return key.slice(0, 4) + "••••" + key.slice(-4);
+}
+
+export function hasMasterKey(): boolean {
+  return !!process.env.PROVARA_MASTER_KEY;
+}

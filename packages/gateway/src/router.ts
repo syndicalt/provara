@@ -8,6 +8,7 @@ import { logCost } from "./cost/index.js";
 import { createRoutingEngine } from "./routing/index.js";
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
+import { createApiKeyRoutes } from "./routes/api-keys.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -26,6 +27,16 @@ export function createRouter(ctx: RouterContext) {
 
   // Mount analytics routes
   app.route("/v1/analytics", createAnalyticsRoutes(ctx.db));
+
+  // Mount API key management routes
+  app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));
+
+  // Reload providers endpoint (call after adding/removing API keys)
+  app.post("/v1/providers/reload", (c) => {
+    ctx.registry.reload();
+    const providers = ctx.registry.list().map((p) => ({ name: p.name, models: p.models }));
+    return c.json({ reloaded: true, providers });
+  });
 
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {

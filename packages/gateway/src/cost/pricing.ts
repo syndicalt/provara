@@ -27,6 +27,15 @@ const MODEL_PRICING: Record<string, [number, number]> = {
   // xAI
   "grok-3": [3, 15],
   "grok-3-mini": [0.3, 0.5],
+
+  // Z.ai
+  "glm-5.1": [1.4, 4.4],
+  "glm-5": [1.0, 3.2],
+  "glm-5-turbo": [1.2, 4.0],
+  "glm-4.7": [0.6, 2.2],
+  "glm-4.7-flashx": [0.07, 0.4],
+  "glm-4.7-flash": [0, 0],
+  "glm-5v-turbo": [1.2, 4.0],
 };
 
 export function calculateCost(
