@@ -13,6 +13,7 @@ export const requests = sqliteTable("requests", {
   taskType: text("task_type"),
   complexity: text("complexity"),
   routedBy: text("routed_by"),
+  tenantId: text("tenant_id"),
   abTestId: text("ab_test_id").references(() => abTests.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -43,6 +44,21 @@ export const abTestVariants = sqliteTable("ab_test_variants", {
   complexity: text("complexity"),
 });
 
+export const apiTokens = sqliteTable("api_tokens", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  tenant: text("tenant").notNull(),
+  hashedToken: text("hashed_token").notNull().unique(),
+  tokenPrefix: text("token_prefix").notNull(), // first 8 chars for display
+  rateLimit: integer("rate_limit"), // requests per minute, null = unlimited
+  spendLimit: real("spend_limit"), // USD per billing period, null = unlimited
+  spendPeriod: text("spend_period", { enum: ["monthly", "weekly", "daily"] }).default("monthly"),
+  expiresAt: integer("expires_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const apiKeys = sqliteTable("api_keys", {
   id: text("id").primaryKey(),
   name: text("name").notNull(), // e.g. "OPENAI_API_KEY"
@@ -61,6 +77,7 @@ export const apiKeys = sqliteTable("api_keys", {
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
   requestId: text("request_id").references(() => requests.id),
+  tenantId: text("tenant_id"),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   inputTokens: integer("input_tokens").notNull(),

@@ -25,6 +25,9 @@ function Nav() {
             <Link href="/dashboard/ab-tests" className="hover:text-zinc-100 transition-colors">
               A/B Tests
             </Link>
+            <Link href="/dashboard/tokens" className="hover:text-zinc-100 transition-colors">
+              Tokens
+            </Link>
             <Link href="/dashboard/api-keys" className="hover:text-zinc-100 transition-colors">
               API Keys
             </Link>

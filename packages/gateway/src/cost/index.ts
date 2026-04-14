@@ -11,6 +11,7 @@ export interface CostEntry {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  tenantId?: string | null;
 }
 
 export async function logCost(db: Db, entry: CostEntry): Promise<number> {
@@ -20,6 +21,7 @@ export async function logCost(db: Db, entry: CostEntry): Promise<number> {
     .values({
       id: nanoid(),
       requestId: entry.requestId,
+      tenantId: entry.tenantId || null,
       provider: entry.provider,
       model: entry.model,
       inputTokens: entry.inputTokens,
