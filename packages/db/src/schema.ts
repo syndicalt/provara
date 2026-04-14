@@ -10,6 +10,9 @@ export const requests = sqliteTable("requests", {
   outputTokens: integer("output_tokens"),
   latencyMs: integer("latency_ms"),
   cost: real("cost"),
+  taskType: text("task_type"),
+  complexity: text("complexity"),
+  routedBy: text("routed_by"),
   abTestId: text("ab_test_id").references(() => abTests.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -36,6 +39,8 @@ export const abTestVariants = sqliteTable("ab_test_variants", {
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   weight: real("weight").notNull().default(1),
+  taskType: text("task_type"),
+  complexity: text("complexity"),
 });
 
 export const costLogs = sqliteTable("cost_logs", {

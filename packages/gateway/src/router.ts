@@ -1,9 +1,13 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import type { ProviderRegistry, CompletionRequest } from "./providers/index.js";
 import type { Db } from "@provara/db";
 import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
 import { logCost } from "./cost/index.js";
+import { createRoutingEngine } from "./routing/index.js";
+import { createAbTestRoutes } from "./routes/ab-tests.js";
+import { createAnalyticsRoutes } from "./routes/analytics.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -12,24 +16,48 @@ interface RouterContext {
 
 export function createRouter(ctx: RouterContext) {
   const app = new Hono();
+  const routingEngine = createRoutingEngine({ registry: ctx.registry, db: ctx.db });
+
+  // Enable CORS for web dashboard
+  app.use("/*", cors());
+
+  // Mount A/B test CRUD routes
+  app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
+
+  // Mount analytics routes
+  app.route("/v1/analytics", createAnalyticsRoutes(ctx.db));
 
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {
     const body = await c.req.json<CompletionRequest & { provider?: string }>();
-    const { provider: providerName, ...request } = body;
+    const { provider: providerName, routing_hint, ...rest } = body;
+    const request = rest as CompletionRequest;
 
-    const provider = providerName
-      ? ctx.registry.get(providerName)
-      : ctx.registry.getForModel(request.model);
+    // Route the request through the intelligent routing engine
+    const routingResult = await routingEngine.route({
+      messages: request.messages,
+      provider: providerName,
+      model: request.model !== "" ? request.model : undefined,
+      routingHint: routing_hint,
+    });
 
+    const provider = ctx.registry.get(routingResult.provider);
     if (!provider) {
       return c.json(
-        { error: { message: `No provider found for model: ${request.model}`, type: "invalid_request_error" } },
+        { error: { message: `No provider available for routing result`, type: "invalid_request_error" } },
         404
       );
     }
 
-    const response = await provider.complete(request);
+    // Use the routed model
+    const completionRequest: CompletionRequest = {
+      ...request,
+      model: routingResult.model,
+    };
+
+    const start = performance.now();
+    const response = await provider.complete(completionRequest);
+    const latencyMs = Math.round(performance.now() - start);
 
     const requestId = nanoid();
     ctx.db
@@ -42,7 +70,11 @@ export function createRouter(ctx: RouterContext) {
         response: response.content,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
-        latencyMs: response.latencyMs,
+        latencyMs,
+        taskType: routingResult.taskType,
+        complexity: routingResult.complexity,
+        routedBy: routingResult.routedBy,
+        abTestId: routingResult.abTestId || null,
       })
       .run();
 
@@ -74,7 +106,14 @@ export function createRouter(ctx: RouterContext) {
       },
       _provara: {
         provider: response.provider,
-        latencyMs: response.latencyMs,
+        latencyMs,
+        routing: {
+          taskType: routingResult.taskType,
+          complexity: routingResult.complexity,
+          routedBy: routingResult.routedBy,
+          usedFallback: routingResult.usedFallback,
+          usedLlmFallback: routingResult.usedLlmFallback,
+        },
       },
     });
   });
