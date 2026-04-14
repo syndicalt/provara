@@ -9,6 +9,7 @@ import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
 import { DEFAULT_ROUTING_TABLE } from "./routing-table.js";
 import { createAdaptiveRouter, type RoutingProfile } from "./adaptive.js";
+import { getPricing } from "../cost/index.js";
 
 export type { RoutingTable, RoutingResult, RouteTarget } from "./types.js";
 export { type RoutingProfile } from "./adaptive.js";
@@ -43,6 +44,23 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       }
     }
     return null;
+  }
+
+  // Build dynamic fallback chain from all registered providers, sorted by cost (cheapest first)
+  function buildDynamicFallbacks(registry: ProviderRegistry): RouteTarget[] {
+    const targets: { provider: string; model: string; cost: number }[] = [];
+
+    for (const provider of registry.list()) {
+      for (const model of provider.models) {
+        const pricing = getPricing(model);
+        const cost = pricing ? pricing[0] + pricing[1] : 999;
+        targets.push({ provider: provider.name, model, cost });
+      }
+    }
+
+    // Sort cheapest first
+    targets.sort((a, b) => a.cost - b.cost);
+    return targets.map(({ provider, model }) => ({ provider, model }));
   }
 
   function findActiveAbTest(
@@ -158,14 +176,14 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    // Fall back to static routing table
+    // Fall back to static routing table, then dynamic fallbacks
     const routedBy = request.routingHint ? "routing-hint" as const : "classification" as const;
-    const entry = table[taskType]?.[complexity];
+    const entry = table[taskType]?.[complexity] || table.general?.medium;
 
-    if (!entry) {
-      const fallbackEntry = table.general.medium;
+    // Try static table targets first
+    if (entry) {
       const result = findAvailableTarget(
-        [fallbackEntry.primary, ...fallbackEntry.fallbacks],
+        [entry.primary, ...entry.fallbacks],
         config.registry
       );
       if (result) {
@@ -179,10 +197,14 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
           usedLlmFallback: classification.usedLlmFallback,
         };
       }
-      const anyProvider = config.registry.list()[0];
+    }
+
+    // Static targets unavailable — build dynamic fallback from all registered providers
+    const dynamicFallbacks = buildDynamicFallbacks(config.registry);
+    if (dynamicFallbacks.length > 0) {
       return {
-        provider: anyProvider.name,
-        model: anyProvider.models[0] || "unknown",
+        provider: dynamicFallbacks[0].provider,
+        model: dynamicFallbacks[0].model,
         taskType,
         complexity,
         routedBy,
@@ -191,23 +213,7 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    const result = findAvailableTarget(
-      [entry.primary, ...entry.fallbacks],
-      config.registry
-    );
-
-    if (result) {
-      return {
-        provider: result.target.provider,
-        model: result.target.model,
-        taskType,
-        complexity,
-        routedBy,
-        usedFallback: result.usedFallback,
-        usedLlmFallback: classification.usedLlmFallback,
-      };
-    }
-
+    // Last resort
     const anyProvider = config.registry.list()[0];
     return {
       provider: anyProvider.name,

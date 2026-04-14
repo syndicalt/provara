@@ -45,6 +45,11 @@ const STATUS_COLORS: Record<string, string> = {
   completed: "bg-zinc-800 text-zinc-400",
 };
 
+interface ProviderInfo {
+  name: string;
+  models: string[];
+}
+
 function CreateTestForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
@@ -56,6 +61,16 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
     { provider: "", model: "", weight: 1 },
   ]);
   const [submitting, setSubmitting] = useState(false);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+
+  useEffect(() => {
+    if (open && providers.length === 0) {
+      fetch(`${GATEWAY}/v1/providers`)
+        .then((r) => r.json())
+        .then((d) => setProviders(d.providers || []))
+        .catch(() => {});
+    }
+  }, [open]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -164,51 +179,72 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
       <div>
         <label className="block text-sm text-zinc-400 mb-2">Variants</label>
         <div className="space-y-2">
-          {variants.map((v, i) => (
-            <div key={i} className="flex gap-2 items-center">
-              <input
-                value={v.provider}
-                onChange={(e) => {
-                  const next = [...variants];
-                  next[i] = { ...next[i], provider: e.target.value };
-                  setVariants(next);
-                }}
-                placeholder="Provider (e.g. openai)"
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-              />
-              <input
-                value={v.model}
-                onChange={(e) => {
-                  const next = [...variants];
-                  next[i] = { ...next[i], model: e.target.value };
-                  setVariants(next);
-                }}
-                placeholder="Model (e.g. gpt-4o)"
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-              />
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={v.weight}
-                onChange={(e) => {
-                  const next = [...variants];
-                  next[i] = { ...next[i], weight: parseFloat(e.target.value) || 0 };
-                  setVariants(next);
-                }}
-                className="w-20 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-              />
-              {variants.length > 2 && (
-                <button
-                  type="button"
-                  onClick={() => setVariants(variants.filter((_, j) => j !== i))}
-                  className="text-zinc-500 hover:text-red-400 text-sm"
+          <div className="flex gap-2 items-center text-xs text-zinc-500">
+            <span className="flex-1">Provider</span>
+            <span className="flex-1">Model</span>
+            <span className="w-20">Weight</span>
+            <span className="w-16"></span>
+          </div>
+          {variants.map((v, i) => {
+            const selectedProvider = providers.find((p) => p.name === v.provider);
+            return (
+              <div key={i} className="flex gap-2 items-center">
+                <select
+                  value={v.provider}
+                  onChange={(e) => {
+                    const next = [...variants];
+                    next[i] = { ...next[i], provider: e.target.value, model: "" };
+                    setVariants(next);
+                  }}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
                 >
-                  Remove
-                </button>
-              )}
-            </div>
-          ))}
+                  <option value="">Select provider</option>
+                  {providers.map((p) => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+                <select
+                  value={v.model}
+                  onChange={(e) => {
+                    const next = [...variants];
+                    next[i] = { ...next[i], model: e.target.value };
+                    setVariants(next);
+                  }}
+                  disabled={!v.provider}
+                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                >
+                  <option value="">Select model</option>
+                  {(selectedProvider?.models || []).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={v.weight}
+                  onChange={(e) => {
+                    const next = [...variants];
+                    next[i] = { ...next[i], weight: parseFloat(e.target.value) || 0 };
+                    setVariants(next);
+                  }}
+                  title="Traffic weight"
+                  className="w-20 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+                />
+                {variants.length > 2 ? (
+                  <button
+                    type="button"
+                    onClick={() => setVariants(variants.filter((_, j) => j !== i))}
+                    className="text-zinc-500 hover:text-red-400 text-sm w-16 text-right"
+                  >
+                    Remove
+                  </button>
+                ) : (
+                  <span className="w-16"></span>
+                )}
+              </div>
+            );
+          })}
         </div>
         <button
           type="button"
