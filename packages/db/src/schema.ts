@@ -53,6 +53,7 @@ export const apiTokens = sqliteTable("api_tokens", {
   rateLimit: integer("rate_limit"), // requests per minute, null = unlimited
   spendLimit: real("spend_limit"), // USD per billing period, null = unlimited
   spendPeriod: text("spend_period", { enum: ["monthly", "weekly", "daily"] }).default("monthly"),
+  routingProfile: text("routing_profile", { enum: ["cost", "balanced", "quality"] }).default("balanced"),
   expiresAt: integer("expires_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -70,6 +71,22 @@ export const apiKeys = sqliteTable("api_keys", {
     .notNull()
     .$defaultFn(() => new Date()),
   updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const feedback = sqliteTable("feedback", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id")
+    .notNull()
+    .references(() => requests.id),
+  tenantId: text("tenant_id"),
+  score: integer("score").notNull(), // 1-5
+  comment: text("comment"),
+  source: text("source", { enum: ["user", "judge"] })
+    .notNull()
+    .default("user"),
+  createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
 });

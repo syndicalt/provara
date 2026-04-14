@@ -2,14 +2,16 @@ import type { ChatMessage } from "../providers/types.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Db } from "@provara/db";
 import { abTests, abTestVariants } from "@provara/db";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { TaskType, Complexity } from "../classifier/types.js";
 import type { RoutingTable, RoutingResult, RouteTarget } from "./types.js";
 import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
 import { DEFAULT_ROUTING_TABLE } from "./routing-table.js";
+import { createAdaptiveRouter, type RoutingProfile } from "./adaptive.js";
 
 export type { RoutingTable, RoutingResult, RouteTarget } from "./types.js";
+export { type RoutingProfile } from "./adaptive.js";
 
 export interface RoutingEngineConfig {
   registry: ProviderRegistry;
@@ -22,10 +24,12 @@ export interface RoutingRequest {
   provider?: string;
   model?: string;
   routingHint?: TaskType;
+  routingProfile?: RoutingProfile;
 }
 
 export function createRoutingEngine(config: RoutingEngineConfig) {
   const table = config.routingTable || DEFAULT_ROUTING_TABLE;
+  const adaptive = createAdaptiveRouter(config.db);
 
   function findAvailableTarget(
     targets: RouteTarget[],
@@ -45,7 +49,6 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
     taskType: TaskType,
     complexity: Complexity
   ): { testId: string; provider: string; model: string } | null {
-    // Find active A/B tests that match this routing cell
     const activeTests = config.db
       .select()
       .from(abTests)
@@ -59,15 +62,12 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
         .where(eq(abTestVariants.abTestId, test.id))
         .all();
 
-      // Check if this test is scoped to this routing cell
       const scopedVariants = variants.filter((v) => {
         if (v.taskType && v.taskType !== taskType) return false;
         if (v.complexity && v.complexity !== complexity) return false;
         return true;
       });
 
-      // If variants have no scope (null taskType/complexity), they apply to all cells
-      // If variants are scoped, only use them when they match
       const applicableVariants =
         scopedVariants.length > 0
           ? scopedVariants
@@ -123,8 +123,6 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
 
     // Classify the request
     const classification = await classifyRequest(request.messages, config.registry);
-
-    // Allow routing hint to override task type
     const taskType: TaskType = request.routingHint || classification.taskType;
     const complexity: Complexity = classification.complexity;
 
@@ -143,10 +141,27 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    const routedBy = request.routingHint ? "routing-hint" as const : "classification" as const;
+    // Try adaptive routing — uses quality scores from feedback
+    const profile = request.routingProfile || "balanced";
+    const availableProviders = new Set(config.registry.list().map((p) => p.name));
+    const adaptiveTarget = adaptive.getBestModel(taskType, complexity, profile, availableProviders);
 
-    // Look up the routing cell
+    if (adaptiveTarget) {
+      return {
+        provider: adaptiveTarget.provider,
+        model: adaptiveTarget.model,
+        taskType,
+        complexity,
+        routedBy: "adaptive",
+        usedFallback: false,
+        usedLlmFallback: classification.usedLlmFallback,
+      };
+    }
+
+    // Fall back to static routing table
+    const routedBy = request.routingHint ? "routing-hint" as const : "classification" as const;
     const entry = table[taskType]?.[complexity];
+
     if (!entry) {
       const fallbackEntry = table.general.medium;
       const result = findAvailableTarget(
@@ -176,7 +191,6 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    // Find an available provider from primary + fallbacks
     const result = findAvailableTarget(
       [entry.primary, ...entry.fallbacks],
       config.registry
@@ -194,7 +208,6 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    // All targets unavailable — pick any available provider
     const anyProvider = config.registry.list()[0];
     return {
       provider: anyProvider.name,
@@ -207,5 +220,6 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
     };
   }
 
-  return { route };
+  // Expose adaptive router for feedback updates and dashboard queries
+  return { route, adaptive };
 }

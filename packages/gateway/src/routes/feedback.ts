@@ -1,0 +1,124 @@
+import { Hono } from "hono";
+import type { Db } from "@provara/db";
+import { feedback, requests } from "@provara/db";
+import { eq, desc, sql } from "drizzle-orm";
+import { nanoid } from "nanoid";
+import { getTokenInfo } from "../auth/middleware.js";
+
+export function createFeedbackRoutes(db: Db) {
+  const app = new Hono();
+
+  // Submit feedback for a request
+  app.post("/", async (c) => {
+    const body = await c.req.json<{
+      requestId: string;
+      score: number;
+      comment?: string;
+    }>();
+
+    if (!body.requestId || !body.score) {
+      return c.json(
+        { error: { message: "requestId and score (1-5) are required", type: "validation_error" } },
+        400
+      );
+    }
+
+    if (body.score < 1 || body.score > 5 || !Number.isInteger(body.score)) {
+      return c.json(
+        { error: { message: "score must be an integer between 1 and 5", type: "validation_error" } },
+        400
+      );
+    }
+
+    // Verify request exists
+    const request = db.select().from(requests).where(eq(requests.id, body.requestId)).get();
+    if (!request) {
+      return c.json(
+        { error: { message: "Request not found", type: "not_found" } },
+        404
+      );
+    }
+
+    const tokenInfo = getTokenInfo(c.req.raw);
+    const id = nanoid();
+
+    db.insert(feedback)
+      .values({
+        id,
+        requestId: body.requestId,
+        tenantId: tokenInfo?.tenant || null,
+        score: body.score,
+        comment: body.comment || null,
+        source: "user",
+      })
+      .run();
+
+    return c.json({ id, requestId: body.requestId, score: body.score }, 201);
+  });
+
+  // List recent feedback
+  app.get("/", (c) => {
+    const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
+    const rows = db
+      .select({
+        id: feedback.id,
+        requestId: feedback.requestId,
+        tenantId: feedback.tenantId,
+        score: feedback.score,
+        comment: feedback.comment,
+        source: feedback.source,
+        createdAt: feedback.createdAt,
+        model: requests.model,
+        provider: requests.provider,
+        taskType: requests.taskType,
+        complexity: requests.complexity,
+      })
+      .from(feedback)
+      .leftJoin(requests, eq(feedback.requestId, requests.id))
+      .orderBy(desc(feedback.createdAt))
+      .limit(limit)
+      .all();
+
+    return c.json({ feedback: rows });
+  });
+
+  // Quality scores per model per routing cell
+  app.get("/quality/by-cell", (c) => {
+    const rows = db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        taskType: requests.taskType,
+        complexity: requests.complexity,
+        avgScore: sql<number>`avg(${feedback.score})`,
+        count: sql<number>`count(*)`,
+      })
+      .from(feedback)
+      .innerJoin(requests, eq(feedback.requestId, requests.id))
+      .groupBy(requests.provider, requests.model, requests.taskType, requests.complexity)
+      .all();
+
+    return c.json({ quality: rows });
+  });
+
+  // Quality summary per model
+  app.get("/quality/by-model", (c) => {
+    const rows = db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        avgScore: sql<number>`avg(${feedback.score})`,
+        count: sql<number>`count(*)`,
+        userCount: sql<number>`sum(case when ${feedback.source} = 'user' then 1 else 0 end)`,
+        judgeCount: sql<number>`sum(case when ${feedback.source} = 'judge' then 1 else 0 end)`,
+      })
+      .from(feedback)
+      .innerJoin(requests, eq(feedback.requestId, requests.id))
+      .groupBy(requests.provider, requests.model)
+      .all();
+
+    return c.json({ quality: rows });
+  });
+
+  return app;
+}

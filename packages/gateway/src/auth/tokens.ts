@@ -13,6 +13,7 @@ export interface TokenInfo {
   rateLimit: number | null;
   spendLimit: number | null;
   spendPeriod: string | null;
+  routingProfile: string | null;
   expiresAt: Date | null;
 }
 
@@ -53,6 +54,7 @@ export function verifyToken(db: Db, token: string): TokenInfo | null {
     rateLimit: row.rateLimit,
     spendLimit: row.spendLimit,
     spendPeriod: row.spendPeriod,
+    routingProfile: row.routingProfile,
     expiresAt: row.expiresAt,
   };
 }

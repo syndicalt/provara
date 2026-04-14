@@ -5,12 +5,14 @@ import type { Db } from "@provara/db";
 import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
 import { logCost } from "./cost/index.js";
-import { createRoutingEngine } from "./routing/index.js";
+import { createRoutingEngine, type RoutingProfile } from "./routing/index.js";
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
 import { createTokenRoutes } from "./routes/tokens.js";
+import { createFeedbackRoutes } from "./routes/feedback.js";
+import { createJudge } from "./routing/judge.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -20,6 +22,7 @@ interface RouterContext {
 export function createRouter(ctx: RouterContext) {
   const app = new Hono();
   const routingEngine = createRoutingEngine({ registry: ctx.registry, db: ctx.db });
+  const judge = createJudge(ctx.registry, ctx.db);
 
   // Enable CORS for web dashboard
   app.use("/*", cors());
@@ -36,6 +39,9 @@ export function createRouter(ctx: RouterContext) {
 
   // Mount API key management routes
   app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));
+
+  // Mount feedback routes
+  app.route("/v1/feedback", createFeedbackRoutes(ctx.db));
 
   // Mount token management routes (admin — no auth required)
   app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
@@ -54,11 +60,13 @@ export function createRouter(ctx: RouterContext) {
     const request = rest as CompletionRequest;
 
     // Route the request through the intelligent routing engine
+    const tokenInfo = getTokenInfo(c.req.raw);
     const routingResult = await routingEngine.route({
       messages: request.messages,
       provider: providerName,
       model: request.model !== "" ? request.model : undefined,
       routingHint: routing_hint,
+      routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
     });
 
     const provider = ctx.registry.get(routingResult.provider);
@@ -75,7 +83,6 @@ export function createRouter(ctx: RouterContext) {
       model: routingResult.model,
     };
 
-    const tokenInfo = getTokenInfo(c.req.raw);
     const tenantId = tokenInfo?.tenant || null;
 
     const start = performance.now();
@@ -110,6 +117,14 @@ export function createRouter(ctx: RouterContext) {
       outputTokens: response.usage.outputTokens,
       tenantId,
     });
+
+    // Fire-and-forget: LLM-as-judge quality scoring on a sample of responses
+    judge.maybeJudge({
+      requestId,
+      tenantId,
+      messages: request.messages,
+      responseContent: response.content,
+    }).catch(() => {});
 
     // Return OpenAI-compatible response format
     return c.json({
@@ -150,6 +165,11 @@ export function createRouter(ctx: RouterContext) {
       models: p.models,
     }));
     return c.json({ providers });
+  });
+
+  // Adaptive routing scores (for dashboard)
+  app.get("/v1/analytics/adaptive/scores", (c) => {
+    return c.json({ cells: routingEngine.adaptive.getAllScores() });
   });
 
   // Health check
