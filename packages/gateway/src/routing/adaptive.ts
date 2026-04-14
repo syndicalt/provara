@@ -3,7 +3,6 @@ import { feedback, requests } from "@provara/db";
 import { eq, sql } from "drizzle-orm";
 import type { TaskType, Complexity } from "../classifier/types.js";
 import type { RouteTarget } from "./types.js";
-import { DEFAULT_ROUTING_TABLE } from "./routing-table.js";
 import { getPricing } from "../cost/index.js";
 
 // EMA decay factor: 0.1 = slow adaptation, 0.3 = moderate, 0.5 = fast

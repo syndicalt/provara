@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { ProviderRegistry, CompletionRequest } from "./providers/index.js";
+import type { ProviderRegistry, CompletionRequest, CompletionResponse } from "./providers/index.js";
 import type { Db } from "@provara/db";
 import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
@@ -73,33 +73,63 @@ export function createRouter(ctx: RouterContext) {
       routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
     });
 
-    const provider = ctx.registry.get(routingResult.provider);
-    if (!provider) {
-      return c.json(
-        { error: { message: `No provider available for routing result`, type: "invalid_request_error" } },
-        404
-      );
-    }
-
-    // Use the routed model
-    const completionRequest: CompletionRequest = {
-      ...request,
-      model: routingResult.model,
-    };
-
     const tenantId = tokenInfo?.tenant || null;
 
-    const start = performance.now();
-    const response = await provider.complete(completionRequest);
-    const latencyMs = Math.round(performance.now() - start);
+    // Build the attempt order: primary target + fallbacks
+    const attempts = [
+      { provider: routingResult.provider, model: routingResult.model },
+      ...routingResult.fallbacks,
+    ];
+
+    let response: CompletionResponse | undefined;
+    let usedProvider: string = routingResult.provider;
+    let usedModel: string = routingResult.model;
+    let usedFallback = routingResult.usedFallback;
+    let lastError: unknown;
+    let latencyMs = 0;
+
+    const PROVIDER_TIMEOUT_MS = 30_000;
+
+    for (const attempt of attempts) {
+      const provider = ctx.registry.get(attempt.provider);
+      if (!provider) continue;
+
+      try {
+        const start = performance.now();
+        const result = await Promise.race([
+          provider.complete({ ...request, model: attempt.model }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Timed out after ${PROVIDER_TIMEOUT_MS}ms`)), PROVIDER_TIMEOUT_MS)
+          ),
+        ]);
+        response = result;
+        latencyMs = Math.round(performance.now() - start);
+        usedProvider = attempt.provider;
+        usedModel = attempt.model;
+        if (attempt !== attempts[0]) usedFallback = true;
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`Provider ${attempt.provider}/${attempt.model} failed:`, err instanceof Error ? err.message : err);
+        continue;
+      }
+    }
+
+    if (!response) {
+      const errMsg = lastError instanceof Error ? lastError.message : "All providers failed";
+      return c.json(
+        { error: { message: errMsg, type: "provider_error" } },
+        502
+      );
+    }
 
     const requestId = nanoid();
     ctx.db
       .insert(requests)
       .values({
         id: requestId,
-        provider: response.provider,
-        model: response.model,
+        provider: usedProvider,
+        model: usedModel,
         prompt: JSON.stringify(request.messages),
         response: response.content,
         inputTokens: response.usage.inputTokens,
@@ -115,8 +145,8 @@ export function createRouter(ctx: RouterContext) {
 
     await logCost(ctx.db, {
       requestId,
-      provider: response.provider,
-      model: response.model,
+      provider: usedProvider,
+      model: usedModel,
       inputTokens: response.usage.inputTokens,
       outputTokens: response.usage.outputTokens,
       tenantId,
@@ -135,7 +165,7 @@ export function createRouter(ctx: RouterContext) {
       id: `chatcmpl-${response.id}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
-      model: response.model,
+      model: usedModel,
       choices: [
         {
           index: 0,
@@ -149,13 +179,13 @@ export function createRouter(ctx: RouterContext) {
         total_tokens: response.usage.inputTokens + response.usage.outputTokens,
       },
       _provara: {
-        provider: response.provider,
+        provider: usedProvider,
         latencyMs,
         routing: {
           taskType: routingResult.taskType,
           complexity: routingResult.complexity,
           routedBy: routingResult.routedBy,
-          usedFallback: routingResult.usedFallback,
+          usedFallback,
           usedLlmFallback: routingResult.usedLlmFallback,
         },
       },

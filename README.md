@@ -80,21 +80,8 @@ Request arrives at POST /v1/chat/completions
   │
   ├─ Active A/B test on this cell? → Weighted random variant selection
   │
-  └─ Look up routing table[taskType][complexity] → provider + model
-      └─ Primary unavailable? → Try fallbacks in order
+  └─ Dynamic fallback chain → all registered providers, sorted by cost (cheapest first)
 ```
-
-### Routing Table
-
-The default routing table optimizes for cost at the simple tier and quality at the complex tier. For example:
-
-| | Simple | Medium | Complex |
-|---|---|---|---|
-| **Coding** | gpt-4.1-nano | claude-sonnet-4-6 | claude-opus-4-6 |
-| **Creative** | gpt-4.1-mini | claude-sonnet-4-6 | claude-opus-4-6 |
-| **Q&A** | gemini-2.0-flash | gpt-4.1-mini | gpt-4.1 |
-
-The full table is in [`packages/gateway/src/routing/routing-table.ts`](packages/gateway/src/routing/routing-table.ts).
 
 ## API
 

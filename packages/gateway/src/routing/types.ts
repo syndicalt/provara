@@ -5,13 +5,6 @@ export interface RouteTarget {
   model: string;
 }
 
-export interface RouteEntry {
-  primary: RouteTarget;
-  fallbacks: RouteTarget[];
-}
-
-export type RoutingTable = Record<TaskType, Record<Complexity, RouteEntry>>;
-
 export interface RoutingResult {
   provider: string;
   model: string;
@@ -21,4 +14,5 @@ export interface RoutingResult {
   abTestId?: string;
   usedFallback: boolean;
   usedLlmFallback: boolean;
+  fallbacks: RouteTarget[];
 }

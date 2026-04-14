@@ -4,20 +4,18 @@ import type { Db } from "@provara/db";
 import { abTests, abTestVariants } from "@provara/db";
 import { eq } from "drizzle-orm";
 import type { TaskType, Complexity } from "../classifier/types.js";
-import type { RoutingTable, RoutingResult, RouteTarget } from "./types.js";
+import type { RoutingResult, RouteTarget } from "./types.js";
 import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
-import { DEFAULT_ROUTING_TABLE } from "./routing-table.js";
 import { createAdaptiveRouter, type RoutingProfile } from "./adaptive.js";
 import { getPricing } from "../cost/index.js";
 
-export type { RoutingTable, RoutingResult, RouteTarget } from "./types.js";
+export type { RoutingResult, RouteTarget } from "./types.js";
 export { type RoutingProfile } from "./adaptive.js";
 
 export interface RoutingEngineConfig {
   registry: ProviderRegistry;
   db: Db;
-  routingTable?: RoutingTable;
 }
 
 export interface RoutingRequest {
@@ -29,22 +27,7 @@ export interface RoutingRequest {
 }
 
 export function createRoutingEngine(config: RoutingEngineConfig) {
-  const table = config.routingTable || DEFAULT_ROUTING_TABLE;
   const adaptive = createAdaptiveRouter(config.db);
-
-  function findAvailableTarget(
-    targets: RouteTarget[],
-    registry: ProviderRegistry
-  ): { target: RouteTarget; usedFallback: boolean } | null {
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i];
-      const provider = registry.get(target.provider);
-      if (provider) {
-        return { target, usedFallback: i > 0 };
-      }
-    }
-    return null;
-  }
 
   // Build dynamic fallback chain from all registered providers, sorted by cost (cheapest first)
   function buildDynamicFallbacks(registry: ProviderRegistry): RouteTarget[] {
@@ -110,6 +93,8 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
   }
 
   async function route(request: RoutingRequest): Promise<RoutingResult> {
+    const allFallbacks = buildDynamicFallbacks(config.registry);
+
     // User override: explicit provider + model bypasses routing entirely
     if (request.provider && request.model) {
       return {
@@ -120,6 +105,9 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
         routedBy: "user-override",
         usedFallback: false,
         usedLlmFallback: false,
+        fallbacks: allFallbacks.filter(
+          (t) => !(t.provider === request.provider && t.model === request.model)
+        ),
       };
     }
 
@@ -135,6 +123,9 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
           routedBy: "user-override",
           usedFallback: false,
           usedLlmFallback: false,
+          fallbacks: allFallbacks.filter(
+            (t) => !(t.provider === provider.name && t.model === request.model)
+          ),
         };
       }
     }
@@ -156,6 +147,9 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
         abTestId: abResult.testId,
         usedFallback: false,
         usedLlmFallback: classification.usedLlmFallback,
+        fallbacks: allFallbacks.filter(
+          (t) => !(t.provider === abResult.provider && t.model === abResult.model)
+        ),
       };
     }
 
@@ -173,43 +167,24 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
         routedBy: "adaptive",
         usedFallback: false,
         usedLlmFallback: classification.usedLlmFallback,
+        fallbacks: allFallbacks.filter(
+          (t) => !(t.provider === adaptiveTarget.provider && t.model === adaptiveTarget.model)
+        ),
       };
     }
 
-    // Fall back to static routing table, then dynamic fallbacks
+    // Build dynamic fallback from all registered providers, sorted by cost
     const routedBy = request.routingHint ? "routing-hint" as const : "classification" as const;
-    const entry = table[taskType]?.[complexity] || table.general?.medium;
-
-    // Try static table targets first
-    if (entry) {
-      const result = findAvailableTarget(
-        [entry.primary, ...entry.fallbacks],
-        config.registry
-      );
-      if (result) {
-        return {
-          provider: result.target.provider,
-          model: result.target.model,
-          taskType,
-          complexity,
-          routedBy,
-          usedFallback: result.usedFallback,
-          usedLlmFallback: classification.usedLlmFallback,
-        };
-      }
-    }
-
-    // Static targets unavailable — build dynamic fallback from all registered providers
-    const dynamicFallbacks = buildDynamicFallbacks(config.registry);
-    if (dynamicFallbacks.length > 0) {
+    if (allFallbacks.length > 0) {
       return {
-        provider: dynamicFallbacks[0].provider,
-        model: dynamicFallbacks[0].model,
+        provider: allFallbacks[0].provider,
+        model: allFallbacks[0].model,
         taskType,
         complexity,
         routedBy,
-        usedFallback: true,
+        usedFallback: false,
         usedLlmFallback: classification.usedLlmFallback,
+        fallbacks: allFallbacks.slice(1),
       };
     }
 
@@ -223,6 +198,7 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
       routedBy,
       usedFallback: true,
       usedLlmFallback: classification.usedLlmFallback,
+      fallbacks: [],
     };
   }
 
