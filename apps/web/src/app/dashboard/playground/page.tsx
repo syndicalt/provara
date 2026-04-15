@@ -69,8 +69,8 @@ export default function PlaygroundPage() {
       .catch(console.error);
   }, []);
 
-  // Persist to sessionStorage
-  useEffect(() => { sessionStorage.setItem("pg:messages", JSON.stringify(messages)); }, [messages]);
+  // Persist to sessionStorage (skip during streaming — background function handles it)
+  useEffect(() => { if (!streaming) sessionStorage.setItem("pg:messages", JSON.stringify(messages)); }, [messages, streaming]);
   useEffect(() => { sessionStorage.setItem("pg:model", selectedModel); }, [selectedModel]);
   useEffect(() => { sessionStorage.setItem("pg:provider", selectedProvider); }, [selectedProvider]);
   useEffect(() => { sessionStorage.setItem("pg:system", systemPrompt); }, [systemPrompt]);
@@ -100,16 +100,26 @@ export default function PlaygroundPage() {
       ? [{ role: "system" as const, content: systemPrompt }, ...activeMessages]
       : activeMessages;
 
+    // Persist immediately so navigating away preserves the user message
+    sessionStorage.setItem("pg:messages", JSON.stringify(newMessages));
+    sessionStorage.setItem("pg:streaming", "true");
+
+    // Run the stream in a detached async context so it completes even
+    // if the component unmounts during navigation
+    streamInBackground(newMessages, apiMessages);
+  }
+
+  async function streamInBackground(newMessages: Message[], apiMessages: { role: string; content: string }[]) {
     try {
-      const headers: Record<string, string> = { ...adminHeaders() };
+      const hdrs: Record<string, string> = { ...adminHeaders() };
       if (apiToken) {
-        headers["Authorization"] = `Bearer ${apiToken}`;
+        hdrs["Authorization"] = `Bearer ${apiToken}`;
       }
 
       const res = await fetch(gatewayUrl("/v1/chat/completions"), {
         method: "POST",
         credentials: "include",
-        headers,
+        headers: hdrs,
         body: JSON.stringify({
           model: selectedModel,
           provider: selectedProvider || undefined,
@@ -122,8 +132,11 @@ export default function PlaygroundPage() {
 
       if (!res.ok) {
         const error = await res.json();
-        setMessages([...newMessages, { role: "assistant", content: `Error: ${error.error?.message || res.statusText}` }]);
+        const final = [...newMessages, { role: "assistant" as const, content: `Error: ${error.error?.message || res.statusText}` }];
+        setMessages(final);
+        sessionStorage.setItem("pg:messages", JSON.stringify(final));
         setStreaming(false);
+        sessionStorage.removeItem("pg:streaming");
         return;
       }
 
@@ -141,6 +154,7 @@ export default function PlaygroundPage() {
               content: `Guardrail triggered: ${violations.join(", ")}. Your input was redacted before being sent to the model.`,
             }];
             setMessages(newMessages);
+            sessionStorage.setItem("pg:messages", JSON.stringify(newMessages));
           }
         } catch {}
       }
@@ -178,18 +192,21 @@ export default function PlaygroundPage() {
         }
       }
 
-      setMessages([...newMessages, { role: "assistant", content: fullContent, model: headerModel || responseModel || undefined }]);
+      const finalMessages = [...newMessages, { role: "assistant" as const, content: fullContent, model: headerModel || responseModel || undefined }];
+      setMessages(finalMessages);
       setStreamingContent("");
-
-      // Fetch the last request to get _provara metadata
-      // (streaming doesn't include it in the SSE events)
+      // Persist completed messages so they survive navigation
+      sessionStorage.setItem("pg:messages", JSON.stringify(finalMessages));
     } catch (err) {
-      setMessages([
+      const finalMessages = [
         ...newMessages,
-        { role: "assistant", content: `Error: ${err instanceof Error ? err.message : "Request failed"}` },
-      ]);
+        { role: "assistant" as const, content: `Error: ${err instanceof Error ? err.message : "Request failed"}` },
+      ];
+      setMessages(finalMessages);
+      sessionStorage.setItem("pg:messages", JSON.stringify(finalMessages));
     } finally {
       setStreaming(false);
+      sessionStorage.removeItem("pg:streaming");
       inputRef.current?.focus();
     }
   }
