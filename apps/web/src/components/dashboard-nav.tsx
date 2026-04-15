@@ -6,6 +6,7 @@ import { UserMenu } from "./user-menu";
 
 const links = [
   { href: "/dashboard", label: "Overview" },
+  { href: "/dashboard/playground", label: "Playground" },
   { href: "/dashboard/providers", label: "Providers" },
   { href: "/dashboard/routing", label: "Routing" },
   { href: "/dashboard/quality", label: "Quality" },
