@@ -235,6 +235,18 @@ export default function PlaygroundPage() {
             </div>
           ))}
 
+          {streaming && !streamingContent && (
+            <div className="flex justify-start">
+              <div className="max-w-2xl rounded-xl px-4 py-3 bg-zinc-800 border border-zinc-700 text-zinc-200">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              </div>
+            </div>
+          )}
+
           {streamingContent && (
             <div className="flex justify-start">
               <div className="max-w-2xl rounded-xl px-4 py-3 bg-zinc-800 border border-zinc-700 text-zinc-200">
