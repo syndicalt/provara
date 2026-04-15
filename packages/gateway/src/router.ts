@@ -41,6 +41,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/*", cors({
     origin: process.env.DASHBOARD_URL || "http://localhost:3000",
     credentials: true,
+    exposeHeaders: ["X-Provara-Guardrail", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
   // Mount OAuth routes (public, only in multi_tenant mode)
