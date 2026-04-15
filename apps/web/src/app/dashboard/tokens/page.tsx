@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCost, formatNumber, formatLatency } from "../../../lib/format";
-import { gatewayFetchRaw } from "../../../lib/gateway-client";
+import { gatewayFetchRaw, gatewayUrl } from "../../../lib/gateway-client";
 
 interface Token {
   id: string;
@@ -123,7 +123,7 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
           <div className="grid grid-cols-2 gap-3 text-xs">
             <div>
               <span className="text-zinc-500">Base URL</span>
-              <code className="block mt-1 text-zinc-300 font-mono">https://gateway.provara.xyz/v1</code>
+              <code className="block mt-1 text-zinc-300 font-mono">{gatewayUrl("/v1")}</code>
             </div>
             <div>
               <span className="text-zinc-500">API Key</span>
@@ -131,7 +131,7 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
             </div>
           </div>
           <pre className="mt-2 text-[11px] text-zinc-500 font-mono leading-relaxed">{`const client = new OpenAI({
-  baseURL: "https://gateway.provara.xyz/v1",
+  baseURL: "${gatewayUrl("/v1")}",
   apiKey: "${createdToken.slice(0, 14)}...",
 });`}</pre>
         </div>
