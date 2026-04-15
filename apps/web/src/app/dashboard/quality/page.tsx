@@ -1,9 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 import { formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
-import { gatewayFetchRaw } from "../../../lib/gateway-client";
+import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface QualityByModel {
   provider: string;
@@ -12,15 +15,6 @@ interface QualityByModel {
   count: number;
   userCount: number;
   judgeCount: number;
-}
-
-interface QualityByCell {
-  provider: string;
-  model: string;
-  taskType: string | null;
-  complexity: string | null;
-  avgScore: number;
-  count: number;
 }
 
 interface AdaptiveScore {
@@ -51,8 +45,26 @@ interface FeedbackEntry {
   complexity: string | null;
 }
 
+interface TrendPoint {
+  bucket: string;
+  avgScore: number;
+  count: number;
+  userCount: number;
+  judgeCount: number;
+}
+
+interface JudgeConfig {
+  sampleRate: number;
+  enabled: boolean;
+}
+
 const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general"];
 const COMPLEXITIES = ["simple", "medium", "complex"];
+const RANGES = [
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
+];
 
 function ScoreBar({ score, max = 5 }: { score: number; max?: number }) {
   const pct = (score / max) * 100;
@@ -68,15 +80,35 @@ function ScoreBar({ score, max = 5 }: { score: number; max?: number }) {
   );
 }
 
+function formatBucket(bucket: string): string {
+  if (bucket.includes(" ")) return bucket.split(" ")[1];
+  const d = new Date(bucket + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl text-xs">
+      <p className="text-zinc-400 mb-1.5">{label}</p>
+      {payload.map((entry, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+          <span className="text-zinc-400">{entry.name}:</span>
+          <span className="text-zinc-200 font-medium">{typeof entry.value === "number" ? entry.value.toFixed(2) : entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AdaptiveMatrix({ cells }: { cells: AdaptiveCell[] }) {
-  // Build matrix: taskType × complexity → best model and score
   const matrix: Record<string, Record<string, AdaptiveScore | null>> = {};
   for (const tt of TASK_TYPES) {
     matrix[tt] = {};
     for (const cx of COMPLEXITIES) {
       const cell = cells.find((c) => c.taskType === tt && c.complexity === cx);
       if (cell && cell.scores.length > 0) {
-        // Sort by quality score descending
         const best = [...cell.scores].sort((a, b) => b.qualityScore - a.qualityScore)[0];
         matrix[tt][cx] = best;
       } else {
@@ -108,9 +140,7 @@ function AdaptiveMatrix({ cells }: { cells: AdaptiveCell[] }) {
                       <div>
                         <p className="font-mono text-xs">{score.model}</p>
                         <ScoreBar score={score.qualityScore} />
-                        <p className="text-xs text-zinc-500 mt-1">
-                          {score.sampleCount} samples
-                        </p>
+                        <p className="text-xs text-zinc-500 mt-1">{score.sampleCount} samples</p>
                       </div>
                     ) : (
                       <span className="text-zinc-600">No data</span>
@@ -159,28 +189,39 @@ const feedbackColumns: Column<FeedbackEntry>[] = [
 
 export default function QualityPage() {
   const [byModel, setByModel] = useState<QualityByModel[]>([]);
-  const [byCell, setByCell] = useState<QualityByCell[]>([]);
   const [adaptiveCells, setAdaptiveCells] = useState<AdaptiveCell[]>([]);
   const [recentFeedback, setRecentFeedback] = useState<FeedbackEntry[]>([]);
+  const [trend, setTrend] = useState<TrendPoint[]>([]);
+  const [trendRange, setTrendRange] = useState("7d");
+  const [judgeConfig, setJudgeConfigState] = useState<JudgeConfig | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  const fetchTrend = useCallback(async () => {
+    try {
+      const res = await gatewayFetchRaw(`/v1/feedback/quality/trend?range=${trendRange}`);
+      const data = await res.json();
+      setTrend(data.series || []);
+    } catch {}
+  }, [trendRange]);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [modelRes, cellRes, adaptiveRes, feedbackRes] = await Promise.all([
+        const [modelRes, adaptiveRes, feedbackRes, configRes] = await Promise.all([
           gatewayFetchRaw("/v1/feedback/quality/by-model"),
-          gatewayFetchRaw("/v1/feedback/quality/by-cell"),
           gatewayFetchRaw("/v1/analytics/adaptive/scores"),
           gatewayFetchRaw("/v1/feedback?limit=20"),
+          gatewayFetchRaw("/v1/feedback/judge/config"),
         ]);
         const modelData = await modelRes.json();
-        const cellData = await cellRes.json();
         const adaptiveData = await adaptiveRes.json();
         const feedbackData = await feedbackRes.json();
+        const configData = await configRes.json();
         setByModel(modelData.quality || []);
-        setByCell(cellData.quality || []);
         setAdaptiveCells(adaptiveData.cells || []);
         setRecentFeedback(feedbackData.feedback || []);
+        setJudgeConfigState(configData);
       } catch (err) {
         console.error("Failed to fetch quality data:", err);
       } finally {
@@ -189,6 +230,24 @@ export default function QualityPage() {
     }
     fetchData();
   }, []);
+
+  useEffect(() => {
+    fetchTrend();
+  }, [fetchTrend]);
+
+  async function handleSaveConfig() {
+    if (!judgeConfig) return;
+    setSavingConfig(true);
+    try {
+      const res = await gatewayFetchRaw("/v1/feedback/judge/config", {
+        method: "PUT",
+        body: JSON.stringify(judgeConfig),
+      });
+      const data = await res.json();
+      setJudgeConfigState(data);
+    } catch {}
+    setSavingConfig(false);
+  }
 
   if (loading) {
     return (
@@ -201,6 +260,90 @@ export default function QualityPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <h1 className="text-2xl font-bold">Quality Analytics</h1>
+
+      {/* Quality Trend Chart */}
+      <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-sm font-semibold text-zinc-300">Quality Score Trend</h2>
+          <div className="flex gap-1 bg-zinc-800 rounded-md p-0.5">
+            {RANGES.map((r) => (
+              <button
+                key={r.value}
+                onClick={() => setTrendRange(r.value)}
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                  trendRange === r.value ? "bg-zinc-700 text-zinc-200" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {trend.length > 0 ? (
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={trend.map((t) => ({ ...t, bucket: formatBucket(t.bucket) }))}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+              <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#71717a" }} />
+              <YAxis domain={[0, 5]} tick={{ fontSize: 10, fill: "#71717a" }} />
+              <Tooltip content={<ChartTooltip />} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Line type="monotone" dataKey="avgScore" name="Avg Score" stroke="#34d399" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <p className="text-sm text-zinc-500 py-8 text-center">No feedback data in this time range.</p>
+        )}
+      </section>
+
+      {/* Judge Configuration */}
+      {judgeConfig && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
+          <h2 className="text-sm font-semibold text-zinc-300 mb-4">LLM Judge Configuration</h2>
+          <p className="text-xs text-zinc-500 mb-4">
+            The judge automatically scores a sample of responses using the cheapest available model.
+          </p>
+          <div className="flex items-end gap-6">
+            <div>
+              <label className="block text-xs text-zinc-400 mb-1">Status</label>
+              <button
+                onClick={() => setJudgeConfigState({ ...judgeConfig, enabled: !judgeConfig.enabled })}
+                className={`px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  judgeConfig.enabled
+                    ? "bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/50"
+                    : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+                }`}
+              >
+                {judgeConfig.enabled ? "Enabled" : "Disabled"}
+              </button>
+            </div>
+            <div className="flex-1 max-w-xs">
+              <label className="block text-xs text-zinc-400 mb-1">
+                Sample Rate: {Math.round(judgeConfig.sampleRate * 100)}%
+              </label>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={Math.round(judgeConfig.sampleRate * 100)}
+                onChange={(e) => setJudgeConfigState({ ...judgeConfig, sampleRate: parseInt(e.target.value) / 100 })}
+                className="w-full accent-blue-500"
+              />
+              <div className="flex justify-between text-[10px] text-zinc-600 mt-1">
+                <span>0%</span>
+                <span>50%</span>
+                <span>100%</span>
+              </div>
+            </div>
+            <button
+              onClick={handleSaveConfig}
+              disabled={savingConfig}
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded text-xs font-medium transition-colors"
+            >
+              {savingConfig ? "Saving..." : "Save"}
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* Adaptive Routing Matrix */}
       <section>

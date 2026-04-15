@@ -5,7 +5,21 @@ import { feedback } from "@provara/db";
 import { nanoid } from "nanoid";
 import { getPricing } from "../cost/index.js";
 
-const JUDGE_SAMPLE_RATE = parseFloat(process.env.PROVARA_JUDGE_SAMPLE_RATE || "0.1");
+let judgeSampleRate = parseFloat(process.env.PROVARA_JUDGE_SAMPLE_RATE || "0.1");
+let judgeEnabled = true;
+
+export function getJudgeConfig() {
+  return { sampleRate: judgeSampleRate, enabled: judgeEnabled };
+}
+
+export function setJudgeConfig(config: { sampleRate?: number; enabled?: boolean }) {
+  if (config.sampleRate !== undefined) {
+    judgeSampleRate = Math.max(0, Math.min(1, config.sampleRate));
+  }
+  if (config.enabled !== undefined) {
+    judgeEnabled = config.enabled;
+  }
+}
 
 const JUDGE_PROMPT = `You are an impartial quality judge. Rate the AI assistant's response on three dimensions.
 
@@ -25,7 +39,8 @@ interface JudgeResult {
 }
 
 function shouldJudge(): boolean {
-  return Math.random() < JUDGE_SAMPLE_RATE;
+  if (!judgeEnabled) return false;
+  return Math.random() < judgeSampleRate;
 }
 
 function findCheapestModel(registry: ProviderRegistry): { provider: string; model: string } | null {

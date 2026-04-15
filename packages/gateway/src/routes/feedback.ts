@@ -1,10 +1,11 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { feedback, requests } from "@provara/db";
-import { eq, desc, sql, and } from "drizzle-orm";
+import { eq, desc, sql, and, gte } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTokenInfo } from "../auth/middleware.js";
 import { getTenantId } from "../auth/tenant.js";
+import { getJudgeConfig, setJudgeConfig } from "../routing/judge.js";
 
 export function createFeedbackRoutes(db: Db) {
   const app = new Hono();
@@ -126,6 +127,48 @@ export function createFeedbackRoutes(db: Db) {
       .all();
 
     return c.json({ quality: rows });
+  });
+
+  // Quality trend over time
+  app.get("/quality/trend", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const range = c.req.query("range") || "7d";
+    const rangeMs = range === "24h" ? 86400_000 : range === "30d" ? 30 * 86400_000 : 7 * 86400_000;
+    const since = new Date(Date.now() - rangeMs);
+    const fmt = range === "24h" ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
+
+    const conditions = [gte(feedback.createdAt, since)];
+    if (tenantId) conditions.push(eq(feedback.tenantId, tenantId));
+
+    const rows = await db
+      .select({
+        bucket: sql<string>`strftime(${fmt}, datetime(${feedback.createdAt} / 1000, 'unixepoch'))`,
+        avgScore: sql<number>`avg(${feedback.score})`,
+        count: sql<number>`count(*)`,
+        userCount: sql<number>`sum(case when ${feedback.source} = 'user' then 1 else 0 end)`,
+        judgeCount: sql<number>`sum(case when ${feedback.source} = 'judge' then 1 else 0 end)`,
+      })
+      .from(feedback)
+      .where(and(...conditions))
+      .groupBy(sql`1`)
+      .orderBy(sql`1`)
+      .all();
+
+    return c.json({ series: rows, range });
+  });
+
+  // Judge configuration
+  app.get("/judge/config", (c) => {
+    return c.json(getJudgeConfig());
+  });
+
+  app.put("/judge/config", async (c) => {
+    const body = await c.req.json<{
+      sampleRate?: number;
+      enabled?: boolean;
+    }>();
+    setJudgeConfig(body);
+    return c.json(getJudgeConfig());
   });
 
   return app;

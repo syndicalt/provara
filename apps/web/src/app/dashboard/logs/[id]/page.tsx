@@ -145,11 +145,18 @@ export default function RequestDetailPage() {
   const [loading, setLoading] = useState(true);
 
   // Replay state
+  // Replay state
   const [replayModel, setReplayModel] = useState("");
   const [replayModels, setReplayModels] = useState<{ provider: string; model: string }[]>([]);
   const [replaying, setReplaying] = useState(false);
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
   const [viewMode, setViewMode] = useState<"side-by-side" | "diff">("side-by-side");
+
+  // Manual feedback state
+  const [feedbackScore, setFeedbackScore] = useState<number>(0);
+  const [feedbackComment, setFeedbackComment] = useState("");
+  const [submittingFeedback, setSubmittingFeedback] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
 
   useEffect(() => {
     gatewayClientFetch<{ request: RequestDetail; feedback: FeedbackEntry[] }>(
@@ -348,6 +355,72 @@ export default function RequestDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Manual Feedback */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-zinc-400">Rate this Response</h2>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+          {feedbackSubmitted ? (
+            <p className="text-sm text-emerald-400">Feedback submitted. Thanks!</p>
+          ) : (
+            <div className="flex items-end gap-4">
+              <div>
+                <label className="block text-xs text-zinc-500 mb-2">Score</label>
+                <div className="flex gap-1">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button
+                      key={n}
+                      onClick={() => setFeedbackScore(n)}
+                      className={`w-9 h-9 rounded-md text-sm font-medium transition-colors ${
+                        feedbackScore === n
+                          ? n >= 4 ? "bg-emerald-600 text-white" : n >= 3 ? "bg-yellow-600 text-white" : "bg-red-600 text-white"
+                          : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+                      }`}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex-1">
+                <label className="block text-xs text-zinc-500 mb-2">Comment (optional)</label>
+                <input
+                  type="text"
+                  value={feedbackComment}
+                  onChange={(e) => setFeedbackComment(e.target.value)}
+                  placeholder="What did you think?"
+                  className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <button
+                onClick={async () => {
+                  if (!feedbackScore) return;
+                  setSubmittingFeedback(true);
+                  try {
+                    await gatewayFetchRaw("/v1/feedback", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        requestId: request.id,
+                        score: feedbackScore,
+                        comment: feedbackComment || undefined,
+                      }),
+                    });
+                    setFeedbackSubmitted(true);
+                  } catch (err) {
+                    console.error("Failed to submit feedback:", err);
+                  } finally {
+                    setSubmittingFeedback(false);
+                  }
+                }}
+                disabled={!feedbackScore || submittingFeedback}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+              >
+                {submittingFeedback ? "..." : "Submit"}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Replay */}
       <div className="space-y-3">
