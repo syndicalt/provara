@@ -12,6 +12,7 @@ interface Token {
   rateLimit: number | null;
   spendLimit: number | null;
   spendPeriod: string | null;
+  routingProfile: string | null;
   expiresAt: string | null;
   createdAt: string;
 }
@@ -37,6 +38,7 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
   const [rateLimit, setRateLimit] = useState("");
   const [spendLimit, setSpendLimit] = useState("");
   const [spendPeriod, setSpendPeriod] = useState("monthly");
+  const [routingProfile, setRoutingProfile] = useState("balanced");
   const [submitting, setSubmitting] = useState(false);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -53,6 +55,7 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
           rateLimit: rateLimit ? parseInt(rateLimit) : undefined,
           spendLimit: spendLimit ? parseFloat(spendLimit) : undefined,
           spendPeriod,
+          routingProfile,
         }),
       });
       const data = await res.json();
@@ -159,7 +162,7 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm text-zinc-400 mb-1">Rate Limit (RPM)</label>
           <input
@@ -191,6 +194,18 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
             <option value="daily">Daily</option>
             <option value="weekly">Weekly</option>
             <option value="monthly">Monthly</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm text-zinc-400 mb-1">Routing Profile</label>
+          <select
+            value={routingProfile}
+            onChange={(e) => setRoutingProfile(e.target.value)}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          >
+            <option value="cost">Cost (70% cost, 30% quality)</option>
+            <option value="balanced">Balanced (50/50)</option>
+            <option value="quality">Quality (80% quality, 20% cost)</option>
           </select>
         </div>
       </div>
@@ -237,6 +252,9 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
           <span className="text-xs text-zinc-500">({token.tenant})</span>
         </div>
         <div className="flex items-center gap-3">
+          {token.routingProfile && (
+            <span className="text-xs px-2 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-800/50 capitalize">{token.routingProfile}</span>
+          )}
           {token.rateLimit && (
             <span className="text-xs text-zinc-500">{token.rateLimit} RPM</span>
           )}
