@@ -1,9 +1,80 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../../lib/gateway-client";
+
+// ---- Lightweight word-level diff ----
+type DiffOp = "equal" | "insert" | "delete";
+interface DiffSegment { op: DiffOp; text: string }
+
+function wordDiff(a: string, b: string): DiffSegment[] {
+  const wordsA = a.split(/(\s+)/);
+  const wordsB = b.split(/(\s+)/);
+  const n = wordsA.length;
+  const m = wordsB.length;
+
+  // LCS via Myers-style DP (fine for typical LLM response lengths)
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      if (wordsA[i] === wordsB[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const segments: DiffSegment[] = [];
+  let i = 0, j = 0;
+
+  function push(op: DiffOp, text: string) {
+    if (!text) return;
+    const last = segments[segments.length - 1];
+    if (last && last.op === op) {
+      last.text += text;
+    } else {
+      segments.push({ op, text });
+    }
+  }
+
+  while (i < n && j < m) {
+    if (wordsA[i] === wordsB[j]) {
+      push("equal", wordsA[i]);
+      i++; j++;
+    } else if ((dp[i + 1]?.[j] ?? 0) >= (dp[i]?.[j + 1] ?? 0)) {
+      push("delete", wordsA[i]);
+      i++;
+    } else {
+      push("insert", wordsB[j]);
+      j++;
+    }
+  }
+  while (i < n) { push("delete", wordsA[i]); i++; }
+  while (j < m) { push("insert", wordsB[j]); j++; }
+
+  return segments;
+}
+
+function DiffView({ original, replay }: { original: string; replay: string }) {
+  const segments = useMemo(() => wordDiff(original, replay), [original, replay]);
+
+  return (
+    <pre className="text-xs whitespace-pre-wrap font-sans leading-relaxed p-3">
+      {segments.map((seg, i) => {
+        if (seg.op === "equal") {
+          return <span key={i} className="text-zinc-300">{seg.text}</span>;
+        }
+        if (seg.op === "delete") {
+          return <span key={i} className="bg-red-900/40 text-red-300 line-through decoration-red-500/50">{seg.text}</span>;
+        }
+        return <span key={i} className="bg-emerald-900/40 text-emerald-300">{seg.text}</span>;
+      })}
+    </pre>
+  );
+}
 
 interface RequestDetail {
   id: string;
@@ -78,6 +149,7 @@ export default function RequestDetailPage() {
   const [replayModels, setReplayModels] = useState<{ provider: string; model: string }[]>([]);
   const [replaying, setReplaying] = useState(false);
   const [replayResult, setReplayResult] = useState<ReplayResult | null>(null);
+  const [viewMode, setViewMode] = useState<"side-by-side" | "diff">("side-by-side");
 
   useEffect(() => {
     gatewayClientFetch<{ request: RequestDetail; feedback: FeedbackEntry[] }>(
@@ -309,40 +381,75 @@ export default function RequestDetailPage() {
             </button>
           </div>
 
-          {/* Replay result — side by side */}
+          {/* Replay result */}
           {replayResult && (
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-800">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-zinc-400">Original</p>
-                  <div className="flex gap-3 text-[10px] text-zinc-500">
-                    <span>{request.latencyMs}ms</span>
-                    <span>{request.inputTokens}/{request.outputTokens} tok</span>
-                    <span>{formatCost(request.cost)}</span>
-                  </div>
+            <div className="pt-4 border-t border-zinc-800 space-y-3">
+              {/* View mode toggle + stats */}
+              <div className="flex items-center justify-between">
+                <div className="flex gap-1 bg-zinc-800 rounded-md p-0.5">
+                  <button
+                    onClick={() => setViewMode("side-by-side")}
+                    className={`px-2.5 py-1 rounded text-xs transition-colors ${viewMode === "side-by-side" ? "bg-zinc-700 text-zinc-200" : "text-zinc-500 hover:text-zinc-300"}`}
+                  >
+                    Side by Side
+                  </button>
+                  <button
+                    onClick={() => setViewMode("diff")}
+                    className={`px-2.5 py-1 rounded text-xs transition-colors ${viewMode === "diff" ? "bg-zinc-700 text-zinc-200" : "text-zinc-500 hover:text-zinc-300"}`}
+                  >
+                    Diff
+                  </button>
                 </div>
-                <div className="bg-zinc-800/50 border border-zinc-700/50 rounded p-3 max-h-80 overflow-y-auto">
-                  <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
-                    {request.response || "(no response)"}
-                  </pre>
-                </div>
-              </div>
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-blue-400">
-                    Replay — {replayResult.provider}/{replayResult.model}
-                  </p>
-                  <div className="flex gap-3 text-[10px] text-zinc-500">
-                    <span>{replayResult.latencyMs}ms</span>
-                    <span>{replayResult.inputTokens}/{replayResult.outputTokens} tok</span>
-                  </div>
-                </div>
-                <div className="bg-zinc-800/50 border border-blue-900/30 rounded p-3 max-h-80 overflow-y-auto">
-                  <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
-                    {replayResult.content}
-                  </pre>
+                <div className="flex gap-4 text-[10px] text-zinc-500">
+                  <span>Original: {request.latencyMs}ms, {request.inputTokens}/{request.outputTokens} tok, {formatCost(request.cost)}</span>
+                  <span>Replay: {replayResult.latencyMs}ms, {replayResult.inputTokens}/{replayResult.outputTokens} tok</span>
                 </div>
               </div>
+
+              {viewMode === "side-by-side" ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs font-semibold text-zinc-400 mb-2">Original — {request.provider}/{request.model}</p>
+                    <div className="bg-zinc-800/50 border border-zinc-700/50 rounded p-3 max-h-96 overflow-y-auto">
+                      <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
+                        {request.response || "(no response)"}
+                      </pre>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-blue-400 mb-2">Replay — {replayResult.provider}/{replayResult.model}</p>
+                    <div className="bg-zinc-800/50 border border-blue-900/30 rounded p-3 max-h-96 overflow-y-auto">
+                      <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
+                        {replayResult.content}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center gap-4 mb-2">
+                    <p className="text-xs font-semibold text-zinc-400">
+                      <span className="text-red-400">Original</span> vs <span className="text-emerald-400">Replay ({replayResult.provider}/{replayResult.model})</span>
+                    </p>
+                  </div>
+                  <div className="bg-zinc-800/50 border border-zinc-700/50 rounded max-h-96 overflow-y-auto">
+                    <DiffView
+                      original={request.response || "(no response)"}
+                      replay={replayResult.content}
+                    />
+                  </div>
+                  <div className="flex gap-4 mt-2 text-[10px] text-zinc-600">
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block w-3 h-2 rounded-sm bg-red-900/40 border border-red-800/30" />
+                      Removed from original
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="inline-block w-3 h-2 rounded-sm bg-emerald-900/40 border border-emerald-800/30" />
+                      Added in replay
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
