@@ -90,7 +90,11 @@ const response = await client.chat.completions.create({
     content: [
       {
         heading: "How Routing Works",
-        text: "When a request arrives without a specific model:\n\n1. The classifier analyzes the prompt to determine task type (coding, creative, summarization, Q&A, general) and complexity (simple, medium, complex).\n\n2. If there's an active A/B test matching that cell, traffic is split between variants by weight.\n\n3. If adaptive routing has enough quality data (5+ feedback scores), it picks the highest-scoring model using a composite of quality, cost, and latency.\n\n4. Otherwise, the fallback chain routes to the cheapest available model.\n\nEach request logs which method was used: 'classification', 'ab-test', 'adaptive', 'routing-hint', or 'explicit'.",
+        text: "When a request arrives without a specific model:\n\n1. The classifier analyzes the prompt to determine task type (coding, creative, summarization, Q&A, general) and complexity (simple, medium, complex).\n\n2. If there's an active A/B test matching that cell, traffic is split between variants by weight.\n\n3. If adaptive routing has enough quality data (5+ feedback scores for that cell), it picks the highest-scoring model using a composite of quality, cost, and latency.\n\n4. Otherwise, the fallback chain routes to the cheapest available model.\n\nEach request logs which method was used: 'classification', 'ab-test', 'adaptive', 'routing-hint', or 'explicit'.",
+      },
+      {
+        heading: "Cold Start & Building Quality Data",
+        text: "When you first start using Provara, the adaptive router has no quality data. This means ALL requests — including complex ones — will route to the cheapest available model via the fallback chain. This is expected behavior, not a bug.\n\nTo unlock intelligent routing, you need to build quality data. There are two ways:\n\n1. LLM Judge (automatic): Enable it on the Quality page and set the sample rate. The judge automatically scores a percentage of responses using the cheapest model. Once a routing cell (e.g. coding/complex) has 5+ scores, adaptive routing activates for that cell.\n\n2. Manual feedback: Rate responses in the Logs detail view using the 1-5 score buttons. This is faster for seeding initial data.\n\nAs scores accumulate, the router will naturally start sending complex tasks to higher-quality models and simple tasks to cheaper ones. You can monitor this on the Quality page's Adaptive Routing Matrix.",
       },
       {
         heading: "Routing Profiles",
