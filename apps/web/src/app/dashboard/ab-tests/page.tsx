@@ -284,9 +284,11 @@ interface AbTestRequest {
 
 function FeedbackButtons({ requestId, currentScore, onScored }: { requestId: string; currentScore: number | null; onScored: () => void }) {
   const [submitting, setSubmitting] = useState(false);
+  const [localScore, setLocalScore] = useState<number | null>(currentScore);
 
   async function submitScore(score: number) {
     setSubmitting(true);
+    setLocalScore(score);
     try {
       await gatewayFetchRaw("/v1/feedback", {
         method: "POST",
@@ -295,21 +297,26 @@ function FeedbackButtons({ requestId, currentScore, onScored }: { requestId: str
       onScored();
     } catch (err) {
       console.error("Failed to submit feedback:", err);
+      setLocalScore(currentScore); // revert on failure
     } finally {
       setSubmitting(false);
     }
   }
 
+  const activeScore = localScore ?? currentScore;
+
   return (
-    <div className="flex gap-1">
+    <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
       {[1, 2, 3, 4, 5].map((score) => (
         <button
           key={score}
-          onClick={() => submitScore(score)}
-          disabled={submitting}
+          onClick={(e) => { e.stopPropagation(); submitScore(score); }}
+          disabled={submitting || activeScore !== null}
           className={`w-7 h-7 rounded text-xs font-medium transition-colors ${
-            currentScore === score
+            activeScore === score
               ? "bg-blue-600 text-white"
+              : activeScore !== null
+              ? "bg-zinc-800/50 border border-zinc-800 text-zinc-600"
               : "bg-zinc-800 border border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
           } disabled:opacity-50`}
         >
