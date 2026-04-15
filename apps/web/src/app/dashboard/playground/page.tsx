@@ -249,7 +249,7 @@ export default function PlaygroundPage() {
 
         {/* Input */}
         <div className="border-t border-zinc-800 px-4 py-3">
-          <div className="flex gap-3 max-w-4xl mx-auto">
+          <div className="flex gap-3 items-end max-w-4xl mx-auto">
             <textarea
               ref={inputRef}
               value={input}
@@ -269,7 +269,7 @@ export default function PlaygroundPage() {
             <button
               onClick={handleSend}
               disabled={streaming || !input.trim()}
-              className="px-4 py-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-xl text-sm font-medium transition-colors shrink-0"
+              className="px-4 h-[44px] bg-blue-600 hover:bg-blue-500 disabled:opacity-30 disabled:cursor-not-allowed rounded-xl text-sm font-medium transition-colors shrink-0"
             >
               {streaming ? "..." : "Send"}
             </button>
