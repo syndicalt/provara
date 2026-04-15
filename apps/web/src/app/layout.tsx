@@ -15,7 +15,7 @@ function Nav() {
           <Link href="/" className="text-lg font-bold tracking-tight">
             Provara
           </Link>
-          <div className="flex gap-6 text-sm text-zinc-400">
+          <div className="flex gap-6 text-sm text-zinc-400 ml-auto">
             <Link href="/dashboard" className="hover:text-zinc-100 transition-colors">
               Dashboard
             </Link>
