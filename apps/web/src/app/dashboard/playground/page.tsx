@@ -27,12 +27,29 @@ interface ProvaraMetadata {
 
 export default function PlaygroundPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [selectedProvider, setSelectedProvider] = useState("");
-  const [systemPrompt, setSystemPrompt] = useState("");
+  const [selectedModel, setSelectedModel] = useState(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("pg:model") || "";
+    return "";
+  });
+  const [selectedProvider, setSelectedProvider] = useState(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("pg:provider") || "";
+    return "";
+  });
+  const [systemPrompt, setSystemPrompt] = useState(() => {
+    if (typeof window !== "undefined") return sessionStorage.getItem("pg:system") || "";
+    return "";
+  });
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(1024);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = sessionStorage.getItem("pg:messages");
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return [];
+  });
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
@@ -49,6 +66,12 @@ export default function PlaygroundPage() {
       })
       .catch(console.error);
   }, []);
+
+  // Persist to sessionStorage
+  useEffect(() => { sessionStorage.setItem("pg:messages", JSON.stringify(messages)); }, [messages]);
+  useEffect(() => { sessionStorage.setItem("pg:model", selectedModel); }, [selectedModel]);
+  useEffect(() => { sessionStorage.setItem("pg:provider", selectedProvider); }, [selectedProvider]);
+  useEffect(() => { sessionStorage.setItem("pg:system", systemPrompt); }, [systemPrompt]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -156,6 +179,7 @@ export default function PlaygroundPage() {
     setMessages([]);
     setStreamingContent("");
     setLastMeta(null);
+    sessionStorage.removeItem("pg:messages");
   }
 
   function handleModelChange(value: string) {
