@@ -119,20 +119,28 @@ export async function createRouter(ctx: RouterContext) {
     const tenantIdForGuardrails = getTenantId(c.req.raw);
     const guardrailRulesList = await loadRules(ctx.db, tenantIdForGuardrails);
     if (guardrailRulesList.length > 0) {
-      const inputText = request.messages.map((m) => m.content).join("\n");
-      const inputCheck = checkContent(inputText, guardrailRulesList, "input");
+      // Check each message individually so we can redact in-place
+      for (let i = 0; i < request.messages.length; i++) {
+        const msg = request.messages[i];
+        const inputCheck = checkContent(msg.content, guardrailRulesList, "input");
 
-      if (inputCheck.violations.length > 0) {
-        await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
-      }
+        if (inputCheck.violations.length > 0) {
+          await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
+        }
 
-      if (!inputCheck.passed) {
-        return c.json({
-          error: {
-            message: `Request blocked by guardrail: ${inputCheck.violations.map((v) => v.ruleName).join(", ")}`,
-            type: "guardrail_error",
-          },
-        }, 400);
+        if (!inputCheck.passed) {
+          return c.json({
+            error: {
+              message: `Request blocked by guardrail: ${inputCheck.violations.map((v) => v.ruleName).join(", ")}`,
+              type: "guardrail_error",
+            },
+          }, 400);
+        }
+
+        // Apply redacted content back to the message
+        if (inputCheck.action === "redact") {
+          request.messages[i] = { ...msg, content: inputCheck.content };
+        }
       }
     }
 
