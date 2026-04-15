@@ -360,8 +360,8 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
                       <td className="py-2 font-mono text-xs">{r.provider}/{r.model}</td>
                       <td className="py-2 text-right">{formatNumber(r.count)}</td>
                       <td className="py-2 text-right">{formatLatency(r.avgLatency)}</td>
-                      <td className="py-2 text-right">{formatCost(r.totalCost)}</td>
-                      <td className="py-2 text-right">{r.count > 0 ? formatCost(r.totalCost / r.count) : "—"}</td>
+                      <td className="py-2 text-right">{r.totalCost != null ? formatCost(r.totalCost) : "—"}</td>
+                      <td className="py-2 text-right">{r.count > 0 && r.totalCost != null ? formatCost(r.totalCost / r.count) : "—"}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { formatLatency, formatNumber } from "../../../lib/format";
+import { DataTable, type Column } from "../../../components/data-table";
+import { Badge } from "../../../components/badge";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
 
@@ -100,6 +102,16 @@ function RoutingMatrix({ stats }: { stats: RoutingStat[] }) {
   );
 }
 
+const routingStatsColumns: Column<RoutingStat>[] = [
+  { key: "taskType", label: "Task Type", sortable: true, filterable: true, render: (row) => row.taskType ? <Badge variant={row.taskType}>{row.taskType}</Badge> : <>—</>, getValue: (row) => row.taskType },
+  { key: "complexity", label: "Complexity", sortable: true, filterable: true, render: (row) => row.complexity ? <Badge variant={row.complexity}>{row.complexity}</Badge> : <>—</>, getValue: (row) => row.complexity },
+  { key: "routedBy", label: "Routed By", sortable: true, filterable: true, render: (row) => <span className="text-zinc-400 text-xs">{row.routedBy || "—"}</span>, getValue: (row) => row.routedBy },
+  { key: "provider", label: "Provider", sortable: true, filterable: true },
+  { key: "model", label: "Model", sortable: true, filterable: true, render: (row) => <span className="font-mono text-xs">{row.model}</span> },
+  { key: "count", label: "Requests", sortable: true, align: "right", render: (row) => formatNumber(row.count) },
+  { key: "avgLatency", label: "Avg Latency", sortable: true, align: "right", render: (row) => formatLatency(row.avgLatency) },
+];
+
 export default function RoutingPage() {
   const [stats, setStats] = useState<RoutingStat[]>([]);
   const [distribution, setDistribution] = useState<Distribution | null>(null);
@@ -167,42 +179,12 @@ export default function RoutingPage() {
       {/* Detailed Stats */}
       <section>
         <h2 className="text-lg font-semibold mb-4">Detailed Routing Stats</h2>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-800 text-zinc-400 text-left">
-                <th className="px-4 py-3">Task Type</th>
-                <th className="px-4 py-3">Complexity</th>
-                <th className="px-4 py-3">Routed By</th>
-                <th className="px-4 py-3">Provider</th>
-                <th className="px-4 py-3">Model</th>
-                <th className="px-4 py-3 text-right">Requests</th>
-                <th className="px-4 py-3 text-right">Avg Latency</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
-                    No routing data yet. Send some requests without specifying a model.
-                  </td>
-                </tr>
-              ) : (
-                stats.map((stat, i) => (
-                  <tr key={i} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
-                    <td className="px-4 py-3 capitalize">{stat.taskType || "—"}</td>
-                    <td className="px-4 py-3 capitalize">{stat.complexity || "—"}</td>
-                    <td className="px-4 py-3 text-zinc-400 text-xs">{stat.routedBy || "—"}</td>
-                    <td className="px-4 py-3">{stat.provider}</td>
-                    <td className="px-4 py-3 font-mono text-xs">{stat.model}</td>
-                    <td className="px-4 py-3 text-right">{formatNumber(stat.count)}</td>
-                    <td className="px-4 py-3 text-right">{formatLatency(stat.avgLatency)}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={routingStatsColumns}
+          data={stats}
+          pageSize={10}
+          emptyMessage="No routing data yet. Send some requests without specifying a model."
+        />
       </section>
     </div>
   );
