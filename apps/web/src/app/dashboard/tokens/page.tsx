@@ -118,6 +118,23 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
             {copied ? "Copied!" : "Copy"}
           </button>
         </div>
+        <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-4 space-y-2">
+          <p className="text-xs text-zinc-400">Point your app at Provara:</p>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <span className="text-zinc-500">Base URL</span>
+              <code className="block mt-1 text-zinc-300 font-mono">https://gateway.provara.xyz/v1</code>
+            </div>
+            <div>
+              <span className="text-zinc-500">API Key</span>
+              <code className="block mt-1 text-zinc-300 font-mono">{createdToken.slice(0, 14)}...</code>
+            </div>
+          </div>
+          <pre className="mt-2 text-[11px] text-zinc-500 font-mono leading-relaxed">{`const client = new OpenAI({
+  baseURL: "https://gateway.provara.xyz/v1",
+  apiKey: "${createdToken.slice(0, 14)}...",
+});`}</pre>
+        </div>
         <button
           onClick={handleDone}
           className="px-4 py-2 bg-zinc-700 hover:bg-zinc-600 rounded text-sm"
