@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { formatLatency, formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
 import { Badge } from "../../../components/badge";
-import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
+import { gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface RoutingStat {
   taskType: string | null;
@@ -120,8 +120,8 @@ export default function RoutingPage() {
     async function fetchData() {
       try {
         const [statsRes, distRes] = await Promise.all([
-          fetch(gatewayUrl("/v1/analytics/routing/stats"), { headers: adminHeaders() }),
-          fetch(gatewayUrl("/v1/analytics/routing/distribution"), { headers: adminHeaders() }),
+          gatewayFetchRaw("/v1/analytics/routing/stats"),
+          gatewayFetchRaw("/v1/analytics/routing/distribution"),
         ]);
         const statsData = await statsRes.json();
         const distData = await distRes.json();

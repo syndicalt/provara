@@ -1,4 +1,42 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull().unique(),
+  name: text("name"),
+  avatarUrl: text("avatar_url"),
+  tenantId: text("tenant_id").notNull(),
+  role: text("role", { enum: ["owner", "member"] }).notNull().default("owner"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const oauthAccounts = sqliteTable("oauth_accounts", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  provider: text("provider", { enum: ["google", "github"] }).notNull(),
+  providerAccountId: text("provider_account_id").notNull(),
+  email: text("email"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  uniqueIndex("oauth_provider_account_idx").on(table.provider, table.providerAccountId),
+]);
+
+export const sessions = sqliteTable("sessions", {
+  id: text("id").primaryKey(), // session token
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
 
 export const customProviders = sqliteTable("custom_providers", {
   id: text("id").primaryKey(),

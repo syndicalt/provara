@@ -15,6 +15,7 @@ import { createTenantMiddleware } from "./auth/tenant.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
+import { createAuthRoutes } from "./routes/auth.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { getMode } from "./config.js";
@@ -29,14 +30,22 @@ export async function createRouter(ctx: RouterContext) {
   const routingEngine = await createRoutingEngine({ registry: ctx.registry, db: ctx.db });
   const judge = createJudge(ctx.registry, ctx.db);
 
-  // Enable CORS for web dashboard
-  app.use("/*", cors());
+  // Enable CORS for web dashboard (credentials needed for session cookies)
+  app.use("/*", cors({
+    origin: process.env.DASHBOARD_URL || "http://localhost:3000",
+    credentials: true,
+  }));
+
+  // Mount OAuth routes (public, only in multi_tenant mode)
+  if (getMode() === "multi_tenant") {
+    app.route("/auth", createAuthRoutes(ctx.db));
+  }
 
   // Auth middleware — checks Bearer token on /v1/chat/completions
   app.use("/v1/*", createAuthMiddleware(ctx.db));
 
-  // Admin middleware — checks X-Admin-Key on dashboard/management routes
-  const adminAuth = createAdminMiddleware();
+  // Admin middleware — checks X-Admin-Key or session on dashboard routes
+  const adminAuth = createAdminMiddleware(ctx.db);
   app.use("/v1/ab-tests/*", adminAuth);
   app.use("/v1/analytics/*", adminAuth);
   app.use("/v1/api-keys/*", adminAuth);
@@ -47,7 +56,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/cache/*", adminAuth);
 
   // Tenant middleware — enforces tenant context in multi_tenant mode
-  app.use("/v1/*", createTenantMiddleware());
+  app.use("/v1/*", createTenantMiddleware(ctx.db));
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
