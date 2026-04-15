@@ -86,28 +86,44 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const [overviewData, costsData] = await Promise.all([
-          gatewayClientFetch<Overview>(`/v1/analytics/overview`),
-          gatewayClientFetch<{ costs: CostByModel[] }>(`/v1/analytics/costs/by-model`),
-        ]);
-        setOverview(overviewData);
-        setCostsByModel(costsData.costs || []);
-      } catch (err) {
-        console.error("Failed to fetch dashboard data:", err);
-      } finally {
-        setLoading(false);
-      }
+  const fetchDashboard = useCallback(async () => {
+    try {
+      const [overviewData, costsData] = await Promise.all([
+        gatewayClientFetch<Overview>(`/v1/analytics/overview`),
+        gatewayClientFetch<{ costs: CostByModel[] }>(`/v1/analytics/costs/by-model`),
+      ]);
+      setOverview(overviewData);
+      setCostsByModel(costsData.costs || []);
+    } catch (err) {
+      console.error("Failed to fetch dashboard data:", err);
+    } finally {
+      setLoading(false);
     }
-    fetchData();
-    fetchRequests(0, reqPageSize);
-  }, [fetchRequests, reqPageSize]);
+  }, []);
 
+  useEffect(() => {
+    fetchDashboard();
+    fetchRequests(0, reqPageSize);
+
+    // Auto-refresh every 10 seconds
+    const interval = setInterval(() => {
+      fetchDashboard();
+      fetchRequests(reqPage, reqPageSize);
+    }, 10_000);
+    return () => clearInterval(interval);
+  }, [fetchDashboard, fetchRequests, reqPage, reqPageSize]);
+
+  // Also fetch immediately on page/size change
   useEffect(() => {
     fetchRequests(reqPage, reqPageSize);
   }, [reqPage, reqPageSize, fetchRequests]);
+
+  // Add a subtle live indicator
+  const [lastRefresh, setLastRefresh] = useState(new Date());
+  useEffect(() => {
+    const tick = setInterval(() => setLastRefresh(new Date()), 10_000);
+    return () => clearInterval(tick);
+  }, []);
 
   if (loading) {
     return (
@@ -119,7 +135,13 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <span className="flex items-center gap-1.5 text-[10px] text-zinc-600">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          Live
+        </span>
+      </div>
 
       {/* Overview Stats */}
       <div className="grid grid-cols-4 gap-4">
