@@ -234,8 +234,8 @@ export default function ModelsPage() {
         )}
 
         <p className="text-xs text-zinc-600 mt-4">
-          {filtered.length} model{filtered.length !== 1 ? "s" : ""} available
-          {providerFilter ? ` from ${providerFilter}` : ""}
+          {filtered.length} model{filtered.length !== 1 ? "s" : ""} across {[...new Set(filtered.map((m) => m.provider))].length} provider{[...new Set(filtered.map((m) => m.provider))].length !== 1 ? "s" : ""}
+          {providerFilter ? ` (filtered: ${providerFilter})` : ""}
         </p>
       </div>
     </>
