@@ -17,6 +17,7 @@ import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createTeamRoutes } from "./routes/team.js";
+import { createModelRoutes } from "./routes/models.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { getMode } from "./config.js";
@@ -83,6 +84,9 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount team management routes (owner only, multi_tenant mode)
   app.route("/v1/admin/team", createTeamRoutes(ctx.db));
+
+  // Mount model stats routes (public — no admin auth needed)
+  app.route("/v1/models", createModelRoutes({ db: ctx.db, registry: ctx.registry }));
 
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", async (c) => {
