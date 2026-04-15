@@ -106,7 +106,7 @@ export function createJudge(registry: ProviderRegistry, db: Db) {
       if (!result) return;
 
       // Store as feedback with source "judge"
-      db.insert(feedback)
+      await db.insert(feedback)
         .values({
           id: nanoid(),
           requestId: ctx.requestId,

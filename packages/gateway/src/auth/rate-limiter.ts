@@ -45,10 +45,10 @@ function getPeriodStart(period: string): Date {
   }
 }
 
-export function checkSpendLimit(
+export async function checkSpendLimit(
   db: Db,
   tokenInfo: TokenInfo
-): { allowed: boolean; spent: number; limit: number; period: string } {
+): Promise<{ allowed: boolean; spent: number; limit: number; period: string }> {
   if (!tokenInfo.spendLimit) {
     return { allowed: true, spent: 0, limit: -1, period: "none" };
   }
@@ -56,7 +56,7 @@ export function checkSpendLimit(
   const period = tokenInfo.spendPeriod || "monthly";
   const periodStart = getPeriodStart(period);
 
-  const result = db
+  const result = await db
     .select({ total: sql<number>`coalesce(sum(${costLogs.cost}), 0)` })
     .from(costLogs)
     .where(

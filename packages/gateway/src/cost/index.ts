@@ -17,7 +17,7 @@ export interface CostEntry {
 export async function logCost(db: Db, entry: CostEntry): Promise<number> {
   const cost = calculateCost(entry.model, entry.inputTokens, entry.outputTokens);
 
-  db.insert(costLogs)
+  await db.insert(costLogs)
     .values({
       id: nanoid(),
       requestId: entry.requestId,

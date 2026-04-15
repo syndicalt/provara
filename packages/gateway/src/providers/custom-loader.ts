@@ -5,8 +5,8 @@ import type { OpenAICompatibleConfig } from "./openai-compatible.js";
 import { decrypt, hasMasterKey } from "../crypto/index.js";
 import { apiKeys } from "@provara/db";
 
-export function loadCustomProviders(db: Db): OpenAICompatibleConfig[] {
-  const rows = db
+export async function loadCustomProviders(db: Db): Promise<OpenAICompatibleConfig[]> {
+  const rows = await db
     .select()
     .from(customProviders)
     .where(eq(customProviders.enabled, true))
@@ -19,7 +19,7 @@ export function loadCustomProviders(db: Db): OpenAICompatibleConfig[] {
 
     // Resolve API key from api_keys table if reference is set
     if (row.apiKeyRef && hasMasterKey()) {
-      const keyRow = db
+      const keyRow = await db
         .select()
         .from(apiKeys)
         .where(eq(apiKeys.name, row.apiKeyRef))

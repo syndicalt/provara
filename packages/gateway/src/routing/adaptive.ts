@@ -59,10 +59,10 @@ function computeRouteScore(
   return weights.quality * normalizedQuality + weights.cost * normalizedCost;
 }
 
-export function createAdaptiveRouter(db: Db) {
+export async function createAdaptiveRouter(db: Db) {
   // Load initial scores from existing feedback data
-  function loadScoresFromDb(): void {
-    const rows = db
+  async function loadScoresFromDb(): Promise<void> {
+    const rows = await db
       .select({
         provider: requests.provider,
         model: requests.model,
@@ -183,7 +183,7 @@ export function createAdaptiveRouter(db: Db) {
   }
 
   // Initialize from DB on startup
-  loadScoresFromDb();
+  await loadScoresFromDb();
 
   return {
     updateScore,

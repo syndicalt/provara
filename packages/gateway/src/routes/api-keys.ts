@@ -14,12 +14,12 @@ export function createApiKeyRoutes(db: Db) {
   });
 
   // List all API keys (masked values only)
-  app.get("/", (c) => {
+  app.get("/", async (c) => {
     if (!hasMasterKey()) {
       return c.json({ error: { message: "PROVARA_MASTER_KEY not set", type: "configuration_error" } }, 503);
     }
 
-    const keys = db.select().from(apiKeys).all();
+    const keys = await db.select().from(apiKeys).all();
     return c.json({
       keys: keys.map((k) => {
         let maskedValue: string;
@@ -67,14 +67,14 @@ export function createApiKeyRoutes(db: Db) {
     const { encrypted, iv, authTag } = encrypt(body.value);
 
     // Upsert: if a key with this name exists, update it
-    const existing = db
+    const existing = await db
       .select()
       .from(apiKeys)
       .where(eq(apiKeys.name, body.name))
       .get();
 
     if (existing) {
-      db.update(apiKeys)
+      await db.update(apiKeys)
         .set({
           provider: body.provider,
           encryptedValue: encrypted,
@@ -97,7 +97,7 @@ export function createApiKeyRoutes(db: Db) {
     }
 
     const id = nanoid();
-    db.insert(apiKeys)
+    await db.insert(apiKeys)
       .values({
         id,
         name: body.name,
@@ -123,15 +123,15 @@ export function createApiKeyRoutes(db: Db) {
   });
 
   // Delete an API key
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const { id } = c.req.param();
 
-    const key = db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
+    const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
     if (!key) {
       return c.json({ error: { message: "API key not found", type: "not_found" } }, 404);
     }
 
-    db.delete(apiKeys).where(eq(apiKeys.id, id)).run();
+    await db.delete(apiKeys).where(eq(apiKeys.id, id)).run();
     return c.json({ deleted: true });
   });
 
@@ -140,10 +140,10 @@ export function createApiKeyRoutes(db: Db) {
 
 // Helper: get all decrypted API keys as a map (name → value)
 // Used by the provider registry to load keys from DB
-export function getDecryptedKeys(db: Db): Record<string, string> {
+export async function getDecryptedKeys(db: Db): Promise<Record<string, string>> {
   if (!hasMasterKey()) return {};
 
-  const keys = db.select().from(apiKeys).all();
+  const keys = await db.select().from(apiKeys).all();
   const result: Record<string, string> = {};
 
   for (const k of keys) {

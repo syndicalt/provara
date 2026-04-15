@@ -26,8 +26,8 @@ export interface RoutingRequest {
   routingProfile?: RoutingProfile;
 }
 
-export function createRoutingEngine(config: RoutingEngineConfig) {
-  const adaptive = createAdaptiveRouter(config.db);
+export async function createRoutingEngine(config: RoutingEngineConfig) {
+  const adaptive = await createAdaptiveRouter(config.db);
 
   // Build dynamic fallback chain from all registered providers, sorted by cost (cheapest first)
   function buildDynamicFallbacks(registry: ProviderRegistry): RouteTarget[] {
@@ -46,18 +46,18 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
     return targets.map(({ provider, model }) => ({ provider, model }));
   }
 
-  function findActiveAbTest(
+  async function findActiveAbTest(
     taskType: TaskType,
     complexity: Complexity
-  ): { testId: string; provider: string; model: string } | null {
-    const activeTests = config.db
+  ): Promise<{ testId: string; provider: string; model: string } | null> {
+    const activeTests = await config.db
       .select()
       .from(abTests)
       .where(eq(abTests.status, "active"))
       .all();
 
     for (const test of activeTests) {
-      const variants = config.db
+      const variants = await config.db
         .select()
         .from(abTestVariants)
         .where(eq(abTestVariants.abTestId, test.id))
@@ -136,7 +136,7 @@ export function createRoutingEngine(config: RoutingEngineConfig) {
     const complexity: Complexity = classification.complexity;
 
     // Check for active A/B test on this routing cell
-    const abResult = findActiveAbTest(taskType, complexity);
+    const abResult = await findActiveAbTest(taskType, complexity);
     if (abResult) {
       return {
         provider: abResult.provider,

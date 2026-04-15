@@ -1,0 +1,10 @@
+node_modules
+.next
+dist
+*.db
+*.db-shm
+*.db-wal
+.env
+.git
+.gitignore
+.turbo

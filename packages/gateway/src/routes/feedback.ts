@@ -31,7 +31,7 @@ export function createFeedbackRoutes(db: Db) {
     }
 
     // Verify request exists
-    const request = db.select().from(requests).where(eq(requests.id, body.requestId)).get();
+    const request = await db.select().from(requests).where(eq(requests.id, body.requestId)).get();
     if (!request) {
       return c.json(
         { error: { message: "Request not found", type: "not_found" } },
@@ -42,7 +42,7 @@ export function createFeedbackRoutes(db: Db) {
     const tokenInfo = getTokenInfo(c.req.raw);
     const id = nanoid();
 
-    db.insert(feedback)
+    await db.insert(feedback)
       .values({
         id,
         requestId: body.requestId,
@@ -57,9 +57,9 @@ export function createFeedbackRoutes(db: Db) {
   });
 
   // List recent feedback
-  app.get("/", (c) => {
+  app.get("/", async (c) => {
     const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
-    const rows = db
+    const rows = await db
       .select({
         id: feedback.id,
         requestId: feedback.requestId,
@@ -83,8 +83,8 @@ export function createFeedbackRoutes(db: Db) {
   });
 
   // Quality scores per model per routing cell
-  app.get("/quality/by-cell", (c) => {
-    const rows = db
+  app.get("/quality/by-cell", async (c) => {
+    const rows = await db
       .select({
         provider: requests.provider,
         model: requests.model,
@@ -102,8 +102,8 @@ export function createFeedbackRoutes(db: Db) {
   });
 
   // Quality summary per model
-  app.get("/quality/by-model", (c) => {
-    const rows = db
+  app.get("/quality/by-model", async (c) => {
+    const rows = await db
       .select({
         provider: requests.provider,
         model: requests.model,

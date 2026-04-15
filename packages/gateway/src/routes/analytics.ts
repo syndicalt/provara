@@ -7,14 +7,14 @@ export function createAnalyticsRoutes(db: Db) {
   const app = new Hono();
 
   // List recent requests with pagination
-  app.get("/requests", (c) => {
+  app.get("/requests", async (c) => {
     const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
     const offset = parseInt(c.req.query("offset") || "0");
     const provider = c.req.query("provider");
     const model = c.req.query("model");
     const taskType = c.req.query("taskType");
 
-    const rows = db
+    const rows = (await db
       .select({
         id: requests.id,
         provider: requests.provider,
@@ -37,7 +37,7 @@ export function createAnalyticsRoutes(db: Db) {
       .orderBy(desc(requests.createdAt))
       .limit(limit)
       .offset(offset)
-      .all()
+      .all())
       .filter((r) => {
         if (provider && r.provider !== provider) return false;
         if (model && r.model !== model) return false;
@@ -45,14 +45,14 @@ export function createAnalyticsRoutes(db: Db) {
         return true;
       });
 
-    const total = db.select({ count: sql<number>`count(*)` }).from(requests).get();
+    const total = await db.select({ count: sql<number>`count(*)` }).from(requests).get();
 
     return c.json({ requests: rows, total: total?.count || 0, limit, offset });
   });
 
   // Cost summary by provider
-  app.get("/costs/by-provider", (c) => {
-    const rows = db
+  app.get("/costs/by-provider", async (c) => {
+    const rows = await db
       .select({
         provider: costLogs.provider,
         totalCost: sql<number>`sum(${costLogs.cost})`,
@@ -68,8 +68,8 @@ export function createAnalyticsRoutes(db: Db) {
   });
 
   // Cost summary by model
-  app.get("/costs/by-model", (c) => {
-    const rows = db
+  app.get("/costs/by-model", async (c) => {
+    const rows = await db
       .select({
         provider: costLogs.provider,
         model: costLogs.model,
@@ -87,8 +87,8 @@ export function createAnalyticsRoutes(db: Db) {
   });
 
   // Routing stats — traffic by task type × complexity
-  app.get("/routing/stats", (c) => {
-    const rows = db
+  app.get("/routing/stats", async (c) => {
+    const rows = await db
       .select({
         taskType: requests.taskType,
         complexity: requests.complexity,
@@ -106,8 +106,8 @@ export function createAnalyticsRoutes(db: Db) {
   });
 
   // Routing distribution — how many requests per task type
-  app.get("/routing/distribution", (c) => {
-    const byTaskType = db
+  app.get("/routing/distribution", async (c) => {
+    const byTaskType = await db
       .select({
         taskType: requests.taskType,
         count: sql<number>`count(*)`,
@@ -116,7 +116,7 @@ export function createAnalyticsRoutes(db: Db) {
       .groupBy(requests.taskType)
       .all();
 
-    const byComplexity = db
+    const byComplexity = await db
       .select({
         complexity: requests.complexity,
         count: sql<number>`count(*)`,
@@ -129,12 +129,12 @@ export function createAnalyticsRoutes(db: Db) {
   });
 
   // Overview stats
-  app.get("/overview", (c) => {
-    const totalRequests = db.select({ count: sql<number>`count(*)` }).from(requests).get();
-    const totalCost = db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).get();
-    const avgLatency = db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).get();
+  app.get("/overview", async (c) => {
+    const totalRequests = await db.select({ count: sql<number>`count(*)` }).from(requests).get();
+    const totalCost = await db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).get();
+    const avgLatency = await db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).get();
 
-    const providerCount = db
+    const providerCount = await db
       .select({ count: sql<number>`count(distinct ${requests.provider})` })
       .from(requests)
       .get();

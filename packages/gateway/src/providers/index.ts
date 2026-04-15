@@ -15,22 +15,22 @@ export interface ProviderRegistry {
   get(name: string): Provider | undefined;
   getForModel(model: string): Provider | undefined;
   list(): Provider[];
-  reload(): void;
+  reload(): void | Promise<void>;
   addCustom(config: OpenAICompatibleConfig): void;
   removeCustom(name: string): void;
 }
 
 interface RegistryConfig {
-  getKeys?: () => Record<string, string>;
-  getCustomProviders?: () => OpenAICompatibleConfig[];
+  getKeys?: () => Promise<Record<string, string>> | Record<string, string>;
+  getCustomProviders?: () => Promise<OpenAICompatibleConfig[]> | OpenAICompatibleConfig[];
 }
 
-export function createProviderRegistry(config?: RegistryConfig): ProviderRegistry {
+export async function createProviderRegistry(config?: RegistryConfig): Promise<ProviderRegistry> {
   let providers: Provider[] = [];
 
-  function load() {
+  async function load() {
     providers = [];
-    const dbKeys = config?.getKeys?.() || {};
+    const dbKeys = (await config?.getKeys?.()) || {};
 
     // Built-in providers: DB keys take precedence, fall back to env vars
     const openaiKey = dbKeys["OPENAI_API_KEY"] || process.env.OPENAI_API_KEY;
@@ -51,7 +51,7 @@ export function createProviderRegistry(config?: RegistryConfig): ProviderRegistr
     providers.push(createOllamaProvider());
 
     // Load custom providers from DB
-    const customProviders = config?.getCustomProviders?.() || [];
+    const customProviders = (await config?.getCustomProviders?.()) || [];
     for (const cp of customProviders) {
       // Skip if a built-in provider already exists with this name
       if (!providers.some((p) => p.name === cp.name)) {
@@ -60,7 +60,7 @@ export function createProviderRegistry(config?: RegistryConfig): ProviderRegistr
     }
   }
 
-  load();
+  await load();
 
   return {
     get(name: string) {

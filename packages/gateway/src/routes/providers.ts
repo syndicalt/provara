@@ -10,8 +10,8 @@ export function createProviderCrudRoutes(db: Db) {
   const app = new Hono();
 
   // List custom providers
-  app.get("/", (c) => {
-    const providers = db.select().from(customProviders).all();
+  app.get("/", async (c) => {
+    const providers = await db.select().from(customProviders).all();
     return c.json({
       providers: providers.map((p) => ({
         ...p,
@@ -21,9 +21,9 @@ export function createProviderCrudRoutes(db: Db) {
   });
 
   // Get a custom provider
-  app.get("/:id", (c) => {
+  app.get("/:id", async (c) => {
     const { id } = c.req.param();
-    const provider = db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
@@ -48,7 +48,7 @@ export function createProviderCrudRoutes(db: Db) {
     }
 
     // Check for duplicate name
-    const existing = db.select().from(customProviders).where(eq(customProviders.name, body.name)).get();
+    const existing = await db.select().from(customProviders).where(eq(customProviders.name, body.name)).get();
     if (existing) {
       return c.json(
         { error: { message: `Provider "${body.name}" already exists`, type: "validation_error" } },
@@ -59,7 +59,7 @@ export function createProviderCrudRoutes(db: Db) {
     // Resolve API key for validation
     let apiKey = "";
     if (body.apiKeyRef) {
-      const keys = getDecryptedKeys(db);
+      const keys = await getDecryptedKeys(db);
       apiKey = keys[body.apiKeyRef] || "";
     }
 
@@ -85,7 +85,7 @@ export function createProviderCrudRoutes(db: Db) {
     }
 
     const id = nanoid();
-    db.insert(customProviders)
+    await db.insert(customProviders)
       .values({
         id,
         name: body.name,
@@ -97,13 +97,13 @@ export function createProviderCrudRoutes(db: Db) {
 
     // Add models to registry
     for (const model of models) {
-      const existingModel = db
+      const existingModel = await db
         .select()
         .from(modelRegistry)
         .where(eq(modelRegistry.model, model))
         .get();
       if (!existingModel) {
-        db.insert(modelRegistry)
+        await db.insert(modelRegistry)
           .values({
             id: nanoid(),
             provider: body.name,
@@ -131,7 +131,7 @@ export function createProviderCrudRoutes(db: Db) {
       enabled?: boolean;
     }>();
 
-    const provider = db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
@@ -144,36 +144,36 @@ export function createProviderCrudRoutes(db: Db) {
     if (body.enabled !== undefined) updates.enabled = body.enabled;
 
     if (Object.keys(updates).length > 0) {
-      db.update(customProviders).set(updates).where(eq(customProviders.id, id)).run();
+      await db.update(customProviders).set(updates).where(eq(customProviders.id, id)).run();
     }
 
-    const updated = db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const updated = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
     return c.json({ provider: { ...updated!, models: JSON.parse(updated!.models) } });
   });
 
   // Delete a custom provider
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const { id } = c.req.param();
-    const provider = db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
 
-    db.delete(customProviders).where(eq(customProviders.id, id)).run();
+    await db.delete(customProviders).where(eq(customProviders.id, id)).run();
     return c.json({ deleted: true });
   });
 
   // Discover models for a provider
   app.post("/:id/discover", async (c) => {
     const { id } = c.req.param();
-    const provider = db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
 
     let apiKey = "";
     if (provider.apiKeyRef) {
-      const keys = getDecryptedKeys(db);
+      const keys = await getDecryptedKeys(db);
       apiKey = keys[provider.apiKeyRef] || "";
     }
 
@@ -185,16 +185,16 @@ export function createProviderCrudRoutes(db: Db) {
     const existingModels: string[] = JSON.parse(provider.models);
     const merged = [...new Set([...existingModels, ...discovered])];
 
-    db.update(customProviders)
+    await db.update(customProviders)
       .set({ models: JSON.stringify(merged) })
       .where(eq(customProviders.id, id))
       .run();
 
     // Add new models to registry
     for (const model of discovered) {
-      const existingModel = db.select().from(modelRegistry).where(eq(modelRegistry.model, model)).get();
+      const existingModel = await db.select().from(modelRegistry).where(eq(modelRegistry.model, model)).get();
       if (!existingModel) {
-        db.insert(modelRegistry)
+        await db.insert(modelRegistry)
           .values({
             id: nanoid(),
             provider: provider.name,
@@ -226,7 +226,7 @@ export function createProviderCrudRoutes(db: Db) {
 
     let apiKey = body.apiKey || "";
     if (!apiKey && body.apiKeyRef) {
-      const keys = getDecryptedKeys(db);
+      const keys = await getDecryptedKeys(db);
       apiKey = keys[body.apiKeyRef] || "";
     }
 

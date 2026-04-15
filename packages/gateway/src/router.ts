@@ -21,9 +21,9 @@ interface RouterContext {
   db: Db;
 }
 
-export function createRouter(ctx: RouterContext) {
+export async function createRouter(ctx: RouterContext) {
   const app = new Hono();
-  const routingEngine = createRoutingEngine({ registry: ctx.registry, db: ctx.db });
+  const routingEngine = await createRoutingEngine({ registry: ctx.registry, db: ctx.db });
   const judge = createJudge(ctx.registry, ctx.db);
 
   // Enable CORS for web dashboard
@@ -52,8 +52,8 @@ export function createRouter(ctx: RouterContext) {
   app.route("/v1/admin/providers", createProviderCrudRoutes(ctx.db));
 
   // Reload providers endpoint (call after adding/removing API keys)
-  app.post("/v1/providers/reload", (c) => {
-    ctx.registry.reload();
+  app.post("/v1/providers/reload", async (c) => {
+    await ctx.registry.reload();
     const providers = ctx.registry.list().map((p) => ({ name: p.name, models: p.models }));
     return c.json({ reloaded: true, providers });
   });
@@ -197,7 +197,7 @@ export function createRouter(ctx: RouterContext) {
                 // Log after stream completes
                 const latencyMs = Math.round(performance.now() - start);
                 const requestId = nanoid();
-                ctx.db
+                await ctx.db
                   .insert(requests)
                   .values({
                     id: requestId,
@@ -311,7 +311,7 @@ export function createRouter(ctx: RouterContext) {
     }
 
     const requestId = nanoid();
-    ctx.db
+    await ctx.db
       .insert(requests)
       .values({
         id: requestId,

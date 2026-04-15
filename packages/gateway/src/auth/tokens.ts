@@ -32,9 +32,9 @@ export function maskToken(token: string): string {
   return token.slice(0, 9) + "••••" + token.slice(-4);
 }
 
-export function verifyToken(db: Db, token: string): TokenInfo | null {
+export async function verifyToken(db: Db, token: string): Promise<TokenInfo | null> {
   const hashed = hashToken(token);
-  const row = db
+  const row = await db
     .select()
     .from(apiTokens)
     .where(eq(apiTokens.hashedToken, hashed))

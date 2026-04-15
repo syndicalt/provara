@@ -15,11 +15,11 @@ import { loadCustomProviders } from "./providers/custom-loader.js";
 const port = parseInt(process.env.PORT || "4000", 10);
 
 const db = createDb();
-const registry = createProviderRegistry({
+const registry = await createProviderRegistry({
   getKeys: () => getDecryptedKeys(db),
   getCustomProviders: () => loadCustomProviders(db),
 });
-const app = createRouter({ registry, db });
+const app = await createRouter({ registry, db });
 
 console.log(`Provara gateway running on http://localhost:${port}`);
 console.log(`Providers: ${registry.list().map((p) => p.name).join(", ")}`);

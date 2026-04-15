@@ -8,28 +8,28 @@ export function createAbTestRoutes(db: Db) {
   const app = new Hono();
 
   // List all A/B tests
-  app.get("/", (c) => {
-    const tests = db.select().from(abTests).all();
+  app.get("/", async (c) => {
+    const tests = await db.select().from(abTests).all();
     return c.json({ tests });
   });
 
   // Get a single A/B test with variants and results
-  app.get("/:id", (c) => {
+  app.get("/:id", async (c) => {
     const { id } = c.req.param();
 
-    const test = db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where(eq(abTests.id, id)).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
 
-    const variants = db
+    const variants = await db
       .select()
       .from(abTestVariants)
       .where(eq(abTestVariants.abTestId, id))
       .all();
 
     // Get aggregate results per variant model
-    const results = db
+    const results = await db
       .select({
         model: requests.model,
         provider: requests.provider,
@@ -65,7 +65,7 @@ export function createAbTestRoutes(db: Db) {
     }
 
     const testId = nanoid();
-    db.insert(abTests)
+    await db.insert(abTests)
       .values({
         id: testId,
         name: body.name,
@@ -74,7 +74,7 @@ export function createAbTestRoutes(db: Db) {
       .run();
 
     for (const variant of body.variants) {
-      db.insert(abTestVariants)
+      await db.insert(abTestVariants)
         .values({
           id: nanoid(),
           abTestId: testId,
@@ -87,8 +87,8 @@ export function createAbTestRoutes(db: Db) {
         .run();
     }
 
-    const test = db.select().from(abTests).where(eq(abTests.id, testId)).get();
-    const variants = db
+    const test = await db.select().from(abTests).where(eq(abTests.id, testId)).get();
+    const variants = await db
       .select()
       .from(abTestVariants)
       .where(eq(abTestVariants.abTestId, testId))
@@ -106,7 +106,7 @@ export function createAbTestRoutes(db: Db) {
       description?: string;
     }>();
 
-    const test = db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where(eq(abTests.id, id)).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
@@ -117,24 +117,24 @@ export function createAbTestRoutes(db: Db) {
     if (body.description !== undefined) updates.description = body.description;
 
     if (Object.keys(updates).length > 0) {
-      db.update(abTests).set(updates).where(eq(abTests.id, id)).run();
+      await db.update(abTests).set(updates).where(eq(abTests.id, id)).run();
     }
 
-    const updated = db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const updated = await db.select().from(abTests).where(eq(abTests.id, id)).get();
     return c.json({ test: updated });
   });
 
   // Delete an A/B test
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const { id } = c.req.param();
 
-    const test = db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where(eq(abTests.id, id)).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
 
-    db.delete(abTestVariants).where(eq(abTestVariants.abTestId, id)).run();
-    db.delete(abTests).where(eq(abTests.id, id)).run();
+    await db.delete(abTestVariants).where(eq(abTestVariants.abTestId, id)).run();
+    await db.delete(abTests).where(eq(abTests.id, id)).run();
 
     return c.json({ deleted: true });
   });

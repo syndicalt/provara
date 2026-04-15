@@ -25,7 +25,7 @@ export function createAuthMiddleware(db: Db) {
     }
 
     // Check if any tokens exist — if not, run in open mode
-    const tokenCount = db
+    const tokenCount = await db
       .select({ count: sql<number>`count(*)` })
       .from(apiTokens)
       .get();
@@ -44,7 +44,7 @@ export function createAuthMiddleware(db: Db) {
     }
 
     const token = authHeader.slice(7);
-    const info = verifyToken(db, token);
+    const info = await verifyToken(db, token);
 
     if (!info) {
       return c.json(
@@ -67,7 +67,7 @@ export function createAuthMiddleware(db: Db) {
 
     // Check spend limit (only on completions endpoint to avoid overhead on reads)
     if (c.req.path === "/v1/chat/completions" && c.req.method === "POST") {
-      const spendResult = checkSpendLimit(db, info);
+      const spendResult = await checkSpendLimit(db, info);
       if (!spendResult.allowed) {
         return c.json(
           {

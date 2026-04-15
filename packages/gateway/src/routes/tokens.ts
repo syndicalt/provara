@@ -9,8 +9,8 @@ export function createTokenRoutes(db: Db) {
   const app = new Hono();
 
   // List all tokens (masked)
-  app.get("/", (c) => {
-    const tokens = db.select().from(apiTokens).all();
+  app.get("/", async (c) => {
+    const tokens = await db.select().from(apiTokens).all();
     return c.json({
       tokens: tokens.map((t) => ({
         id: t.id,
@@ -27,28 +27,28 @@ export function createTokenRoutes(db: Db) {
   });
 
   // Get token detail with usage stats
-  app.get("/:id", (c) => {
+  app.get("/:id", async (c) => {
     const { id } = c.req.param();
-    const token = db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const token = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
 
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
     }
 
     // Get usage stats for this tenant
-    const totalCost = db
+    const totalCost = await db
       .select({ total: sql<number>`coalesce(sum(${costLogs.cost}), 0)` })
       .from(costLogs)
       .where(eq(costLogs.tenantId, token.tenant))
       .get();
 
-    const totalRequests = db
+    const totalRequests = await db
       .select({ count: sql<number>`count(*)` })
       .from(requests)
       .where(eq(requests.tenantId, token.tenant))
       .get();
 
-    const avgLatency = db
+    const avgLatency = await db
       .select({ avg: sql<number>`avg(${requests.latencyMs})` })
       .from(requests)
       .where(eq(requests.tenantId, token.tenant))
@@ -56,7 +56,7 @@ export function createTokenRoutes(db: Db) {
 
     // Current period spend
     const periodStart = getPeriodStart(token.spendPeriod || "monthly");
-    const periodCost = db
+    const periodCost = await db
       .select({ total: sql<number>`coalesce(sum(${costLogs.cost}), 0)` })
       .from(costLogs)
       .where(
@@ -111,7 +111,7 @@ export function createTokenRoutes(db: Db) {
     const hashed = hashToken(plainToken);
     const id = nanoid();
 
-    db.insert(apiTokens)
+    await db.insert(apiTokens)
       .values({
         id,
         name: body.name,
@@ -157,7 +157,7 @@ export function createTokenRoutes(db: Db) {
       expiresAt?: string | null;
     }>();
 
-    const token = db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const token = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
     }
@@ -172,29 +172,29 @@ export function createTokenRoutes(db: Db) {
     }
 
     if (Object.keys(updates).length > 0) {
-      db.update(apiTokens).set(updates).where(eq(apiTokens.id, id)).run();
+      await db.update(apiTokens).set(updates).where(eq(apiTokens.id, id)).run();
     }
 
-    const updated = db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const updated = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
     return c.json({ token: updated });
   });
 
   // Delete (revoke) a token
-  app.delete("/:id", (c) => {
+  app.delete("/:id", async (c) => {
     const { id } = c.req.param();
-    const token = db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const token = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
 
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
     }
 
-    db.delete(apiTokens).where(eq(apiTokens.id, id)).run();
+    await db.delete(apiTokens).where(eq(apiTokens.id, id)).run();
     return c.json({ deleted: true });
   });
 
   // Per-tenant usage summary
-  app.get("/usage/by-tenant", (c) => {
-    const rows = db
+  app.get("/usage/by-tenant", async (c) => {
+    const rows = await db
       .select({
         tenant: costLogs.tenantId,
         totalCost: sql<number>`coalesce(sum(${costLogs.cost}), 0)`,
