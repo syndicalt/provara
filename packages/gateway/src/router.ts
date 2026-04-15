@@ -118,6 +118,7 @@ export async function createRouter(ctx: RouterContext) {
     // Input guardrails — check all message content before routing
     const tenantIdForGuardrails = getTenantId(c.req.raw);
     const guardrailRulesList = await loadRules(ctx.db, tenantIdForGuardrails);
+    const guardrailViolations: string[] = [];
     if (guardrailRulesList.length > 0) {
       // Check each message individually so we can redact in-place
       for (let i = 0; i < request.messages.length; i++) {
@@ -126,6 +127,9 @@ export async function createRouter(ctx: RouterContext) {
 
         if (inputCheck.violations.length > 0) {
           await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
+          for (const v of inputCheck.violations) {
+            guardrailViolations.push(v.ruleName);
+          }
         }
 
         if (!inputCheck.passed) {
@@ -329,13 +333,15 @@ export async function createRouter(ctx: RouterContext) {
             },
           });
 
-          return new Response(sseStream, {
-            headers: {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-            },
-          });
+          const streamHeaders: Record<string, string> = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+          };
+          if (guardrailViolations.length > 0) {
+            streamHeaders["X-Provara-Guardrail"] = JSON.stringify(guardrailViolations);
+          }
+          return new Response(sseStream, { headers: streamHeaders });
         } catch (err) {
           lastError = err;
           failedProviders.add(attempt.provider);

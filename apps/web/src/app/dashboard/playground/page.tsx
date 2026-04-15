@@ -85,7 +85,7 @@ export default function PlaygroundPage() {
     if (!input.trim() || streaming) return;
 
     const userMessage: Message = { role: "user", content: input.trim() };
-    const newMessages = [...messages, userMessage];
+    let newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput("");
     setStreaming(true);
@@ -121,6 +121,21 @@ export default function PlaygroundPage() {
         setMessages([...newMessages, { role: "assistant", content: `Error: ${error.error?.message || res.statusText}` }]);
         setStreaming(false);
         return;
+      }
+
+      // Check for guardrail violations
+      const guardrailHeader = res.headers.get("X-Provara-Guardrail");
+      if (guardrailHeader) {
+        try {
+          const violations: string[] = JSON.parse(guardrailHeader);
+          if (violations.length > 0) {
+            newMessages = [...newMessages, {
+              role: "assistant" as const,
+              content: `Guardrail triggered: ${violations.join(", ")}. Your input was redacted before being sent to the model.`,
+            }];
+            setMessages(newMessages);
+          }
+        } catch {}
       }
 
       const reader = res.body?.getReader();
@@ -245,19 +260,24 @@ export default function PlaygroundPage() {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-2xl rounded-xl px-4 py-3 ${
-                  msg.role === "user"
-                    ? "bg-blue-600 text-white"
-                    : "bg-zinc-800 border border-zinc-700 text-zinc-200"
-                }`}
-              >
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+          {messages.map((msg, i) => {
+            const isGuardrail = msg.role === "assistant" && msg.content.startsWith("Guardrail triggered:");
+            return (
+              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-2xl rounded-xl px-4 py-3 ${
+                    isGuardrail
+                      ? "bg-amber-900/30 border border-amber-800/50 text-amber-300"
+                      : msg.role === "user"
+                      ? "bg-blue-600 text-white"
+                      : "bg-zinc-800 border border-zinc-700 text-zinc-200"
+                  }`}
+                >
+                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {streaming && !streamingContent && (
             <div className="flex justify-start">
