@@ -121,19 +121,28 @@ export async function createRouter(ctx: RouterContext) {
     const guardrailRulesList = await loadRules(ctx.db, tenantIdForGuardrails);
     const guardrailViolations = new Set<string>();
     if (guardrailRulesList.length > 0) {
+      // Find the last user message index — only report violations for it
+      let lastUserIdx = -1;
+      for (let i = request.messages.length - 1; i >= 0; i--) {
+        if (request.messages[i].role === "user") { lastUserIdx = i; break; }
+      }
+
       // Check each message individually so we can redact in-place
       for (let i = 0; i < request.messages.length; i++) {
         const msg = request.messages[i];
         const inputCheck = checkContent(msg.content, guardrailRulesList, "input");
 
         if (inputCheck.violations.length > 0) {
-          await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
-          for (const v of inputCheck.violations) {
-            guardrailViolations.add(v.ruleName);
+          // Only log and notify for the latest user message
+          if (i === lastUserIdx) {
+            await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
+            for (const v of inputCheck.violations) {
+              guardrailViolations.add(v.ruleName);
+            }
           }
         }
 
-        if (!inputCheck.passed) {
+        if (!inputCheck.passed && i === lastUserIdx) {
           return c.json({
             error: {
               message: `Request blocked by guardrail: ${inputCheck.violations.map((v) => v.ruleName).join(", ")}`,
@@ -142,7 +151,7 @@ export async function createRouter(ctx: RouterContext) {
           }, 400);
         }
 
-        // Apply redacted content back to the message
+        // Always redact all messages (so provider never sees PII in history)
         if (inputCheck.action === "redact") {
           request.messages[i] = { ...msg, content: inputCheck.content };
         }
