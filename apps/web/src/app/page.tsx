@@ -58,24 +58,6 @@ const features = [
   },
 ];
 
-const steps = [
-  {
-    number: "1",
-    title: "Sign up or self-host",
-    description: "Create an account or deploy Provara on your own infrastructure with Docker.",
-  },
-  {
-    number: "2",
-    title: "Add your API keys",
-    description: "Connect OpenAI, Anthropic, Google, Mistral, xAI, or any OpenAI-compatible provider.",
-  },
-  {
-    number: "3",
-    title: "Route requests",
-    description: "Point your app at Provara. It works as a drop-in replacement for the OpenAI SDK.",
-  },
-];
-
 const providers = ["OpenAI", "Anthropic", "Google", "Mistral", "xAI", "Ollama", "Groq", "Together AI"];
 
 export default function Home() {
@@ -164,16 +146,58 @@ export default function Home() {
               <h2 className="text-3xl font-bold">Get started in minutes</h2>
               <p className="mt-4 text-zinc-400">Three steps to intelligent LLM routing.</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {steps.map((step) => (
-                <div key={step.number} className="text-center">
-                  <div className="w-12 h-12 rounded-full bg-blue-600 text-white text-lg font-bold flex items-center justify-center mx-auto mb-4">
-                    {step.number}
-                  </div>
-                  <h3 className="text-lg font-semibold mb-2">{step.title}</h3>
-                  <p className="text-sm text-zinc-400">{step.description}</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-0 relative">
+              {/* Connector lines (desktop only) */}
+              <div className="hidden md:block absolute top-10 left-1/6 right-1/6 h-px bg-gradient-to-r from-blue-600/0 via-blue-600/40 to-blue-600/0" />
+
+              {/* Step 1 */}
+              <div className="text-center px-6 relative">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-700 text-white flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-600/20">
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                  </svg>
                 </div>
-              ))}
+                <h3 className="text-lg font-semibold mb-2">Sign up or self-host</h3>
+                <p className="text-sm text-zinc-400 mb-4">Create an account with Google or GitHub, or deploy with Docker.</p>
+                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-left inline-block">
+                  <code className="text-xs text-zinc-400">
+                    <span className="text-zinc-600">$</span> docker compose up -d
+                  </code>
+                </div>
+              </div>
+
+              {/* Step 2 */}
+              <div className="text-center px-6 relative mt-8 md:mt-0">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-violet-600 to-violet-700 text-white flex items-center justify-center mx-auto mb-6 shadow-lg shadow-violet-600/20">
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold mb-2">Add your API keys</h3>
+                <p className="text-sm text-zinc-400 mb-4">Connect any provider through the dashboard. Keys are encrypted at rest.</p>
+                <div className="flex justify-center gap-2 flex-wrap">
+                  {["OpenAI", "Anthropic", "Google", "Mistral"].map((p) => (
+                    <span key={p} className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-400">{p}</span>
+                  ))}
+                  <span className="text-xs bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-zinc-500">+4 more</span>
+                </div>
+              </div>
+
+              {/* Step 3 */}
+              <div className="text-center px-6 relative mt-8 md:mt-0">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-emerald-600 to-emerald-700 text-white flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-600/20">
+                  <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
+                  </svg>
+                </div>
+                <h3 className="text-lg font-semibold mb-2">Route requests</h3>
+                <p className="text-sm text-zinc-400 mb-4">Point your app at Provara. Drop-in OpenAI SDK compatible.</p>
+                <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 text-left inline-block">
+                  <code className="text-xs text-zinc-400">
+                    baseURL: <span className="text-emerald-400">&quot;https://provara/v1&quot;</span>
+                  </code>
+                </div>
+              </div>
             </div>
           </div>
         </section>
