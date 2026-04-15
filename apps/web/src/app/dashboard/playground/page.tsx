@@ -46,11 +46,6 @@ export default function PlaygroundPage() {
     gatewayClientFetch<{ providers: ProviderInfo[] }>("/v1/providers")
       .then((data) => {
         setProviders(data.providers || []);
-        // Default to first available model
-        if (data.providers?.length > 0 && data.providers[0].models.length > 0) {
-          setSelectedProvider(data.providers[0].name);
-          setSelectedModel(data.providers[0].models[0]);
-        }
       })
       .catch(console.error);
   }, []);
@@ -164,7 +159,11 @@ export default function PlaygroundPage() {
   }
 
   function handleModelChange(value: string) {
-    // value is "provider/model"
+    if (!value) {
+      setSelectedProvider("");
+      setSelectedModel("");
+      return;
+    }
     const [provider, ...modelParts] = value.split("/");
     setSelectedProvider(provider);
     setSelectedModel(modelParts.join("/"));
@@ -177,11 +176,11 @@ export default function PlaygroundPage() {
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800">
           <select
-            value={`${selectedProvider}/${selectedModel}`}
+            value={selectedModel ? `${selectedProvider}/${selectedModel}` : ""}
             onChange={(e) => handleModelChange(e.target.value)}
             className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300 focus:outline-none focus:border-blue-500 max-w-md"
           >
-            {allModels.length === 0 && <option>No models available</option>}
+            <option value="">Auto-routing (let Provara choose)</option>
             {providers.map((p) => (
               <optgroup key={p.name} label={p.name}>
                 {p.models.map((m) => (
@@ -192,8 +191,6 @@ export default function PlaygroundPage() {
               </optgroup>
             ))}
           </select>
-
-          <span className="text-xs text-zinc-500">or leave empty for auto-routing</span>
 
           <div className="ml-auto flex gap-2">
             <button
