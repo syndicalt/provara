@@ -18,6 +18,9 @@ import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createTeamRoutes } from "./routes/team.js";
 import { createModelRoutes } from "./routes/models.js";
+import { createGuardrailRoutes } from "./routes/guardrails.js";
+import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
+import { getTenantId } from "./auth/tenant.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { getMode } from "./config.js";
@@ -88,6 +91,9 @@ export async function createRouter(ctx: RouterContext) {
   // Mount model stats routes (public — no admin auth needed)
   app.route("/v1/models", createModelRoutes({ db: ctx.db, registry: ctx.registry }));
 
+  // Mount guardrail management routes (admin)
+  app.route("/v1/admin/guardrails", createGuardrailRoutes(ctx.db));
+
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", async (c) => {
     await ctx.registry.reload();
@@ -100,6 +106,27 @@ export async function createRouter(ctx: RouterContext) {
     const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean }>();
     const { provider: providerName, routing_hint, cache: cacheParam, ...rest } = body;
     const request = rest as CompletionRequest;
+
+    // Input guardrails — check all message content before routing
+    const tenantIdForGuardrails = getTenantId(c.req.raw);
+    const guardrailRulesList = await loadRules(ctx.db, tenantIdForGuardrails);
+    if (guardrailRulesList.length > 0) {
+      const inputText = request.messages.map((m) => m.content).join("\n");
+      const inputCheck = checkContent(inputText, guardrailRulesList, "input");
+
+      if (inputCheck.violations.length > 0) {
+        await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
+      }
+
+      if (!inputCheck.passed) {
+        return c.json({
+          error: {
+            message: `Request blocked by guardrail: ${inputCheck.violations.map((v) => v.ruleName).join(", ")}`,
+            type: "guardrail_error",
+          },
+        }, 400);
+      }
+    }
 
     // Determine if caching is eligible
     const noCache = c.req.header("x-provara-no-cache") === "true" || cacheParam === false;
@@ -390,6 +417,24 @@ export async function createRouter(ctx: RouterContext) {
       responseContent: response.content,
     }).catch(() => {});
 
+    // Output guardrails — check response content before returning
+    let responseContent = response.content;
+    if (guardrailRulesList.length > 0) {
+      const outputCheck = checkContent(responseContent, guardrailRulesList, "output");
+      if (outputCheck.violations.length > 0) {
+        await logViolations(ctx.db, requestId, tenantIdForGuardrails, "output", outputCheck.violations);
+      }
+      if (!outputCheck.passed) {
+        return c.json({
+          error: {
+            message: `Response blocked by guardrail: ${outputCheck.violations.map((v) => v.ruleName).join(", ")}`,
+            type: "guardrail_error",
+          },
+        }, 400);
+      }
+      responseContent = outputCheck.content; // May be redacted
+    }
+
     // Return OpenAI-compatible response format
     return c.json({
       id: `chatcmpl-${response.id}`,
@@ -399,7 +444,7 @@ export async function createRouter(ctx: RouterContext) {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: response.content },
+          message: { role: "assistant", content: responseContent },
           finish_reason: "stop",
         },
       ],

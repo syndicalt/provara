@@ -11,6 +11,7 @@ const links = [
   { href: "/dashboard/routing", label: "Routing" },
   { href: "/dashboard/quality", label: "Quality" },
   { href: "/dashboard/ab-tests", label: "A/B Tests" },
+  { href: "/dashboard/guardrails", label: "Guardrails" },
   { href: "/dashboard/tokens", label: "Tokens" },
   { href: "/dashboard/api-keys", label: "API Keys" },
 ];

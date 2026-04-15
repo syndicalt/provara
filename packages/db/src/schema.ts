@@ -160,6 +160,35 @@ export const feedback = sqliteTable("feedback", {
     .$defaultFn(() => new Date()),
 });
 
+export const guardrailRules = sqliteTable("guardrail_rules", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  name: text("name").notNull(),
+  type: text("type", { enum: ["pii", "content", "regex", "token_limit"] }).notNull(),
+  target: text("target", { enum: ["input", "output", "both"] }).notNull().default("both"),
+  action: text("action", { enum: ["block", "redact", "flag"] }).notNull().default("block"),
+  pattern: text("pattern"), // regex pattern or JSON config
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  builtIn: integer("built_in", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const guardrailLogs = sqliteTable("guardrail_logs", {
+  id: text("id").primaryKey(),
+  requestId: text("request_id"),
+  tenantId: text("tenant_id"),
+  ruleId: text("rule_id").references(() => guardrailRules.id),
+  ruleName: text("rule_name").notNull(),
+  target: text("target", { enum: ["input", "output"] }).notNull(),
+  action: text("action", { enum: ["block", "redact", "flag"] }).notNull(),
+  matchedContent: text("matched_content"), // truncated snippet of what was matched
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
   requestId: text("request_id").references(() => requests.id),

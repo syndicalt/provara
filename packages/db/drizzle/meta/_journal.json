@@ -57,6 +57,13 @@
       "when": 1776260177850,
       "tag": "0007_burly_the_hand",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1776263135747,
+      "tag": "0008_burly_captain_midlands",
+      "breakpoints": true
     }
   ]
 }
