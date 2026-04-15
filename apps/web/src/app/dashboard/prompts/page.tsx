@@ -122,7 +122,7 @@ function CreateTemplateForm({ onCreated }: { onCreated: () => void }) {
               <select
                 value={msg.role}
                 onChange={(e) => updateMessage(i, "role", e.target.value)}
-                className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-300 w-28 focus:outline-none focus:border-blue-500"
+                className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-300 w-full focus:outline-none focus:border-blue-500"
               >
                 <option value="system">system</option>
                 <option value="user">user</option>
