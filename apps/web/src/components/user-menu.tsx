@@ -24,10 +24,10 @@ export function UserMenu() {
   if (!user) return null;
 
   return (
-    <div className="relative ml-4 pl-4 border-l border-zinc-800" ref={menuRef}>
+    <div className="relative" ref={menuRef}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 hover:bg-zinc-800/50 rounded-lg px-2 py-1.5 transition-colors"
+        className="flex items-center gap-2 w-full hover:bg-zinc-800/50 rounded-md px-2 py-1.5 transition-colors"
       >
         {user.avatarUrl && (
           <img
@@ -36,14 +36,14 @@ export function UserMenu() {
             className="w-6 h-6 rounded-full"
           />
         )}
-        <span className="text-xs text-zinc-400">{user.name || user.email}</span>
-        <svg className="w-3 h-3 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <span className="text-xs text-zinc-400 truncate flex-1 text-left">{user.name || user.email}</span>
+        <svg className="w-3 h-3 text-zinc-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 z-50">
+        <div className="absolute left-0 bottom-full mb-1 w-full bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl py-1 z-50">
           <div className="px-3 py-2 border-b border-zinc-800">
             <p className="text-xs text-zinc-300 font-medium truncate">{user.name || user.email}</p>
             <p className="text-xs text-zinc-500 truncate">{user.email}</p>

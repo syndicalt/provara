@@ -53,6 +53,48 @@ export function createAnalyticsRoutes(db: Db) {
     return c.json({ requests: rows, total: total?.count || 0, limit, offset });
   });
 
+  // Get single request by ID
+  app.get("/requests/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const { id } = c.req.param();
+
+    const row = await db
+      .select({
+        id: requests.id,
+        provider: requests.provider,
+        model: requests.model,
+        prompt: requests.prompt,
+        response: requests.response,
+        inputTokens: requests.inputTokens,
+        outputTokens: requests.outputTokens,
+        latencyMs: requests.latencyMs,
+        taskType: requests.taskType,
+        complexity: requests.complexity,
+        routedBy: requests.routedBy,
+        tenantId: requests.tenantId,
+        abTestId: requests.abTestId,
+        createdAt: requests.createdAt,
+        cost: costLogs.cost,
+      })
+      .from(requests)
+      .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
+      .where(tenantId ? and(eq(requests.id, id), eq(requests.tenantId, tenantId)) : eq(requests.id, id))
+      .get();
+
+    if (!row) {
+      return c.json({ error: { message: "Request not found", type: "not_found" } }, 404);
+    }
+
+    // Get feedback for this request
+    const feedbackRows = await db
+      .select()
+      .from(feedback)
+      .where(eq(feedback.requestId, id))
+      .all();
+
+    return c.json({ request: row, feedback: feedbackRows });
+  });
+
   // Cost summary by provider
   app.get("/costs/by-provider", async (c) => {
     const tenantId = getTenantId(c.req.raw);
