@@ -18,15 +18,24 @@ export function adminHeaders(): Record<string, string> {
 }
 
 export async function gatewayClientFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(gatewayUrl(path), {
+  const res = await gatewayFetchRaw(path, options);
+  if (!res.ok) {
+    throw new Error(`Gateway error: ${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * Raw fetch wrapper that adds credentials and admin headers.
+ * Use this when you need access to the Response object directly.
+ */
+export function gatewayFetchRaw(path: string, options?: RequestInit): Promise<Response> {
+  return fetch(gatewayUrl(path), {
     ...options,
+    credentials: "include",
     headers: {
       ...adminHeaders(),
       ...options?.headers as Record<string, string>,
     },
   });
-  if (!res.ok) {
-    throw new Error(`Gateway error: ${res.status} ${res.statusText}`);
-  }
-  return res.json() as Promise<T>;
 }

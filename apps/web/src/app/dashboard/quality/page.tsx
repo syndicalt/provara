@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
-import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
+import { gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface QualityByModel {
   provider: string;
@@ -168,10 +168,10 @@ export default function QualityPage() {
     async function fetchData() {
       try {
         const [modelRes, cellRes, adaptiveRes, feedbackRes] = await Promise.all([
-          fetch(gatewayUrl("/v1/feedback/quality/by-model"), { headers: adminHeaders() }),
-          fetch(gatewayUrl("/v1/feedback/quality/by-cell"), { headers: adminHeaders() }),
-          fetch(gatewayUrl("/v1/analytics/adaptive/scores"), { headers: adminHeaders() }),
-          fetch(gatewayUrl("/v1/feedback?limit=20"), { headers: adminHeaders() }),
+          gatewayFetchRaw("/v1/feedback/quality/by-model"),
+          gatewayFetchRaw("/v1/feedback/quality/by-cell"),
+          gatewayFetchRaw("/v1/analytics/adaptive/scores"),
+          gatewayFetchRaw("/v1/feedback?limit=20"),
         ]);
         const modelData = await modelRes.json();
         const cellData = await cellRes.json();

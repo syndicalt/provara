@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
+import { gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface ApiKey {
   id: string;
@@ -50,9 +50,8 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
     setError("");
 
     try {
-      const res = await fetch(gatewayUrl("/v1/api-keys"), {
+      const res = await gatewayFetchRaw("/v1/api-keys", {
         method: "POST",
-        headers: adminHeaders(),
         body: JSON.stringify({ name, provider, value }),
       });
 
@@ -63,7 +62,7 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
       }
 
       // Reload providers to pick up the new key
-      await fetch(gatewayUrl("/v1/providers/reload"), { method: "POST", headers: adminHeaders() });
+      await gatewayFetchRaw("/v1/providers/reload", { method: "POST" });
 
       setValue("");
       setOpen(false);
@@ -192,9 +191,9 @@ export default function ApiKeysPage() {
   async function fetchData() {
     try {
       const [statusRes, keysRes, providersRes] = await Promise.all([
-        fetch(gatewayUrl("/v1/api-keys/status"), { headers: adminHeaders() }),
-        fetch(gatewayUrl("/v1/api-keys"), { headers: adminHeaders() }).catch(() => null),
-        fetch(gatewayUrl("/v1/providers"), { headers: adminHeaders() }),
+        gatewayFetchRaw("/v1/api-keys/status"),
+        gatewayFetchRaw("/v1/api-keys").catch(() => null),
+        gatewayFetchRaw("/v1/providers"),
       ]);
 
       const statusData = await statusRes.json();
@@ -216,8 +215,8 @@ export default function ApiKeysPage() {
 
   async function deleteKey(id: string) {
     try {
-      await fetch(gatewayUrl(`/v1/api-keys/${id}`), { method: "DELETE", headers: adminHeaders() });
-      await fetch(gatewayUrl("/v1/providers/reload"), { method: "POST", headers: adminHeaders() });
+      await gatewayFetchRaw(`/v1/api-keys/${id}`, { method: "DELETE" });
+      await gatewayFetchRaw("/v1/providers/reload", { method: "POST" });
       fetchData();
     } catch (err) {
       console.error("Failed to delete key:", err);

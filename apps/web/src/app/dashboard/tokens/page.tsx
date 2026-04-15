@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCost, formatNumber, formatLatency } from "../../../lib/format";
-import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
+import { gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface Token {
   id: string;
@@ -45,9 +45,8 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await fetch(gatewayUrl("/v1/admin/tokens"), {
+      const res = await gatewayFetchRaw("/v1/admin/tokens", {
         method: "POST",
-        headers: adminHeaders(),
         body: JSON.stringify({
           name,
           tenant,
@@ -213,7 +212,7 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
 
   useEffect(() => {
     if (expanded) {
-      fetch(gatewayUrl(`/v1/admin/tokens/${token.id}`), { headers: adminHeaders() })
+      gatewayFetchRaw(`/v1/admin/tokens/${token.id}`)
         .then((r) => r.json())
         .then((d) => setUsage(d.usage))
         .catch(() => {});
@@ -222,7 +221,7 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
 
   async function handleDelete() {
     if (!confirm(`Revoke token "${token.name}"? This cannot be undone.`)) return;
-    await fetch(gatewayUrl(`/v1/admin/tokens/${token.id}`), { method: "DELETE", headers: adminHeaders() });
+    await gatewayFetchRaw(`/v1/admin/tokens/${token.id}`, { method: "DELETE" });
     onDelete();
   }
 
@@ -297,8 +296,8 @@ export default function TokensPage() {
   async function fetchData() {
     try {
       const [tokensRes, usageRes] = await Promise.all([
-        fetch(gatewayUrl("/v1/admin/tokens"), { headers: adminHeaders() }),
-        fetch(gatewayUrl("/v1/admin/tokens/usage/by-tenant"), { headers: adminHeaders() }),
+        gatewayFetchRaw("/v1/admin/tokens"),
+        gatewayFetchRaw("/v1/admin/tokens/usage/by-tenant"),
       ]);
       const tokensData = await tokensRes.json();
       const usageData = await usageRes.json();

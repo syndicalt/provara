@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCost, formatLatency, formatNumber } from "../../../lib/format";
-import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
+import { gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface AbTest {
   id: string;
@@ -64,7 +64,7 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
 
   useEffect(() => {
     if (open && providers.length === 0) {
-      fetch(gatewayUrl("/v1/providers"), { headers: adminHeaders() })
+      gatewayFetchRaw("/v1/providers")
         .then((r) => r.json())
         .then((d) => setProviders(d.providers || []))
         .catch(() => {});
@@ -75,9 +75,8 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await fetch(gatewayUrl("/v1/ab-tests"), {
+      await gatewayFetchRaw("/v1/ab-tests", {
         method: "POST",
-        headers: adminHeaders(),
         body: JSON.stringify({
           name,
           description: description || undefined,
@@ -270,15 +269,14 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
   const [expanded, setExpanded] = useState(false);
 
   async function fetchDetail() {
-    const res = await fetch(gatewayUrl(`/v1/ab-tests/${test.id}`), { headers: adminHeaders() });
+    const res = await gatewayFetchRaw(`/v1/ab-tests/${test.id}`);
     const data = await res.json();
     setDetail(data);
   }
 
   async function updateStatus(status: string) {
-    await fetch(gatewayUrl(`/v1/ab-tests/${test.id}`), {
+    await gatewayFetchRaw(`/v1/ab-tests/${test.id}`, {
       method: "PATCH",
-      headers: adminHeaders(),
       body: JSON.stringify({ status }),
     });
     onUpdate();
@@ -383,7 +381,7 @@ export default function AbTestsPage() {
 
   async function fetchTests() {
     try {
-      const res = await fetch(gatewayUrl("/v1/ab-tests"), { headers: adminHeaders() });
+      const res = await gatewayFetchRaw("/v1/ab-tests");
       const data = await res.json();
       setTests(data.tests || []);
     } catch (err) {
