@@ -317,6 +317,21 @@ export default function Home() {
                 View on GitHub
               </a>
             </div>
+            <div className="mt-8">
+              <a
+                href="https://www.producthunt.com/products/provara?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-provara"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <img
+                  src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1124628&theme=dark&t=1776279867939"
+                  alt="Provara - The intelligent, self-hosted LLM gateway | Product Hunt"
+                  width={250}
+                  height={54}
+                  className="mx-auto"
+                />
+              </a>
+            </div>
           </div>
         </section>
 
