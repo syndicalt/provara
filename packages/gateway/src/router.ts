@@ -11,6 +11,7 @@ import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
 import { createAdminMiddleware } from "./auth/admin.js";
+import { createTenantMiddleware } from "./auth/tenant.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
@@ -44,6 +45,9 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/providers", adminAuth);
   app.use("/v1/providers/*", adminAuth);
   app.use("/v1/cache/*", adminAuth);
+
+  // Tenant middleware — enforces tenant context in multi_tenant mode
+  app.use("/v1/*", createTenantMiddleware());
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
