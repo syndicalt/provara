@@ -9,7 +9,13 @@ import { getPricing } from "../cost/index.js";
 const EMA_ALPHA = parseFloat(process.env.PROVARA_EMA_ALPHA || "0.2");
 const MIN_SAMPLES = parseInt(process.env.PROVARA_MIN_SAMPLES || "5");
 
-export type RoutingProfile = "cost" | "balanced" | "quality";
+export type RoutingProfile = "cost" | "balanced" | "quality" | "custom";
+
+export interface RoutingWeights {
+  quality: number;
+  cost: number;
+  latency: number;
+}
 
 export interface ModelScore {
   provider: string;
@@ -17,6 +23,7 @@ export interface ModelScore {
   qualityScore: number; // EMA of feedback scores (1-5)
   sampleCount: number;
   costPer1M: number; // input + output per 1M tokens
+  avgLatencyMs: number; // EMA of latency
 }
 
 // In-memory EMA scores per cell
@@ -36,27 +43,32 @@ function getModelCost(model: string): number {
   return pricing[0] + pricing[1];
 }
 
-// Profile weight multipliers: how much to weight quality vs cost
-// Higher quality weight = prefer higher-scoring models regardless of cost
-const PROFILE_WEIGHTS: Record<RoutingProfile, { quality: number; cost: number }> = {
-  cost: { quality: 0.3, cost: 0.7 },
-  balanced: { quality: 0.5, cost: 0.5 },
-  quality: { quality: 0.8, cost: 0.2 },
+// Profile weight presets: quality, cost, latency
+const PROFILE_WEIGHTS: Record<string, RoutingWeights> = {
+  cost: { quality: 0.2, cost: 0.7, latency: 0.1 },
+  balanced: { quality: 0.4, cost: 0.4, latency: 0.2 },
+  quality: { quality: 0.7, cost: 0.15, latency: 0.15 },
 };
+
+export function resolveWeights(profile: RoutingProfile, customWeights?: RoutingWeights): RoutingWeights {
+  if (profile === "custom" && customWeights) return customWeights;
+  return PROFILE_WEIGHTS[profile] || PROFILE_WEIGHTS.balanced;
+}
 
 function computeRouteScore(
   qualityScore: number,
   costPer1M: number,
-  profile: RoutingProfile
+  avgLatencyMs: number,
+  weights: RoutingWeights
 ): number {
-  const weights = PROFILE_WEIGHTS[profile];
   // Normalize quality to 0-1 (from 1-5 scale)
   const normalizedQuality = (qualityScore - 1) / 4;
   // Normalize cost inversely: cheaper = higher score
-  // Use log scale to prevent extreme outliers
   const normalizedCost = 1 / (1 + Math.log1p(costPer1M));
+  // Normalize latency inversely: faster = higher score
+  const normalizedLatency = 1 / (1 + Math.log1p(avgLatencyMs / 1000));
 
-  return weights.quality * normalizedQuality + weights.cost * normalizedCost;
+  return weights.quality * normalizedQuality + weights.cost * normalizedCost + weights.latency * normalizedLatency;
 }
 
 export async function createAdaptiveRouter(db: Db) {
@@ -90,7 +102,34 @@ export async function createAdaptiveRouter(db: Db) {
         qualityScore: row.avgScore,
         sampleCount: row.count,
         costPer1M: getModelCost(row.model),
+        avgLatencyMs: 0, // Will be populated by updateLatency calls
       });
+    }
+
+    // Load latency data separately
+    const latencyRows = await db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        taskType: requests.taskType,
+        complexity: requests.complexity,
+        avgLatency: sql<number>`avg(${requests.latencyMs})`,
+      })
+      .from(requests)
+      .groupBy(requests.provider, requests.model, requests.taskType, requests.complexity)
+      .all();
+
+    for (const row of latencyRows) {
+      if (!row.taskType || !row.complexity) continue;
+      const ck = cellKey(row.taskType, row.complexity);
+      const mk = modelKey(row.provider, row.model);
+      const cellScores = emaScores.get(ck);
+      if (cellScores) {
+        const existing = cellScores.get(mk);
+        if (existing) {
+          existing.avgLatencyMs = row.avgLatency || 0;
+        }
+      }
     }
   }
 
@@ -110,7 +149,6 @@ export async function createAdaptiveRouter(db: Db) {
 
     const existing = cellScores.get(mk);
     if (existing) {
-      // EMA update: new = alpha * latest + (1 - alpha) * previous
       existing.qualityScore = EMA_ALPHA * newScore + (1 - EMA_ALPHA) * existing.qualityScore;
       existing.sampleCount++;
     } else {
@@ -120,7 +158,28 @@ export async function createAdaptiveRouter(db: Db) {
         qualityScore: newScore,
         sampleCount: 1,
         costPer1M: getModelCost(model),
+        avgLatencyMs: 0,
       });
+    }
+  }
+
+  // Update latency EMA after each request
+  function updateLatency(
+    taskType: string,
+    complexity: string,
+    provider: string,
+    model: string,
+    latencyMs: number
+  ): void {
+    const ck = cellKey(taskType, complexity);
+    const mk = modelKey(provider, model);
+
+    if (!emaScores.has(ck)) emaScores.set(ck, new Map());
+    const cellScores = emaScores.get(ck)!;
+
+    const existing = cellScores.get(mk);
+    if (existing) {
+      existing.avgLatencyMs = EMA_ALPHA * latencyMs + (1 - EMA_ALPHA) * existing.avgLatencyMs;
     }
   }
 
@@ -129,7 +188,8 @@ export async function createAdaptiveRouter(db: Db) {
     taskType: TaskType,
     complexity: Complexity,
     profile: RoutingProfile,
-    availableProviders: Set<string>
+    availableProviders: Set<string>,
+    customWeights?: RoutingWeights
   ): RouteTarget | null {
     const ck = cellKey(taskType, complexity);
     const cellScores = emaScores.get(ck);
@@ -145,10 +205,11 @@ export async function createAdaptiveRouter(db: Db) {
     if (candidates.length === 0) return null;
 
     // Score each candidate using profile weights
+    const weights = resolveWeights(profile, customWeights);
     let best: { target: RouteTarget; score: number } | null = null;
 
     for (const candidate of candidates) {
-      const score = computeRouteScore(candidate.qualityScore, candidate.costPer1M, profile);
+      const score = computeRouteScore(candidate.qualityScore, candidate.costPer1M, candidate.avgLatencyMs, weights);
       if (!best || score > best.score) {
         best = {
           target: { provider: candidate.provider, model: candidate.model },
@@ -187,6 +248,7 @@ export async function createAdaptiveRouter(db: Db) {
 
   return {
     updateScore,
+    updateLatency,
     getBestModel,
     getCellScores,
     getAllScores,

@@ -120,7 +120,8 @@ export const apiTokens = sqliteTable("api_tokens", {
   rateLimit: integer("rate_limit"), // requests per minute, null = unlimited
   spendLimit: real("spend_limit"), // USD per billing period, null = unlimited
   spendPeriod: text("spend_period", { enum: ["monthly", "weekly", "daily"] }).default("monthly"),
-  routingProfile: text("routing_profile", { enum: ["cost", "balanced", "quality"] }).default("balanced"),
+  routingProfile: text("routing_profile", { enum: ["cost", "balanced", "quality", "custom"] }).default("balanced"),
+  routingWeights: text("routing_weights"), // JSON: { quality, cost, latency }
   expiresAt: integer("expires_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
