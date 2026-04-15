@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { customProviders, modelRegistry } from "@provara/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { discoverModels } from "../providers/openai-compatible.js";
+import { discoverModels, validateCompatibility } from "../providers/openai-compatible.js";
 import { getDecryptedKeys } from "./api-keys.js";
 
 export function createProviderCrudRoutes(db: Db) {
@@ -56,20 +56,31 @@ export function createProviderCrudRoutes(db: Db) {
       );
     }
 
+    // Resolve API key for validation
+    let apiKey = "";
+    if (body.apiKeyRef) {
+      const keys = getDecryptedKeys(db);
+      apiKey = keys[body.apiKeyRef] || "";
+    }
+
+    // Validate OpenAI compatibility before saving
+    if (apiKey) {
+      const validation = await validateCompatibility(body.baseURL, apiKey);
+      if (!validation.compatible) {
+        return c.json(
+          { error: { message: validation.error || "Provider is not OpenAI-compatible", type: "compatibility_error" } },
+          422
+        );
+      }
+    }
+
     let models = body.models || [];
 
     // Auto-discover models if requested
-    if (body.discover) {
-      let apiKey = "";
-      if (body.apiKeyRef) {
-        const keys = getDecryptedKeys(db);
-        apiKey = keys[body.apiKeyRef] || "";
-      }
-      if (apiKey) {
-        const discovered = await discoverModels(body.baseURL, apiKey);
-        if (discovered.length > 0) {
-          models = [...new Set([...models, ...discovered])];
-        }
+    if (body.discover && apiKey) {
+      const discovered = await discoverModels(body.baseURL, apiKey);
+      if (discovered.length > 0) {
+        models = [...new Set([...models, ...discovered])];
       }
     }
 
@@ -199,6 +210,32 @@ export function createProviderCrudRoutes(db: Db) {
       total: merged.length,
       models: merged,
     });
+  });
+
+  // Validate a provider's OpenAI compatibility without saving
+  app.post("/validate", async (c) => {
+    const body = await c.req.json<{
+      baseURL: string;
+      apiKey?: string;
+      apiKeyRef?: string;
+    }>();
+
+    if (!body.baseURL) {
+      return c.json({ error: { message: "baseURL is required", type: "validation_error" } }, 400);
+    }
+
+    let apiKey = body.apiKey || "";
+    if (!apiKey && body.apiKeyRef) {
+      const keys = getDecryptedKeys(db);
+      apiKey = keys[body.apiKeyRef] || "";
+    }
+
+    if (!apiKey) {
+      return c.json({ error: { message: "An API key is required for validation", type: "validation_error" } }, 400);
+    }
+
+    const result = await validateCompatibility(body.baseURL, apiKey);
+    return c.json(result);
   });
 
   return app;

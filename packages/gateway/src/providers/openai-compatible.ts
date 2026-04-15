@@ -76,6 +76,75 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
   };
 }
 
+// Validate that a provider is OpenAI-compatible by testing the /models endpoint
+// and optionally a lightweight chat completion
+export async function validateCompatibility(
+  baseURL: string,
+  apiKey: string,
+  testModel?: string
+): Promise<{ compatible: boolean; error?: string; models?: string[] }> {
+  const client = new OpenAI({ apiKey, baseURL, timeout: 10_000 });
+
+  // Step 1: Try /models endpoint
+  let models: string[] = [];
+  try {
+    const response = await client.models.list();
+    for await (const model of response) {
+      models.push(model.id);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      compatible: false,
+      error: `Failed to list models at ${baseURL}/models: ${msg}`,
+    };
+  }
+
+  if (models.length === 0) {
+    return {
+      compatible: false,
+      error: `No models found at ${baseURL}/models. The provider may not be OpenAI-compatible.`,
+    };
+  }
+
+  // Step 2: Try a minimal chat completion
+  const model = testModel || models[0];
+  try {
+    const response = await client.chat.completions.create({
+      model,
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 1,
+    });
+
+    // Validate response shape
+    if (!response.choices || !Array.isArray(response.choices) || response.choices.length === 0) {
+      return {
+        compatible: false,
+        error: `Provider responded but returned unexpected format (missing choices array).`,
+        models,
+      };
+    }
+
+    const choice = response.choices[0];
+    if (!choice.message || typeof choice.message.content !== "string") {
+      return {
+        compatible: false,
+        error: `Provider responded but message format is not OpenAI-compatible (missing message.content).`,
+        models,
+      };
+    }
+
+    return { compatible: true, models };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      compatible: false,
+      error: `Models listed successfully but chat completion failed on ${model}: ${msg}`,
+      models,
+    };
+  }
+}
+
 // Discover models from an OpenAI-compatible /models endpoint
 export async function discoverModels(baseURL: string, apiKey: string): Promise<string[]> {
   try {
