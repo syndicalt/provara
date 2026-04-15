@@ -27,4 +27,4 @@ const app = await createRouter({ registry, db });
 console.log(`Provara gateway running on http://localhost:${port}`);
 console.log(`Providers: ${registry.list().map((p) => p.name).join(", ")}`);
 
-serve({ fetch: app.fetch, port });
+serve({ fetch: app.fetch, port, hostname: "0.0.0.0" });
