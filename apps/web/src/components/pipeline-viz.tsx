@@ -4,6 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import {
   ReactFlow,
   Background,
+  Controls,
+  MiniMap,
+  useNodesState,
   type Node,
   type Edge,
   Position,
@@ -94,7 +97,7 @@ function buildNodes(data: PipelineData | null): Node[] {
     {
       id: "request",
       type: "pipeline",
-      position: { x: 0, y: 120 },
+      position: { x: 0, y: 150 },
       data: {
         label: "Request",
         subtitle: "Incoming",
@@ -107,7 +110,7 @@ function buildNodes(data: PipelineData | null): Node[] {
     {
       id: "classifier",
       type: "pipeline",
-      position: { x: 220, y: 120 },
+      position: { x: 260, y: 150 },
       data: {
         label: "Classifier",
         subtitle: "Task + Complexity",
@@ -121,7 +124,7 @@ function buildNodes(data: PipelineData | null): Node[] {
     {
       id: "abtest",
       type: "pipeline",
-      position: { x: 440, y: 20 },
+      position: { x: 540, y: 0 },
       data: {
         label: "A/B Test",
         subtitle: "Traffic split",
@@ -136,7 +139,7 @@ function buildNodes(data: PipelineData | null): Node[] {
     {
       id: "adaptive",
       type: "pipeline",
-      position: { x: 440, y: 120 },
+      position: { x: 540, y: 150 },
       data: {
         label: "Adaptive",
         subtitle: "Quality scoring",
@@ -151,7 +154,7 @@ function buildNodes(data: PipelineData | null): Node[] {
     {
       id: "fallback",
       type: "pipeline",
-      position: { x: 440, y: 220 },
+      position: { x: 540, y: 300 },
       data: {
         label: "Cost Fallback",
         subtitle: "Cheapest first",
@@ -165,7 +168,7 @@ function buildNodes(data: PipelineData | null): Node[] {
     {
       id: "provider",
       type: "pipeline",
-      position: { x: 700, y: 120 },
+      position: { x: 820, y: 150 },
       data: {
         label: "Provider",
         subtitle: "Execute request",
@@ -190,38 +193,35 @@ const edges: Edge[] = [
 ];
 
 export function PipelineVisualization() {
-  const [data, setData] = useState<PipelineData | null>(null);
-  const [nodes, setNodes] = useState<Node[]>(buildNodes(null));
+  const [nodes, setNodes, onNodesChange] = useNodesState(buildNodes(null));
 
   useEffect(() => {
     gatewayClientFetch<PipelineData>("/v1/analytics/pipeline")
       .then((d) => {
-        setData(d);
         setNodes(buildNodes(d));
       })
       .catch((err) => console.error("Failed to fetch pipeline data:", err));
-  }, []);
+  }, [setNodes]);
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden" style={{ height: 340 }}>
+    <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden" style={{ height: 400 }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.3 }}
+        fitViewOptions={{ padding: 0.2 }}
         proOptions={{ hideAttribution: true }}
-        nodesDraggable={false}
         nodesConnectable={false}
-        elementsSelectable={false}
-        panOnDrag={false}
-        zoomOnScroll={false}
-        zoomOnPinch={false}
-        zoomOnDoubleClick={false}
-        minZoom={0.5}
-        maxZoom={1.5}
+        minZoom={0.3}
+        maxZoom={2}
       >
         <Background color="#27272a" gap={20} size={1} />
+        <Controls
+          showInteractive={false}
+          className="!bg-zinc-800 !border-zinc-700 !shadow-lg [&>button]:!bg-zinc-800 [&>button]:!border-zinc-700 [&>button]:!text-zinc-400 [&>button:hover]:!bg-zinc-700"
+        />
       </ReactFlow>
     </div>
   );
