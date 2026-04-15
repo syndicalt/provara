@@ -41,7 +41,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/*", cors({
     origin: process.env.DASHBOARD_URL || "http://localhost:3000",
     credentials: true,
-    exposeHeaders: ["X-Provara-Guardrail", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
   // Mount OAuth routes (public, only in multi_tenant mode)
@@ -338,6 +338,8 @@ export async function createRouter(ctx: RouterContext) {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Provara-Model": usedModel,
+            "X-Provara-Provider": usedProvider,
           };
           if (guardrailViolations.size > 0) {
             streamHeaders["X-Provara-Guardrail"] = JSON.stringify([...guardrailViolations]);

@@ -124,6 +124,9 @@ export default function PlaygroundPage() {
         return;
       }
 
+      // Read model info from response headers
+      const headerModel = res.headers.get("X-Provara-Model") || "";
+
       // Check for guardrail violations
       const guardrailHeader = res.headers.get("X-Provara-Guardrail");
       if (guardrailHeader) {
@@ -172,7 +175,7 @@ export default function PlaygroundPage() {
         }
       }
 
-      setMessages([...newMessages, { role: "assistant", content: fullContent, model: responseModel || undefined }]);
+      setMessages([...newMessages, { role: "assistant", content: fullContent, model: headerModel || responseModel || undefined }]);
       setStreamingContent("");
 
       // Fetch the last request to get _provara metadata
