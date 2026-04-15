@@ -1,17 +1,19 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { customProviders, modelRegistry } from "@provara/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { discoverModels, validateCompatibility } from "../providers/openai-compatible.js";
 import { getDecryptedKeys } from "./api-keys.js";
+import { getTenantId } from "../auth/tenant.js";
 
 export function createProviderCrudRoutes(db: Db) {
   const app = new Hono();
 
   // List custom providers
   app.get("/", async (c) => {
-    const providers = await db.select().from(customProviders).all();
+    const tenantId = getTenantId(c.req.raw);
+    const providers = await db.select().from(customProviders).where(tenantId ? eq(customProviders.tenantId, tenantId) : undefined).all();
     return c.json({
       providers: providers.map((p) => ({
         ...p,
@@ -22,8 +24,9 @@ export function createProviderCrudRoutes(db: Db) {
 
   // Get a custom provider
   app.get("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where(tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id)).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
@@ -32,6 +35,7 @@ export function createProviderCrudRoutes(db: Db) {
 
   // Create a custom provider
   app.post("/", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const body = await c.req.json<{
       name: string;
       baseURL: string;
@@ -47,8 +51,8 @@ export function createProviderCrudRoutes(db: Db) {
       );
     }
 
-    // Check for duplicate name
-    const existing = await db.select().from(customProviders).where(eq(customProviders.name, body.name)).get();
+    // Check for duplicate name (scoped to tenant)
+    const existing = await db.select().from(customProviders).where(tenantId ? and(eq(customProviders.name, body.name), eq(customProviders.tenantId, tenantId)) : eq(customProviders.name, body.name)).get();
     if (existing) {
       return c.json(
         { error: { message: `Provider "${body.name}" already exists`, type: "validation_error" } },
@@ -92,6 +96,7 @@ export function createProviderCrudRoutes(db: Db) {
         baseURL: body.baseURL,
         apiKeyRef: body.apiKeyRef || null,
         models: JSON.stringify(models),
+        tenantId,
       })
       .run();
 
@@ -122,6 +127,7 @@ export function createProviderCrudRoutes(db: Db) {
 
   // Update a custom provider
   app.patch("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
     const body = await c.req.json<{
       name?: string;
@@ -131,7 +137,8 @@ export function createProviderCrudRoutes(db: Db) {
       enabled?: boolean;
     }>();
 
-    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const whereClause = tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id);
+    const provider = await db.select().from(customProviders).where(whereClause).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
@@ -144,29 +151,32 @@ export function createProviderCrudRoutes(db: Db) {
     if (body.enabled !== undefined) updates.enabled = body.enabled;
 
     if (Object.keys(updates).length > 0) {
-      await db.update(customProviders).set(updates).where(eq(customProviders.id, id)).run();
+      await db.update(customProviders).set(updates).where(whereClause).run();
     }
 
-    const updated = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const updated = await db.select().from(customProviders).where(whereClause).get();
     return c.json({ provider: { ...updated!, models: JSON.parse(updated!.models) } });
   });
 
   // Delete a custom provider
   app.delete("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const whereClause = tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id);
+    const provider = await db.select().from(customProviders).where(whereClause).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
 
-    await db.delete(customProviders).where(eq(customProviders.id, id)).run();
+    await db.delete(customProviders).where(whereClause).run();
     return c.json({ deleted: true });
   });
 
   // Discover models for a provider
   app.post("/:id/discover", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const provider = await db.select().from(customProviders).where(eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where(tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id)).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }

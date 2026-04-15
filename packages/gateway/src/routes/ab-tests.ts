@@ -3,21 +3,24 @@ import type { Db } from "@provara/db";
 import { abTests, abTestVariants, requests, feedback, costLogs } from "@provara/db";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { getTenantId } from "../auth/tenant.js";
 
 export function createAbTestRoutes(db: Db) {
   const app = new Hono();
 
   // List all A/B tests
   app.get("/", async (c) => {
-    const tests = await db.select().from(abTests).all();
+    const tenantId = getTenantId(c.req.raw);
+    const tests = await db.select().from(abTests).where(tenantId ? eq(abTests.tenantId, tenantId) : undefined).all();
     return c.json({ tests });
   });
 
   // Get a single A/B test with variants and results
   app.get("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
-    const test = await db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
@@ -74,9 +77,14 @@ export function createAbTestRoutes(db: Db) {
 
   // List individual requests for an A/B test (with prompt, response, feedback)
   app.get("/:id/requests", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
     const limit = Math.min(parseInt(c.req.query("limit") || "20"), 100);
     const offset = parseInt(c.req.query("offset") || "0");
+
+    const abTestWhere = tenantId
+      ? and(eq(requests.abTestId, id), eq(requests.tenantId, tenantId))
+      : eq(requests.abTestId, id);
 
     const rows = await db
       .select({
@@ -97,7 +105,7 @@ export function createAbTestRoutes(db: Db) {
       .from(requests)
       .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
       .leftJoin(feedback, eq(requests.id, feedback.requestId))
-      .where(eq(requests.abTestId, id))
+      .where(abTestWhere)
       .orderBy(desc(requests.createdAt))
       .limit(limit)
       .offset(offset)
@@ -106,7 +114,7 @@ export function createAbTestRoutes(db: Db) {
     const total = await db
       .select({ count: sql<number>`count(*)` })
       .from(requests)
-      .where(eq(requests.abTestId, id))
+      .where(abTestWhere)
       .get();
 
     return c.json({ requests: rows, total: total?.count || 0, limit, offset });
@@ -114,6 +122,7 @@ export function createAbTestRoutes(db: Db) {
 
   // Create a new A/B test
   app.post("/", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const body = await c.req.json<{
       name: string;
       description?: string;
@@ -135,6 +144,7 @@ export function createAbTestRoutes(db: Db) {
         id: testId,
         name: body.name,
         description: body.description || null,
+        tenantId,
       })
       .run();
 
@@ -164,6 +174,7 @@ export function createAbTestRoutes(db: Db) {
 
   // Update A/B test status
   app.patch("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
     const body = await c.req.json<{
       status?: "active" | "paused" | "completed";
@@ -171,7 +182,7 @@ export function createAbTestRoutes(db: Db) {
       description?: string;
     }>();
 
-    const test = await db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
@@ -182,24 +193,25 @@ export function createAbTestRoutes(db: Db) {
     if (body.description !== undefined) updates.description = body.description;
 
     if (Object.keys(updates).length > 0) {
-      await db.update(abTests).set(updates).where(eq(abTests.id, id)).run();
+      await db.update(abTests).set(updates).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).run();
     }
 
-    const updated = await db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const updated = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
     return c.json({ test: updated });
   });
 
   // Delete an A/B test
   app.delete("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
-    const test = await db.select().from(abTests).where(eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
 
     await db.delete(abTestVariants).where(eq(abTestVariants.abTestId, id)).run();
-    await db.delete(abTests).where(eq(abTests.id, id)).run();
+    await db.delete(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).run();
 
     return c.json({ deleted: true });
   });

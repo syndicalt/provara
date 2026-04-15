@@ -1,15 +1,17 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { feedback, requests } from "@provara/db";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTokenInfo } from "../auth/middleware.js";
+import { getTenantId } from "../auth/tenant.js";
 
 export function createFeedbackRoutes(db: Db) {
   const app = new Hono();
 
   // Submit feedback for a request
   app.post("/", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const body = await c.req.json<{
       requestId: string;
       score: number;
@@ -30,8 +32,8 @@ export function createFeedbackRoutes(db: Db) {
       );
     }
 
-    // Verify request exists
-    const request = await db.select().from(requests).where(eq(requests.id, body.requestId)).get();
+    // Verify request exists (scoped to tenant)
+    const request = await db.select().from(requests).where(tenantId ? and(eq(requests.id, body.requestId), eq(requests.tenantId, tenantId)) : eq(requests.id, body.requestId)).get();
     if (!request) {
       return c.json(
         { error: { message: "Request not found", type: "not_found" } },
@@ -46,7 +48,7 @@ export function createFeedbackRoutes(db: Db) {
       .values({
         id,
         requestId: body.requestId,
-        tenantId: tokenInfo?.tenant || null,
+        tenantId: tenantId || tokenInfo?.tenant || null,
         score: body.score,
         comment: body.comment || null,
         source: "user",
@@ -58,6 +60,7 @@ export function createFeedbackRoutes(db: Db) {
 
   // List recent feedback
   app.get("/", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
     const rows = await db
       .select({
@@ -75,6 +78,7 @@ export function createFeedbackRoutes(db: Db) {
       })
       .from(feedback)
       .leftJoin(requests, eq(feedback.requestId, requests.id))
+      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
       .orderBy(desc(feedback.createdAt))
       .limit(limit)
       .all();
@@ -84,6 +88,7 @@ export function createFeedbackRoutes(db: Db) {
 
   // Quality scores per model per routing cell
   app.get("/quality/by-cell", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const rows = await db
       .select({
         provider: requests.provider,
@@ -95,6 +100,7 @@ export function createFeedbackRoutes(db: Db) {
       })
       .from(feedback)
       .innerJoin(requests, eq(feedback.requestId, requests.id))
+      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
       .groupBy(requests.provider, requests.model, requests.taskType, requests.complexity)
       .all();
 
@@ -103,6 +109,7 @@ export function createFeedbackRoutes(db: Db) {
 
   // Quality summary per model
   app.get("/quality/by-model", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const rows = await db
       .select({
         provider: requests.provider,
@@ -114,6 +121,7 @@ export function createFeedbackRoutes(db: Db) {
       })
       .from(feedback)
       .innerJoin(requests, eq(feedback.requestId, requests.id))
+      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
       .groupBy(requests.provider, requests.model)
       .all();
 

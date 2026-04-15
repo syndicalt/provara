@@ -1,13 +1,15 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { requests, costLogs, abTests, feedback } from "@provara/db";
-import { desc, sql, eq } from "drizzle-orm";
+import { desc, sql, eq, and } from "drizzle-orm";
+import { getTenantId } from "../auth/tenant.js";
 
 export function createAnalyticsRoutes(db: Db) {
   const app = new Hono();
 
   // List recent requests with pagination
   app.get("/requests", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
     const offset = parseInt(c.req.query("offset") || "0");
     const provider = c.req.query("provider");
@@ -34,6 +36,7 @@ export function createAnalyticsRoutes(db: Db) {
       })
       .from(requests)
       .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .orderBy(desc(requests.createdAt))
       .limit(limit)
       .offset(offset)
@@ -45,13 +48,14 @@ export function createAnalyticsRoutes(db: Db) {
         return true;
       });
 
-    const total = await db.select({ count: sql<number>`count(*)` }).from(requests).get();
+    const total = await db.select({ count: sql<number>`count(*)` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
 
     return c.json({ requests: rows, total: total?.count || 0, limit, offset });
   });
 
   // Cost summary by provider
   app.get("/costs/by-provider", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const rows = await db
       .select({
         provider: costLogs.provider,
@@ -61,6 +65,7 @@ export function createAnalyticsRoutes(db: Db) {
         requestCount: sql<number>`count(*)`,
       })
       .from(costLogs)
+      .where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined)
       .groupBy(costLogs.provider)
       .all();
 
@@ -69,6 +74,7 @@ export function createAnalyticsRoutes(db: Db) {
 
   // Cost summary by model
   app.get("/costs/by-model", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const rows = await db
       .select({
         provider: costLogs.provider,
@@ -80,6 +86,7 @@ export function createAnalyticsRoutes(db: Db) {
         avgCost: sql<number>`avg(${costLogs.cost})`,
       })
       .from(costLogs)
+      .where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined)
       .groupBy(costLogs.provider, costLogs.model)
       .all();
 
@@ -88,6 +95,7 @@ export function createAnalyticsRoutes(db: Db) {
 
   // Routing stats — traffic by task type × complexity
   app.get("/routing/stats", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const rows = await db
       .select({
         taskType: requests.taskType,
@@ -99,6 +107,7 @@ export function createAnalyticsRoutes(db: Db) {
         avgLatency: sql<number>`avg(${requests.latencyMs})`,
       })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .groupBy(requests.taskType, requests.complexity, requests.routedBy, requests.provider, requests.model)
       .all();
 
@@ -107,12 +116,14 @@ export function createAnalyticsRoutes(db: Db) {
 
   // Routing distribution — how many requests per task type
   app.get("/routing/distribution", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const byTaskType = await db
       .select({
         taskType: requests.taskType,
         count: sql<number>`count(*)`,
       })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .groupBy(requests.taskType)
       .all();
 
@@ -122,6 +133,7 @@ export function createAnalyticsRoutes(db: Db) {
         count: sql<number>`count(*)`,
       })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .groupBy(requests.complexity)
       .all();
 
@@ -130,13 +142,15 @@ export function createAnalyticsRoutes(db: Db) {
 
   // Overview stats
   app.get("/overview", async (c) => {
-    const totalRequests = await db.select({ count: sql<number>`count(*)` }).from(requests).get();
-    const totalCost = await db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).get();
-    const avgLatency = await db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).get();
+    const tenantId = getTenantId(c.req.raw);
+    const totalRequests = await db.select({ count: sql<number>`count(*)` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
+    const totalCost = await db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined).get();
+    const avgLatency = await db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
 
     const providerCount = await db
       .select({ count: sql<number>`count(distinct ${requests.provider})` })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .get();
 
     return c.json({
@@ -149,6 +163,7 @@ export function createAnalyticsRoutes(db: Db) {
 
   // Pipeline stage stats — per-stage request counts and latency
   app.get("/pipeline", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     // Requests by routing method
     const byRoutedBy = await db
       .select({
@@ -157,6 +172,7 @@ export function createAnalyticsRoutes(db: Db) {
         avgLatency: sql<number>`avg(${requests.latencyMs})`,
       })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .groupBy(requests.routedBy)
       .all();
 
@@ -164,25 +180,28 @@ export function createAnalyticsRoutes(db: Db) {
     const activeAbTests = await db
       .select({ count: sql<number>`count(*)` })
       .from(abTests)
-      .where(eq(abTests.status, "active"))
+      .where(tenantId ? and(eq(abTests.status, "active"), eq(abTests.tenantId, tenantId)) : eq(abTests.status, "active"))
       .get();
 
     // Total feedback count
     const feedbackCount = await db
       .select({ count: sql<number>`count(*)` })
       .from(feedback)
+      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
       .get();
 
     // Provider count
     const providerCount = await db
       .select({ count: sql<number>`count(distinct ${requests.provider})` })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .get();
 
     // Total requests
     const totalRequests = await db
       .select({ count: sql<number>`count(*)` })
       .from(requests)
+      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
       .get();
 
     const routedByMap: Record<string, { count: number; avgLatency: number }> = {};
