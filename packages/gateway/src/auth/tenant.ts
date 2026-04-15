@@ -22,6 +22,11 @@ export function createTenantMiddleware(db: Db) {
       return next();
     }
 
+    // Public routes that don't require tenant context
+    if (c.req.path.startsWith("/v1/models")) {
+      return next();
+    }
+
     // Try session cookie first (dashboard users)
     const sessionId = getSessionFromCookie(c);
     if (sessionId) {
