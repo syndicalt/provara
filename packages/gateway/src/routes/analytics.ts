@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { requests, costLogs } from "@provara/db";
+import { requests, costLogs, abTests, feedback } from "@provara/db";
 import { desc, sql, eq } from "drizzle-orm";
 
 export function createAnalyticsRoutes(db: Db) {
@@ -144,6 +144,85 @@ export function createAnalyticsRoutes(db: Db) {
       totalCost: totalCost?.total || 0,
       avgLatency: avgLatency?.avg || 0,
       providerCount: providerCount?.count || 0,
+    });
+  });
+
+  // Pipeline stage stats — per-stage request counts and latency
+  app.get("/pipeline", async (c) => {
+    // Requests by routing method
+    const byRoutedBy = await db
+      .select({
+        routedBy: requests.routedBy,
+        count: sql<number>`count(*)`,
+        avgLatency: sql<number>`avg(${requests.latencyMs})`,
+      })
+      .from(requests)
+      .groupBy(requests.routedBy)
+      .all();
+
+    // Active A/B tests
+    const activeAbTests = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(abTests)
+      .where(eq(abTests.status, "active"))
+      .get();
+
+    // Total feedback count
+    const feedbackCount = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(feedback)
+      .get();
+
+    // Provider count
+    const providerCount = await db
+      .select({ count: sql<number>`count(distinct ${requests.provider})` })
+      .from(requests)
+      .get();
+
+    // Total requests
+    const totalRequests = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(requests)
+      .get();
+
+    const routedByMap: Record<string, { count: number; avgLatency: number }> = {};
+    for (const row of byRoutedBy) {
+      if (row.routedBy) {
+        routedByMap[row.routedBy] = { count: row.count, avgLatency: Math.round(row.avgLatency || 0) };
+      }
+    }
+
+    return c.json({
+      totalRequests: totalRequests?.count || 0,
+      stages: {
+        classifier: {
+          count: (routedByMap["classification"]?.count || 0) + (routedByMap["routing-hint"]?.count || 0),
+          avgLatency: routedByMap["classification"]?.avgLatency || 0,
+          active: true,
+        },
+        abTest: {
+          count: routedByMap["ab-test"]?.count || 0,
+          avgLatency: routedByMap["ab-test"]?.avgLatency || 0,
+          active: (activeAbTests?.count || 0) > 0,
+          activeTests: activeAbTests?.count || 0,
+        },
+        adaptive: {
+          count: routedByMap["adaptive"]?.count || 0,
+          avgLatency: routedByMap["adaptive"]?.avgLatency || 0,
+          active: (feedbackCount?.count || 0) > 0,
+          feedbackCount: feedbackCount?.count || 0,
+        },
+        fallback: {
+          count: (routedByMap["classification"]?.count || 0),
+          avgLatency: routedByMap["classification"]?.avgLatency || 0,
+          active: true,
+        },
+        providers: {
+          count: totalRequests?.count || 0,
+          active: true,
+          providerCount: providerCount?.count || 0,
+        },
+      },
     });
   });
 

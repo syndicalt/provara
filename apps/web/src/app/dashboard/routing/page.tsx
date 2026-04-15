@@ -5,6 +5,7 @@ import { formatLatency, formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
 import { Badge } from "../../../components/badge";
 import { gatewayFetchRaw } from "../../../lib/gateway-client";
+import { PipelineVisualization } from "../../../components/pipeline-viz";
 
 interface RoutingStat {
   taskType: string | null;
@@ -147,6 +148,12 @@ export default function RoutingPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <h1 className="text-2xl font-bold">Routing Analytics</h1>
+
+      {/* Pipeline Visualization */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Routing Pipeline</h2>
+        <PipelineVisualization />
+      </section>
 
       {/* Distribution Charts */}
       <div className="grid grid-cols-2 gap-6">
