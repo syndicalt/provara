@@ -19,8 +19,8 @@ export function createAuthMiddleware(db: Db) {
       return next();
     }
 
-    // Skip auth for admin routes (accessed from dashboard)
-    if (c.req.path.startsWith("/v1/admin/")) {
+    // Skip auth for dashboard/admin routes — only gate chat completions
+    if (c.req.path !== "/v1/chat/completions") {
       return next();
     }
 
