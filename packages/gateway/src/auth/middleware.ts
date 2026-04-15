@@ -1,7 +1,7 @@
 import type { Context, Next } from "hono";
 import type { Db } from "@provara/db";
 import { apiTokens } from "@provara/db";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { verifyToken, type TokenInfo } from "./tokens.js";
 import { checkRateLimit, checkSpendLimit } from "./rate-limiter.js";
 import { getSessionFromCookie, validateSession } from "./session.js";
@@ -26,10 +26,11 @@ export function createAuthMiddleware(db: Db) {
       return next();
     }
 
-    // Check if any tokens exist — if not, run in open mode
+    // Check if any enabled tokens exist — if not, run in open mode
     const tokenCount = await db
       .select({ count: sql<number>`count(*)` })
       .from(apiTokens)
+      .where(eq(apiTokens.enabled, true))
       .get();
 
     if (!tokenCount || tokenCount.count === 0) {

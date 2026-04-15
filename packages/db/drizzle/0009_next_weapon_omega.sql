@@ -1,0 +1,1 @@
+ALTER TABLE `api_tokens` ADD `enabled` integer DEFAULT true NOT NULL;

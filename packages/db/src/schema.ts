@@ -122,6 +122,7 @@ export const apiTokens = sqliteTable("api_tokens", {
   spendPeriod: text("spend_period", { enum: ["monthly", "weekly", "daily"] }).default("monthly"),
   routingProfile: text("routing_profile", { enum: ["cost", "balanced", "quality", "custom"] }).default("balanced"),
   routingWeights: text("routing_weights"), // JSON: { quality, cost, latency }
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   expiresAt: integer("expires_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

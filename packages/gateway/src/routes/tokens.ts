@@ -22,6 +22,8 @@ export function createTokenRoutes(db: Db) {
         rateLimit: t.rateLimit,
         spendLimit: t.spendLimit,
         spendPeriod: t.spendPeriod,
+        routingProfile: t.routingProfile,
+        enabled: t.enabled,
         expiresAt: t.expiresAt,
         createdAt: t.createdAt,
       })),
@@ -79,6 +81,8 @@ export function createTokenRoutes(db: Db) {
         rateLimit: token.rateLimit,
         spendLimit: token.spendLimit,
         spendPeriod: token.spendPeriod,
+        routingProfile: token.routingProfile,
+        enabled: token.enabled,
         expiresAt: token.expiresAt,
         createdAt: token.createdAt,
       },
@@ -162,6 +166,7 @@ export function createTokenRoutes(db: Db) {
       rateLimit?: number | null;
       spendLimit?: number | null;
       spendPeriod?: "monthly" | "weekly" | "daily";
+      enabled?: boolean;
       expiresAt?: string | null;
     }>();
 
@@ -176,6 +181,7 @@ export function createTokenRoutes(db: Db) {
     if (body.rateLimit !== undefined) updates.rateLimit = body.rateLimit;
     if (body.spendLimit !== undefined) updates.spendLimit = body.spendLimit;
     if (body.spendPeriod !== undefined) updates.spendPeriod = body.spendPeriod;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
     if (body.expiresAt !== undefined) {
       updates.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
     }

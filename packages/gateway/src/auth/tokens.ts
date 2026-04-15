@@ -43,6 +43,9 @@ export async function verifyToken(db: Db, token: string): Promise<TokenInfo | nu
 
   if (!row) return null;
 
+  // Check if disabled
+  if (!row.enabled) return null;
+
   // Check expiry
   if (row.expiresAt && row.expiresAt < new Date()) {
     return null;

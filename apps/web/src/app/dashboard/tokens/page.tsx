@@ -13,6 +13,7 @@ interface Token {
   spendLimit: number | null;
   spendPeriod: string | null;
   routingProfile: string | null;
+  enabled: boolean;
   expiresAt: string | null;
   createdAt: string;
 }
@@ -269,9 +270,15 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
-function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) {
+function formatDate(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+function TokenCard({ token, onRefresh }: { token: Token; onRefresh: () => void }) {
   const [usage, setUsage] = useState<TokenUsage | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [toggling, setToggling] = useState(false);
 
   useEffect(() => {
     if (expanded) {
@@ -282,24 +289,50 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
     }
   }, [expanded, token.id]);
 
+  async function handleToggleEnabled(e: React.MouseEvent) {
+    e.stopPropagation();
+    setToggling(true);
+    try {
+      await gatewayFetchRaw(`/v1/admin/tokens/${token.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !token.enabled }),
+      });
+      onRefresh();
+    } catch (err) {
+      console.error("Failed to toggle token:", err);
+    } finally {
+      setToggling(false);
+    }
+  }
+
   async function handleDelete() {
     if (!confirm(`Revoke token "${token.name}"? This cannot be undone.`)) return;
     await gatewayFetchRaw(`/v1/admin/tokens/${token.id}`, { method: "DELETE" });
-    onDelete();
+    onRefresh();
   }
 
+  const isExpired = token.expiresAt && new Date(token.expiresAt) < new Date();
+
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+    <div className={`bg-zinc-900 border rounded-lg overflow-hidden ${token.enabled ? "border-zinc-800" : "border-zinc-800/60 opacity-70"}`}>
       <div
         className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-zinc-800/30"
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex items-center gap-3">
-          <code className="text-xs text-zinc-500 font-mono">{token.tokenPrefix}••••</code>
-          <span className="font-medium">{token.name}</span>
-          <span className="text-xs text-zinc-500">({token.tenant})</span>
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Status dot */}
+          <div className={`w-2 h-2 rounded-full shrink-0 ${token.enabled ? (isExpired ? "bg-amber-500" : "bg-emerald-500") : "bg-zinc-600"}`} />
+          <code className="text-xs text-zinc-500 font-mono shrink-0">{token.tokenPrefix}••••</code>
+          <span className={`font-medium truncate ${!token.enabled ? "text-zinc-500" : ""}`}>{token.name}</span>
+          <span className="text-xs text-zinc-500 shrink-0">({token.tenant})</span>
+          {!token.enabled && (
+            <span className="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700 shrink-0">Disabled</span>
+          )}
+          {isExpired && token.enabled && (
+            <span className="text-xs px-2 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-800/50 shrink-0">Expired</span>
+          )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 shrink-0">
           {token.routingProfile && (
             <span className="text-xs px-2 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-800/50 capitalize">{token.routingProfile}</span>
           )}
@@ -309,14 +342,52 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
           {token.spendLimit && (
             <span className="text-xs text-zinc-500">{formatCost(token.spendLimit)}/{token.spendPeriod}</span>
           )}
+          <span className="text-xs text-zinc-600">{formatDate(token.createdAt)}</span>
           <span className="text-zinc-500 text-sm">{expanded ? "▾" : "▸"}</span>
         </div>
       </div>
 
       {expanded && (
         <div className="border-t border-zinc-800 px-4 py-4 space-y-4">
+          {/* Metadata grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-2 text-sm">
+            <div>
+              <span className="text-xs text-zinc-500">Tenant</span>
+              <p className="text-zinc-300">{token.tenant}</p>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-500">Routing</span>
+              <p className="text-zinc-300 capitalize">{token.routingProfile || "balanced"}</p>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-500">Rate Limit</span>
+              <p className="text-zinc-300">{token.rateLimit ? `${token.rateLimit} RPM` : "Unlimited"}</p>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-500">Spend Limit</span>
+              <p className="text-zinc-300">{token.spendLimit ? `${formatCost(token.spendLimit)}/${token.spendPeriod}` : "Unlimited"}</p>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-500">Created</span>
+              <p className="text-zinc-300">{formatDate(token.createdAt)}</p>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-500">Expires</span>
+              <p className={`${isExpired ? "text-amber-300" : "text-zinc-300"}`}>
+                {token.expiresAt ? formatDate(token.expiresAt) : "Never"}
+              </p>
+            </div>
+            <div>
+              <span className="text-xs text-zinc-500">Status</span>
+              <p className={token.enabled ? "text-emerald-300" : "text-zinc-500"}>
+                {token.enabled ? (isExpired ? "Expired" : "Active") : "Disabled"}
+              </p>
+            </div>
+          </div>
+
+          {/* Usage stats */}
           {usage && (
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-4 gap-4 pt-2 border-t border-zinc-800/50">
               <div>
                 <p className="text-xs text-zinc-500">Total Requests</p>
                 <p className="text-lg font-semibold">{formatNumber(usage.totalRequests)}</p>
@@ -340,7 +411,20 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
               </div>
             </div>
           )}
-          <div className="flex gap-2">
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-2">
+            <button
+              onClick={handleToggleEnabled}
+              disabled={toggling}
+              className={`px-3 py-1 rounded text-xs disabled:opacity-50 ${
+                token.enabled
+                  ? "bg-amber-900/50 hover:bg-amber-800/50 text-amber-300"
+                  : "bg-emerald-900/50 hover:bg-emerald-800/50 text-emerald-300"
+              }`}
+            >
+              {toggling ? "..." : token.enabled ? "Disable" : "Enable"}
+            </button>
             <button
               onClick={handleDelete}
               className="px-3 py-1 bg-red-900/50 hover:bg-red-800/50 text-red-300 rounded text-xs"
@@ -396,11 +480,19 @@ export default function TokensPage() {
       </div>
 
       {/* Auth Mode Indicator */}
-      <div className={`rounded-lg p-3 text-sm ${tokens.length === 0 ? "bg-amber-900/30 border border-amber-800 text-amber-300" : "bg-emerald-900/30 border border-emerald-800 text-emerald-300"}`}>
-        {tokens.length === 0
-          ? "Open mode — no tokens created. All API requests are allowed without authentication."
-          : `Auth enabled — ${tokens.length} token${tokens.length > 1 ? "s" : ""} active. API requests require a valid Bearer token.`}
-      </div>
+      {(() => {
+        const enabledCount = tokens.filter((t) => t.enabled).length;
+        const isOpen = enabledCount === 0;
+        return (
+          <div className={`rounded-lg p-3 text-sm ${isOpen ? "bg-amber-900/30 border border-amber-800 text-amber-300" : "bg-emerald-900/30 border border-emerald-800 text-emerald-300"}`}>
+            {isOpen
+              ? tokens.length === 0
+                ? "Open mode — no tokens created. All API requests are allowed without authentication."
+                : "Open mode — all tokens are disabled. All API requests are allowed without authentication."
+              : `Auth enabled — ${enabledCount} token${enabledCount > 1 ? "s" : ""} active${tokens.length !== enabledCount ? `, ${tokens.length - enabledCount} disabled` : ""}. API requests require a valid Bearer token.`}
+          </div>
+        );
+      })()}
 
       {/* Per-Tenant Usage */}
       {tenantUsage.length > 0 && (
@@ -442,7 +534,7 @@ export default function TokensPage() {
         ) : (
           <div className="space-y-3">
             {tokens.map((token) => (
-              <TokenCard key={token.id} token={token} onDelete={fetchData} />
+              <TokenCard key={token.id} token={token} onRefresh={fetchData} />
             ))}
           </div>
         )}
