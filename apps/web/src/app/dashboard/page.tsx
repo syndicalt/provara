@@ -65,6 +65,10 @@ const requestColumns: Column<RequestRow>[] = [
   { key: "latencyMs", label: "Latency", sortable: true, align: "right", render: (row) => row.latencyMs ? formatLatency(row.latencyMs) : "—" },
   { key: "tokens", label: "Tokens", align: "right", render: (row) => row.inputTokens != null ? <span className="text-xs">{formatTokens(row.inputTokens)} / {formatTokens(row.outputTokens || 0)}</span> : <>—</> },
   { key: "cost", label: "Cost", sortable: true, align: "right", render: (row) => row.cost != null ? formatCost(row.cost) : "—" },
+  { key: "createdAt", label: "Time", sortable: true, align: "right", render: (row) => {
+    const d = new Date(row.createdAt);
+    return <span className="text-xs text-zinc-500">{d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>;
+  }},
 ];
 
 export default function Dashboard() {
