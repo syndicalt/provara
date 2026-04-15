@@ -20,6 +20,7 @@ import { createTeamRoutes } from "./routes/team.js";
 import { createModelRoutes } from "./routes/models.js";
 import { createGuardrailRoutes } from "./routes/guardrails.js";
 import { createAlertRoutes } from "./routes/alerts.js";
+import { createPromptRoutes } from "./routes/prompts.js";
 import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
 import { getTenantId } from "./auth/tenant.js";
 import { createJudge } from "./routing/judge.js";
@@ -97,6 +98,9 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount alert management routes (admin)
   app.route("/v1/admin/alerts", createAlertRoutes(ctx.db));
+
+  // Mount prompt management routes (admin)
+  app.route("/v1/admin/prompts", createPromptRoutes(ctx.db));
 
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", async (c) => {

@@ -220,6 +220,34 @@ export const alertLogs = sqliteTable("alert_logs", {
     .$defaultFn(() => new Date()),
 });
 
+export const promptTemplates = sqliteTable("prompt_templates", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  publishedVersionId: text("published_version_id"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const promptVersions = sqliteTable("prompt_versions", {
+  id: text("id").primaryKey(),
+  templateId: text("template_id")
+    .notNull()
+    .references(() => promptTemplates.id),
+  version: integer("version").notNull(),
+  messages: text("messages").notNull(), // JSON array of { role, content }
+  variables: text("variables").notNull().default("[]"), // JSON array of variable names
+  note: text("note"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
   requestId: text("request_id").references(() => requests.id),
