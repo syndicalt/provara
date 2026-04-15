@@ -22,6 +22,9 @@ COPY packages/db ./packages/db
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+ARG NEXT_PUBLIC_GATEWAY_URL
+ENV NEXT_PUBLIC_GATEWAY_URL=$NEXT_PUBLIC_GATEWAY_URL
+
 RUN npm run build -w apps/web
 
 # ── Run ───────────────────────────────────────────────────────
