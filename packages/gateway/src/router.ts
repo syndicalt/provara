@@ -119,7 +119,7 @@ export async function createRouter(ctx: RouterContext) {
     // Input guardrails — check all message content before routing
     const tenantIdForGuardrails = getTenantId(c.req.raw);
     const guardrailRulesList = await loadRules(ctx.db, tenantIdForGuardrails);
-    const guardrailViolations: string[] = [];
+    const guardrailViolations = new Set<string>();
     if (guardrailRulesList.length > 0) {
       // Check each message individually so we can redact in-place
       for (let i = 0; i < request.messages.length; i++) {
@@ -129,7 +129,7 @@ export async function createRouter(ctx: RouterContext) {
         if (inputCheck.violations.length > 0) {
           await logViolations(ctx.db, null, tenantIdForGuardrails, "input", inputCheck.violations);
           for (const v of inputCheck.violations) {
-            guardrailViolations.push(v.ruleName);
+            guardrailViolations.add(v.ruleName);
           }
         }
 
@@ -339,8 +339,8 @@ export async function createRouter(ctx: RouterContext) {
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
           };
-          if (guardrailViolations.length > 0) {
-            streamHeaders["X-Provara-Guardrail"] = JSON.stringify(guardrailViolations);
+          if (guardrailViolations.size > 0) {
+            streamHeaders["X-Provara-Guardrail"] = JSON.stringify([...guardrailViolations]);
           }
           return new Response(sseStream, { headers: streamHeaders });
         } catch (err) {
