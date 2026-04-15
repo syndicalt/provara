@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { apiKeys } from "@provara/db";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { encrypt, decrypt, maskKey, hasMasterKey } from "../crypto/index.js";
+import { getTenantId } from "../auth/tenant.js";
 
 export function createApiKeyRoutes(db: Db) {
   const app = new Hono();
@@ -19,7 +20,8 @@ export function createApiKeyRoutes(db: Db) {
       return c.json({ error: { message: "PROVARA_MASTER_KEY not set", type: "configuration_error" } }, 503);
     }
 
-    const keys = await db.select().from(apiKeys).all();
+    const tenantId = getTenantId(c.req.raw);
+    const keys = await db.select().from(apiKeys).where(tenantId ? eq(apiKeys.tenantId, tenantId) : undefined).all();
     return c.json({
       keys: keys.map((k) => {
         let maskedValue: string;
@@ -51,6 +53,7 @@ export function createApiKeyRoutes(db: Db) {
       return c.json({ error: { message: "PROVARA_MASTER_KEY not set", type: "configuration_error" } }, 503);
     }
 
+    const tenantId = getTenantId(c.req.raw);
     const body = await c.req.json<{
       name: string;
       provider: string;
@@ -70,7 +73,7 @@ export function createApiKeyRoutes(db: Db) {
     const existing = await db
       .select()
       .from(apiKeys)
-      .where(eq(apiKeys.name, body.name))
+      .where(tenantId ? and(eq(apiKeys.name, body.name), eq(apiKeys.tenantId, tenantId)) : eq(apiKeys.name, body.name))
       .get();
 
     if (existing) {
@@ -105,6 +108,7 @@ export function createApiKeyRoutes(db: Db) {
         encryptedValue: encrypted,
         iv,
         authTag,
+        tenantId,
       })
       .run();
 
@@ -124,14 +128,16 @@ export function createApiKeyRoutes(db: Db) {
 
   // Delete an API key
   app.delete("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
-    const key = await db.select().from(apiKeys).where(eq(apiKeys.id, id)).get();
+    const whereClause = tenantId ? and(eq(apiKeys.id, id), eq(apiKeys.tenantId, tenantId)) : eq(apiKeys.id, id);
+    const key = await db.select().from(apiKeys).where(whereClause).get();
     if (!key) {
       return c.json({ error: { message: "API key not found", type: "not_found" } }, 404);
     }
 
-    await db.delete(apiKeys).where(eq(apiKeys.id, id)).run();
+    await db.delete(apiKeys).where(whereClause).run();
     return c.json({ deleted: true });
   });
 

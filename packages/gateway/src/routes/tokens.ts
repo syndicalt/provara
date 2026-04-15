@@ -4,13 +4,15 @@ import { apiTokens, costLogs, requests } from "@provara/db";
 import { eq, and, gte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { generateToken, hashToken, maskToken } from "../auth/tokens.js";
+import { getTenantId } from "../auth/tenant.js";
 
 export function createTokenRoutes(db: Db) {
   const app = new Hono();
 
   // List all tokens (masked)
   app.get("/", async (c) => {
-    const tokens = await db.select().from(apiTokens).all();
+    const tenantId = getTenantId(c.req.raw);
+    const tokens = await db.select().from(apiTokens).where(tenantId ? eq(apiTokens.tenant, tenantId) : undefined).all();
     return c.json({
       tokens: tokens.map((t) => ({
         id: t.id,
@@ -28,8 +30,9 @@ export function createTokenRoutes(db: Db) {
 
   // Get token detail with usage stats
   app.get("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const token = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const token = await db.select().from(apiTokens).where(tenantId ? and(eq(apiTokens.id, id), eq(apiTokens.tenant, tenantId)) : eq(apiTokens.id, id)).get();
 
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
@@ -152,6 +155,7 @@ export function createTokenRoutes(db: Db) {
 
   // Update a token
   app.patch("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
     const body = await c.req.json<{
       name?: string;
@@ -161,7 +165,8 @@ export function createTokenRoutes(db: Db) {
       expiresAt?: string | null;
     }>();
 
-    const token = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const tokenWhere = tenantId ? and(eq(apiTokens.id, id), eq(apiTokens.tenant, tenantId)) : eq(apiTokens.id, id);
+    const token = await db.select().from(apiTokens).where(tokenWhere).get();
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
     }
@@ -176,28 +181,31 @@ export function createTokenRoutes(db: Db) {
     }
 
     if (Object.keys(updates).length > 0) {
-      await db.update(apiTokens).set(updates).where(eq(apiTokens.id, id)).run();
+      await db.update(apiTokens).set(updates).where(tokenWhere).run();
     }
 
-    const updated = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const updated = await db.select().from(apiTokens).where(tokenWhere).get();
     return c.json({ token: updated });
   });
 
   // Delete (revoke) a token
   app.delete("/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const token = await db.select().from(apiTokens).where(eq(apiTokens.id, id)).get();
+    const tokenWhere = tenantId ? and(eq(apiTokens.id, id), eq(apiTokens.tenant, tenantId)) : eq(apiTokens.id, id);
+    const token = await db.select().from(apiTokens).where(tokenWhere).get();
 
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
     }
 
-    await db.delete(apiTokens).where(eq(apiTokens.id, id)).run();
+    await db.delete(apiTokens).where(tokenWhere).run();
     return c.json({ deleted: true });
   });
 
   // Per-tenant usage summary
   app.get("/usage/by-tenant", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const rows = await db
       .select({
         tenant: costLogs.tenantId,
@@ -205,6 +213,7 @@ export function createTokenRoutes(db: Db) {
         requestCount: sql<number>`count(*)`,
       })
       .from(costLogs)
+      .where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined)
       .groupBy(costLogs.tenantId)
       .all();
 
