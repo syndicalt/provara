@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+button, [role="button"], a, select, summary, label[for] {
+  cursor: pointer;
+}
+
 /* Hide scrollbar but keep scroll functionality */
 .scrollbar-thin::-webkit-scrollbar {
   width: 6px;
