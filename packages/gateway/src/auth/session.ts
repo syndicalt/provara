@@ -52,8 +52,8 @@ export async function deleteSession(db: Db, sessionId: string): Promise<void> {
 export function setSessionCookie(c: Context, sessionId: string): void {
   setCookie(c, SESSION_COOKIE, sessionId, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "Lax",
+    secure: true,
+    sameSite: "None",
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });
