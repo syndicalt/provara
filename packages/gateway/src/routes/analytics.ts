@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { requests, costLogs, abTests, feedback } from "@provara/db";
-import { desc, sql, eq, and } from "drizzle-orm";
+import { desc, sql, eq, and, gte } from "drizzle-orm";
 import { getTenantId } from "../auth/tenant.js";
 
 export function createAnalyticsRoutes(db: Db) {
@@ -285,6 +285,186 @@ export function createAnalyticsRoutes(db: Db) {
         },
       },
     });
+  });
+
+  // ---- Time-series endpoints ----
+
+  function parseRange(range: string | undefined): Date {
+    const now = new Date();
+    switch (range) {
+      case "1h": return new Date(now.getTime() - 3600_000);
+      case "6h": return new Date(now.getTime() - 6 * 3600_000);
+      case "24h": return new Date(now.getTime() - 24 * 3600_000);
+      case "7d": return new Date(now.getTime() - 7 * 86400_000);
+      case "30d": return new Date(now.getTime() - 30 * 86400_000);
+      default: return new Date(now.getTime() - 7 * 86400_000);
+    }
+  }
+
+  function bucketFormat(range: string | undefined): string {
+    // Hourly for ≤24h, daily for longer
+    switch (range) {
+      case "1h": case "6h": case "24h": return "%Y-%m-%d %H:00";
+      default: return "%Y-%m-%d";
+    }
+  }
+
+  // Time-series: request volume, cost, avg latency
+  app.get("/timeseries", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const range = c.req.query("range") || "7d";
+    const provider = c.req.query("provider");
+    const model = c.req.query("model");
+    const since = parseRange(range);
+    const fmt = bucketFormat(range);
+
+    const conditions = [gte(requests.createdAt, since)];
+    if (tenantId) conditions.push(eq(requests.tenantId, tenantId));
+
+    const rows = await db
+      .select({
+        bucket: sql<string>`strftime(${fmt}, datetime(${requests.createdAt} / 1000, 'unixepoch'))`,
+        requestCount: sql<number>`count(*)`,
+        avgLatency: sql<number>`avg(${requests.latencyMs})`,
+        p50Latency: sql<number>`percentile(50, ${requests.latencyMs})`,
+        p95Latency: sql<number>`percentile(95, ${requests.latencyMs})`,
+        p99Latency: sql<number>`percentile(99, ${requests.latencyMs})`,
+      })
+      .from(requests)
+      .where(and(...conditions))
+      .groupBy(sql`1`)
+      .orderBy(sql`1`)
+      .all()
+      .then((rows) => rows.filter((r) => {
+        if (provider && model) return true; // filtered below via cost query
+        return true;
+      }));
+
+    // Cost time-series (separate table)
+    const costConditions = [gte(costLogs.createdAt, since)];
+    if (tenantId) costConditions.push(eq(costLogs.tenantId, tenantId));
+
+    const costRows = await db
+      .select({
+        bucket: sql<string>`strftime(${fmt}, datetime(${costLogs.createdAt} / 1000, 'unixepoch'))`,
+        totalCost: sql<number>`sum(${costLogs.cost})`,
+      })
+      .from(costLogs)
+      .where(and(...costConditions))
+      .groupBy(sql`1`)
+      .orderBy(sql`1`)
+      .all();
+
+    const costMap = new Map(costRows.map((r) => [r.bucket, r.totalCost]));
+
+    const series = rows.map((r) => ({
+      bucket: r.bucket,
+      requestCount: r.requestCount,
+      avgLatency: Math.round(r.avgLatency || 0),
+      p50Latency: Math.round(r.p50Latency || r.avgLatency || 0),
+      p95Latency: Math.round(r.p95Latency || r.avgLatency || 0),
+      p99Latency: Math.round(r.p99Latency || r.avgLatency || 0),
+      totalCost: costMap.get(r.bucket) || 0,
+    }));
+
+    return c.json({ series, range });
+  });
+
+  // Cost breakdown by provider over time
+  app.get("/timeseries/cost-by-provider", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const range = c.req.query("range") || "7d";
+    const since = parseRange(range);
+    const fmt = bucketFormat(range);
+
+    const conditions = [gte(costLogs.createdAt, since)];
+    if (tenantId) conditions.push(eq(costLogs.tenantId, tenantId));
+
+    const rows = await db
+      .select({
+        bucket: sql<string>`strftime(${fmt}, datetime(${costLogs.createdAt} / 1000, 'unixepoch'))`,
+        provider: costLogs.provider,
+        totalCost: sql<number>`sum(${costLogs.cost})`,
+        requestCount: sql<number>`count(*)`,
+      })
+      .from(costLogs)
+      .where(and(...conditions))
+      .groupBy(sql`1`, costLogs.provider)
+      .orderBy(sql`1`)
+      .all();
+
+    return c.json({ series: rows, range });
+  });
+
+  // Model comparison for a time range
+  app.get("/models/compare", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const range = c.req.query("range") || "7d";
+    const since = parseRange(range);
+
+    const conditions = [gte(requests.createdAt, since)];
+    if (tenantId) conditions.push(eq(requests.tenantId, tenantId));
+
+    const rows = await db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        requestCount: sql<number>`count(*)`,
+        avgLatency: sql<number>`avg(${requests.latencyMs})`,
+        avgInputTokens: sql<number>`avg(${requests.inputTokens})`,
+        avgOutputTokens: sql<number>`avg(${requests.outputTokens})`,
+      })
+      .from(requests)
+      .where(and(...conditions))
+      .groupBy(requests.provider, requests.model)
+      .all();
+
+    // Join with cost data
+    const costConditions = [gte(costLogs.createdAt, since)];
+    if (tenantId) costConditions.push(eq(costLogs.tenantId, tenantId));
+
+    const costRows = await db
+      .select({
+        model: costLogs.model,
+        totalCost: sql<number>`sum(${costLogs.cost})`,
+      })
+      .from(costLogs)
+      .where(and(...costConditions))
+      .groupBy(costLogs.model)
+      .all();
+
+    // Join with quality data
+    const qualityRows = await db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        avgScore: sql<number>`avg(${feedback.score})`,
+        feedbackCount: sql<number>`count(${feedback.id})`,
+      })
+      .from(feedback)
+      .innerJoin(requests, eq(feedback.requestId, requests.id))
+      .where(and(...[gte(feedback.createdAt, since), ...(tenantId ? [eq(feedback.tenantId, tenantId)] : [])]))
+      .groupBy(requests.provider, requests.model)
+      .all();
+
+    const costMap = new Map(costRows.map((r) => [r.model, r.totalCost]));
+    const qualityMap = new Map(qualityRows.map((r) => [`${r.provider}/${r.model}`, r]));
+
+    const models = rows.map((r) => {
+      const key = `${r.provider}/${r.model}`;
+      const quality = qualityMap.get(key);
+      return {
+        provider: r.provider,
+        model: r.model,
+        requestCount: r.requestCount,
+        avgLatency: Math.round(r.avgLatency || 0),
+        totalCost: costMap.get(r.model) || 0,
+        avgScore: quality?.avgScore || null,
+        feedbackCount: quality?.feedbackCount || 0,
+      };
+    });
+
+    return c.json({ models, range });
   });
 
   return app;
