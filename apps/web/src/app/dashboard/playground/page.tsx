@@ -38,6 +38,7 @@ export default function PlaygroundPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [lastMeta, setLastMeta] = useState<ProvaraMetadata | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [apiToken, setApiToken] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -78,10 +79,15 @@ export default function PlaygroundPage() {
       : newMessages;
 
     try {
+      const headers: Record<string, string> = { ...adminHeaders() };
+      if (apiToken) {
+        headers["Authorization"] = `Bearer ${apiToken}`;
+      }
+
       const res = await fetch(gatewayUrl("/v1/chat/completions"), {
         method: "POST",
         credentials: "include",
-        headers: adminHeaders(),
+        headers,
         body: JSON.stringify({
           model: selectedModel,
           provider: selectedProvider || undefined,
@@ -324,6 +330,20 @@ export default function PlaygroundPage() {
               onChange={(e) => setMaxTokens(parseInt(e.target.value))}
               className="w-full accent-blue-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-xs text-zinc-400 mb-1">API Token</label>
+            <input
+              type="password"
+              value={apiToken}
+              onChange={(e) => setApiToken(e.target.value)}
+              placeholder="pvra_... (optional if signed in)"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-300 font-mono placeholder-zinc-600 focus:outline-none focus:border-blue-500"
+            />
+            <p className="text-xs text-zinc-500 mt-1">
+              Required if API tokens are enabled and you're not signed in via OAuth. Paste a token from the Tokens page.
+            </p>
           </div>
 
           <div className="pt-2 border-t border-zinc-800">

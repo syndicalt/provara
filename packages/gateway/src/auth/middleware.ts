@@ -4,6 +4,8 @@ import { apiTokens } from "@provara/db";
 import { sql } from "drizzle-orm";
 import { verifyToken, type TokenInfo } from "./tokens.js";
 import { checkRateLimit, checkSpendLimit } from "./rate-limiter.js";
+import { getSessionFromCookie, validateSession } from "./session.js";
+import { getMode } from "../config.js";
 
 // Store tenant info on the request context via a WeakMap keyed by request
 const tokenInfoMap = new WeakMap<Request, TokenInfo>();
@@ -36,7 +38,20 @@ export function createAuthMiddleware(db: Db) {
 
     // Extract Bearer token
     const authHeader = c.req.header("Authorization");
+
+    // If no Bearer token, check for session cookie (dashboard playground)
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      if (getMode() === "multi_tenant") {
+        const sessionId = getSessionFromCookie(c);
+        if (sessionId) {
+          const session = await validateSession(db, sessionId);
+          if (session) {
+            // Authenticated dashboard user — allow through without token
+            return next();
+          }
+        }
+      }
+
       return c.json(
         { error: { message: "Missing or invalid Authorization header. Use: Bearer <token>", type: "auth_error" } },
         401
