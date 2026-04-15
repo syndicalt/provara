@@ -8,13 +8,18 @@ Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and c
 - **Adaptive Quality Scoring** — Learns from feedback (user ratings + LLM-as-judge) to auto-optimize which model handles each task type
 - **A/B Testing** — Split traffic between models with weighted variants, scoped to routing cells
 - **8+ Providers** — OpenAI, Anthropic, Google, Mistral, xAI, Z.ai, Ollama, plus any OpenAI-compatible provider
-- **Cost Analytics** — Track spend per provider, model, and tenant with detailed request logs
+- **Request Logs & Replay** — Browsable request history with full prompt/response detail, replay any request against a different model with side-by-side diff comparison
+- **Observability Dashboard** — Time-series charts for request volume, cost breakdown by provider, latency percentiles (p50/p95/p99), and model comparison tables
+- **Quality & Eval Pipeline** — LLM-as-judge auto-scoring with configurable sample rate, quality trends over time, manual 1-5 feedback from the dashboard, adaptive routing matrix
+- **Alerting** — Configurable rules for spend, latency, and request count thresholds with webhook notifications and alert history
+- **Prompt Management** — Versioned prompt templates with `{{variable}}` interpolation, publish/rollback, and API resolution by name
+- **Cost Analytics** — Track spend per provider, model, and tenant with detailed cost breakdowns
 - **OpenAI-Compatible API** — Drop-in replacement for any SDK that speaks the OpenAI chat completions format
 - **Streaming** — Full SSE streaming support with first-chunk fallback detection
 - **Response Caching** — In-memory cache for deterministic requests (temperature=0)
 - **Multi-Tenant** — OAuth (Google + GitHub), role-based access (owner/member), tenant-scoped data
 - **Encrypted Key Storage** — AES-256-GCM encryption for provider API keys at rest
-- **Web Dashboard** — Analytics, routing visualization, A/B tests, model catalog, team management
+- **Web Dashboard** — Sidebar navigation with grouped sections: Monitor, Test, Configure, Admin
 
 ## Quick Start
 
@@ -57,10 +62,11 @@ provara/
 │   │   │   ├── classifier/   # Task type + complexity heuristics
 │   │   │   ├── routing/      # Adaptive routing engine
 │   │   │   ├── providers/    # Provider adapters
-│   │   │   ├── routes/       # API endpoints
+│   │   │   ├── routes/       # API endpoints (tokens, feedback, alerts, prompts, etc.)
 │   │   │   ├── crypto/       # AES-256-GCM encryption
 │   │   │   ├── cost/         # Token pricing and cost calculation
 │   │   │   ├── cache/        # In-memory response cache
+│   │   │   ├── guardrails/   # Input/output content filtering
 │   │   │   └── ab/           # Weighted variant selection
 │   │   └── openapi.yaml      # OpenAPI 3.0 spec (import into Yaak/Postman)
 │   └── db/             # Drizzle ORM + libSQL/Turso
@@ -69,8 +75,20 @@ provara/
         └── src/app/
             ├── page.tsx              # Landing page
             ├── login/                # OAuth sign-in
-            ├── models/               # Model catalog
-            └── dashboard/            # Analytics, routing, A/B tests, etc.
+            ├── models/               # Public model catalog
+            └── dashboard/
+                ├── logs/             # Request logs + detail + replay
+                ├── analytics/        # Time-series charts, cost, latency
+                ├── quality/          # Quality scores, judge config, feedback
+                ├── playground/       # Interactive model testing
+                ├── ab-tests/         # A/B test management
+                ├── routing/          # Routing pipeline visualization
+                ├── providers/        # Provider management
+                ├── prompts/          # Prompt template versioning
+                ├── alerts/           # Alert rules and history
+                ├── guardrails/       # Content safety rules
+                ├── tokens/           # API token management
+                └── api-keys/         # Provider key management
 ```
 
 ## How Routing Works
@@ -246,14 +264,33 @@ curl -X POST http://localhost:4000/v1/chat/completions \
 | `GET /v1/feedback/quality/by-model` | Quality scores by model |
 | **Analytics** | |
 | `GET /v1/analytics/overview` | Summary stats |
-| `GET /v1/analytics/costs/by-model` | Cost breakdown |
-| `GET /v1/analytics/routing/stats` | Routing traffic by cell |
 | `GET /v1/analytics/requests` | Paginated request log |
+| `GET /v1/analytics/requests/:id` | Single request detail with feedback |
+| `GET /v1/analytics/timeseries` | Time-series: volume, cost, latency (p50/p95/p99) |
+| `GET /v1/analytics/timeseries/cost-by-provider` | Stacked cost breakdown over time |
+| `GET /v1/analytics/models/compare` | Model comparison for a time range |
+| `GET /v1/analytics/costs/by-model` | Cost breakdown by model |
+| `GET /v1/analytics/routing/stats` | Routing traffic by cell |
 | `GET /v1/analytics/adaptive/scores` | Adaptive routing EMA scores |
 | `GET /v1/cache/stats` | Cache hit/miss stats |
+| **Quality** | |
+| `GET /v1/feedback/quality/trend` | Quality score trend over time |
+| `GET /v1/feedback/quality/by-model` | Quality scores by model |
+| `GET/PUT /v1/feedback/judge/config` | Configure LLM judge (sample rate, enable/disable) |
+| **Alerts** | |
+| `GET/POST /v1/admin/alerts/rules` | Manage alert rules |
+| `PATCH/DELETE /v1/admin/alerts/rules/:id` | Update or delete a rule |
+| `GET /v1/admin/alerts/history` | Alert firing history |
+| `POST /v1/admin/alerts/evaluate` | Manually evaluate all rules |
+| **Prompts** | |
+| `GET/POST /v1/admin/prompts` | List or create prompt templates |
+| `GET/DELETE /v1/admin/prompts/:id` | Get or delete a template with versions |
+| `POST /v1/admin/prompts/:id/versions` | Add a new version |
+| `POST /v1/admin/prompts/:id/publish/:versionId` | Publish a specific version |
+| `GET /v1/admin/prompts/resolve/:name` | Resolve template by name with variable substitution |
 | **Admin** | |
 | `GET/POST/DELETE /v1/api-keys` | Manage encrypted provider API keys |
-| `GET/POST/PATCH/DELETE /v1/admin/tokens` | Manage API tokens |
+| `GET/POST/PATCH/DELETE /v1/admin/tokens` | Manage API tokens (with enable/disable) |
 | `GET/POST/PATCH/DELETE /v1/admin/providers` | Manage custom providers |
 | `GET/PATCH/DELETE /v1/admin/team` | Team member management |
 | `POST /v1/providers/reload` | Hot-reload providers after key changes |

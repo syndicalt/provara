@@ -33,7 +33,15 @@ const response = await client.chat.completions.create({
     content: [
       {
         heading: "Overview",
-        text: "The main dashboard shows aggregate stats: total requests, total cost, average latency, and active provider count. Below that, cost breakdown by model and a paginated request log with routing details.",
+        text: "The main dashboard shows aggregate stats: total requests, total cost, average latency, and active provider count. Below that, cost breakdown by model and routing pipeline visualization.",
+      },
+      {
+        heading: "Logs",
+        text: "Browsable request history with every request routed through the gateway. Paginated table with provider, model, routing tags, token counts, latency, and cost. Click any request to see the full prompt, response, metadata, and quality scores.\n\nThe detail view includes a Replay feature: send the same prompt to a different model and compare results side-by-side or in a word-level diff view.",
+      },
+      {
+        heading: "Analytics",
+        text: "Time-series observability dashboard with four chart types:\n\n- Request Volume: area chart showing requests over time\n- Cost Over Time: stacked bar chart broken down by provider\n- Latency Percentiles: p50, p95, and p99 latency lines\n- Model Comparison: table comparing request count, latency, cost, and quality score across models\n\nAll charts support 24h, 7d, and 30d range selection.",
       },
       {
         heading: "Playground",
@@ -49,7 +57,7 @@ const response = await client.chat.completions.create({
       },
       {
         heading: "Quality",
-        text: "Quality analytics powered by feedback scores. The adaptive routing matrix shows the best model per task/complexity cell based on EMA (exponential moving average) quality scores. View quality by model, recent feedback entries, and how the adaptive router is learning.",
+        text: "Quality analytics powered by feedback scores. Includes a quality score trend chart (24h/7d/30d), configurable LLM judge panel (enable/disable, sample rate slider), and the adaptive routing matrix showing the best model per task/complexity cell.\n\nThe judge automatically scores a sample of responses using the cheapest available model. You can also manually rate any response from the request detail view (Logs page) using a 1-5 score with optional comments. Both user and judge feedback feed the adaptive routing engine.",
       },
       {
         heading: "A/B Tests",
@@ -60,8 +68,16 @@ const response = await client.chat.completions.create({
         text: "Input/output filtering for content safety. Built-in rules detect PII (SSN, credit cards, emails, phone numbers) and secrets (API keys). Add custom regex rules. Three actions: Block (reject the request), Redact (replace matches with [REDACTED]), or Flag (log but allow through). View recent violations in the log.",
       },
       {
+        heading: "Prompts",
+        text: "Manage versioned prompt templates. Create templates with a multi-message editor, using {{variable_name}} syntax for dynamic content. Each template tracks a full version history and has one published version that's active for API resolution.\n\nAPI consumers can resolve a template by name: GET /v1/admin/prompts/resolve/my-template?user_input=hello — variables are substituted from query params, and the resolved messages array is returned ready to use.",
+      },
+      {
+        heading: "Alerts",
+        text: "Configurable alerting rules for key metrics: spend (USD), average latency, p95 latency, and request count. Each rule specifies a metric, condition (>, <, >=, <=), threshold, time window (1h/6h/24h/7d), and an optional webhook URL.\n\nWhen an alert fires, it logs the event in alert history and sends a JSON POST to the configured webhook (compatible with Slack, Discord, PagerDuty, etc.). Rules can be enabled/disabled and include debouncing within the window period.",
+      },
+      {
         heading: "Tokens",
-        text: "API tokens authenticate requests to /v1/chat/completions. Each token has a tenant, optional rate limit (requests per minute), spend limit (USD per period), and routing profile (cost/balanced/quality/custom). Tokens are shown once on creation and cannot be retrieved later.",
+        text: "API tokens authenticate requests to /v1/chat/completions. Each token has a tenant, optional rate limit (requests per minute), spend limit (USD per period), and routing profile (cost/balanced/quality/custom). Tokens can be enabled or disabled without revoking them. The expanded view shows full metadata and usage stats. Tokens are shown once on creation and cannot be retrieved later.",
       },
       {
         heading: "API Keys",
