@@ -7,6 +7,7 @@ export const customProviders = sqliteTable("custom_providers", {
   apiKeyRef: text("api_key_ref"), // name of the key in api_keys table, e.g. "TOGETHER_API_KEY"
   models: text("models").notNull().default("[]"), // JSON array of model names
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  tenantId: text("tenant_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -54,6 +55,7 @@ export const abTests = sqliteTable("ab_tests", {
   status: text("status", { enum: ["active", "paused", "completed"] })
     .notNull()
     .default("active"),
+  tenantId: text("tenant_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -94,6 +96,7 @@ export const apiKeys = sqliteTable("api_keys", {
   encryptedValue: text("encrypted_value").notNull(),
   iv: text("iv").notNull(),
   authTag: text("auth_tag").notNull(),
+  tenantId: text("tenant_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
