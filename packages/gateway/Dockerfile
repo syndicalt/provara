@@ -46,6 +46,8 @@ COPY --from=prod-deps /app/package.json ./
 COPY --from=builder /app/packages/gateway/dist ./packages/gateway/dist
 COPY --from=builder /app/packages/gateway/package.json ./packages/gateway/
 
+COPY --from=builder /app/packages/db/drizzle ./packages/db/drizzle
+
 EXPOSE 4000
 
 CMD ["node", "packages/gateway/dist/index.js"]

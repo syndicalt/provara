@@ -6,7 +6,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../.env") });
 
 import { serve } from "@hono/node-server";
-import { createDb } from "@provara/db";
+import { resolve } from "node:path";
+import { createDb, runMigrations } from "@provara/db";
 import { createProviderRegistry } from "./providers/index.js";
 import { createRouter } from "./router.js";
 import { getDecryptedKeys } from "./routes/api-keys.js";
@@ -15,6 +16,8 @@ import { loadCustomProviders } from "./providers/custom-loader.js";
 const port = parseInt(process.env.PORT || "4000", 10);
 
 const db = createDb();
+await runMigrations(db, resolve(process.cwd(), "packages/db/drizzle"));
+
 const registry = await createProviderRegistry({
   getKeys: () => getDecryptedKeys(db),
   getCustomProviders: () => loadCustomProviders(db),

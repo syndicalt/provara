@@ -1,5 +1,6 @@
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
+import { migrate as drizzleMigrate } from "drizzle-orm/libsql/migrator";
 import * as schema from "./schema.js";
 
 const DEFAULT_DB_URL = "file:provara.db";
@@ -10,6 +11,10 @@ export function createDb(url?: string) {
     authToken: process.env.DATABASE_AUTH_TOKEN,
   });
   return drizzle(client, { schema });
+}
+
+export async function runMigrations(db: Db, migrationsFolder: string) {
+  await drizzleMigrate(db, { migrationsFolder });
 }
 
 export type Db = ReturnType<typeof createDb>;
