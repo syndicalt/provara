@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { Provider, CompletionRequest, CompletionResponse } from "./types.js";
+import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
 import { nanoid } from "nanoid";
 
 export function createAnthropicProvider(apiKey?: string): Provider {
@@ -40,6 +40,37 @@ export function createAnthropicProvider(apiKey?: string): Provider {
           outputTokens: response.usage.output_tokens,
         },
         latencyMs,
+      };
+    },
+
+    async *stream(request: CompletionRequest): AsyncIterable<StreamChunk> {
+      const systemMessage = request.messages.find((m) => m.role === "system");
+      const messages = request.messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+      const stream = client.messages.stream({
+        model: request.model,
+        max_tokens: request.max_tokens || 4096,
+        system: systemMessage?.content,
+        messages,
+        ...(request.temperature !== undefined && { temperature: request.temperature }),
+      });
+
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          yield { content: event.delta.text, done: false };
+        }
+      }
+
+      const finalMessage = await stream.finalMessage();
+      yield {
+        content: "",
+        done: true,
+        usage: {
+          inputTokens: finalMessage.usage.input_tokens,
+          outputTokens: finalMessage.usage.output_tokens,
+        },
       };
     },
   };

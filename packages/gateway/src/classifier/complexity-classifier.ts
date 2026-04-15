@@ -3,6 +3,56 @@ import type { Complexity, ClassificationResult } from "./types.js";
 
 const CONFIDENCE_THRESHOLD = 0.6;
 
+// Content-based complexity signals
+const MEDIUM_INDICATORS = [
+  "compare", "contrast", "tradeoffs", "trade-offs", "tradeoff", "trade-off",
+  "pros and cons", "advantages and disadvantages",
+  "explain how", "explain why", "describe how",
+  "step by step", "walkthrough", "tutorial",
+  "best practices", "guidelines", "recommendations",
+  "key points", "3-page", "multi-page", "document",
+  "enterprise", "large-scale", "real-world",
+  // Creative complexity — world-building, genre, setting
+  "story", "narrative", "chapter",
+  "set on", "set in", "takes place",
+  "noir", "detective", "mystery", "thriller",
+  "space station", "dystopian", "post-apocalyptic",
+  "multiple characters", "plot twist",
+];
+
+const COMPLEX_INDICATORS = [
+  // Multi-part tasks
+  "with", "including", "as well as", "along with",
+  // Deep technical concepts
+  "optimize", "optimization", "architecture", "distributed",
+  "concurrent", "parallel", "async", "synchronization",
+  "b-tree", "red-black tree", "graph", "dynamic programming",
+  "machine learning", "neural network", "transformer",
+  "cryptography", "encryption", "authentication",
+  "microservice", "kubernetes", "scalability",
+  "compiler", "parser", "interpreter", "garbage collector",
+  "database design", "schema design", "normalization",
+  "proof", "theorem", "mathematical", "derivation",
+  // Scope indicators
+  "full", "complete", "comprehensive", "production",
+  "end-to-end", "from scratch", "entire", "whole system",
+  "design and implement", "build a", "create a complete",
+];
+
+const SIMPLE_INDICATORS = [
+  "hello", "hi ", "hey ", "thanks", "thank you",
+  "yes", "no", "ok", "sure",
+  "one word", "one sentence", "briefly",
+  "simple", "basic", "easy", "trivial",
+  "just", "only", "single",
+];
+
+const MULTI_TASK_PATTERNS = [
+  /\b(?:insertion|deletion|update|search|traversal)\b.*\b(?:insertion|deletion|update|search|traversal)\b/i,
+  /\b(?:create|read|update|delete)\b.*\b(?:create|read|update|delete)\b/i,
+  /\bwith\b.+\band\b.+\band\b/i,  // "with X and Y and Z"
+];
+
 interface ComplexitySignals {
   tokenEstimate: number;
   messageCount: number;
@@ -12,10 +62,14 @@ interface ComplexitySignals {
   hasMultipleInstructions: boolean;
   codeBlockCount: number;
   averageMessageLength: number;
+  complexIndicatorCount: number;
+  mediumIndicatorCount: number;
+  simpleIndicatorCount: number;
+  hasMultiTaskPattern: boolean;
+  wordCount: number;
 }
 
 function estimateTokens(text: string): number {
-  // Rough estimate: ~4 chars per token for English
   return Math.ceil(text.length / 4);
 }
 
@@ -23,19 +77,41 @@ function gatherSignals(messages: ChatMessage[]): ComplexitySignals {
   const allText = messages.map((m) => m.content).join("\n");
   const userMessages = messages.filter((m) => m.role === "user");
   const lastUserMessage = userMessages[userMessages.length - 1]?.content || "";
+  const lastLower = lastUserMessage.toLowerCase();
 
   const codeBlocks = allText.match(/```[\s\S]*?```/g);
 
-  // Check for structured data (JSON, XML, tables, lists)
+  // Check for structured data
   const hasStructuredData =
-    /\{[\s\S]*"[\w]+"[\s\S]*:/.test(lastUserMessage) || // JSON-like
-    /<\w+>[\s\S]*<\/\w+>/.test(lastUserMessage) || // XML-like
-    /\|.*\|.*\|/.test(lastUserMessage) || // Markdown tables
-    (lastUserMessage.match(/^\s*[-*]\s/gm)?.length || 0) > 3; // Long bullet lists
+    /\{[\s\S]*"[\w]+"[\s\S]*:/.test(lastUserMessage) ||
+    /<\w+>[\s\S]*<\/\w+>/.test(lastUserMessage) ||
+    /\|.*\|.*\|/.test(lastUserMessage) ||
+    (lastUserMessage.match(/^\s*[-*]\s/gm)?.length || 0) > 3;
 
   // Check for multiple distinct instructions
   const instructionPatterns = /(?:^|\n)\s*(?:\d+[\.\)]\s|step\s+\d|first[,:]|second[,:]|then[,:]|next[,:]|finally[,:]|also[,:]|additionally)/gim;
   const instructionCount = lastUserMessage.match(instructionPatterns)?.length || 0;
+
+  // Count complexity indicators
+  let complexCount = 0;
+  for (const indicator of COMPLEX_INDICATORS) {
+    if (lastLower.includes(indicator)) complexCount++;
+  }
+
+  let mediumCount = 0;
+  for (const indicator of MEDIUM_INDICATORS) {
+    if (lastLower.includes(indicator)) mediumCount++;
+  }
+
+  let simpleCount = 0;
+  for (const indicator of SIMPLE_INDICATORS) {
+    if (lastLower.includes(indicator)) simpleCount++;
+  }
+
+  // Check for multi-task patterns
+  const hasMultiTaskPattern = MULTI_TASK_PATTERNS.some((p) => p.test(lastUserMessage));
+
+  const wordCount = lastUserMessage.split(/\s+/).filter(Boolean).length;
 
   return {
     tokenEstimate: estimateTokens(allText),
@@ -46,11 +122,16 @@ function gatherSignals(messages: ChatMessage[]): ComplexitySignals {
     hasMultipleInstructions: instructionCount >= 3,
     codeBlockCount: codeBlocks?.length || 0,
     averageMessageLength: allText.length / Math.max(messages.length, 1),
+    complexIndicatorCount: complexCount,
+    mediumIndicatorCount: mediumCount,
+    simpleIndicatorCount: simpleCount,
+    hasMultiTaskPattern,
+    wordCount,
   };
 }
 
 function scoreComplexity(signals: ComplexitySignals): ClassificationResult<Complexity> {
-  let score = 0; // 0-10 scale, then mapped to simple/medium/complex
+  let score = 0; // 0-10 scale
 
   // Token count scoring
   if (signals.tokenEstimate < 50) score += 0;
@@ -73,6 +154,31 @@ function scoreComplexity(signals: ComplexitySignals): ClassificationResult<Compl
   if (signals.codeBlockCount > 2) score += 2;
   else if (signals.codeBlockCount > 0) score += 1;
 
+  // Content-based complexity signals
+  if (signals.complexIndicatorCount >= 4) score += 3;
+  else if (signals.complexIndicatorCount >= 2) score += 2;
+  else if (signals.complexIndicatorCount >= 1) score += 1;
+
+  // Medium indicators
+  if (signals.mediumIndicatorCount >= 3) score += 3;
+  else if (signals.mediumIndicatorCount >= 2) score += 2.5;
+  else if (signals.mediumIndicatorCount >= 1) score += 1.5;
+
+  // Multi-task pattern (e.g. "insertion, deletion, and range queries")
+  if (signals.hasMultiTaskPattern) score += 2;
+
+  // Simple indicators push score down
+  if (signals.simpleIndicatorCount >= 2) score -= 2;
+  else if (signals.simpleIndicatorCount >= 1) score -= 1;
+
+  // Word count signals
+  if (signals.wordCount <= 5) score -= 1;
+  else if (signals.wordCount >= 15) score += 1;
+  else if (signals.wordCount >= 10) score += 0.5;
+
+  // Clamp
+  score = Math.max(0, Math.min(10, score));
+
   // Map score to complexity
   let value: Complexity;
   let confidence: number;
@@ -82,7 +188,6 @@ function scoreComplexity(signals: ComplexitySignals): ClassificationResult<Compl
     confidence = Math.min(0.5 + (2 - score) * 0.15, 0.95);
   } else if (score <= 5) {
     value = "medium";
-    // Confidence is highest in the middle of the range, lower at boundaries
     const distFromCenter = Math.abs(score - 3.5);
     confidence = Math.max(0.5, 0.85 - distFromCenter * 0.15);
   } else {
@@ -90,7 +195,7 @@ function scoreComplexity(signals: ComplexitySignals): ClassificationResult<Compl
     confidence = Math.min(0.5 + (score - 5) * 0.1, 0.95);
   }
 
-  // Boundary ambiguity — scores near the thresholds are less certain
+  // Boundary ambiguity
   const nearBoundary = Math.abs(score - 2) < 0.8 || Math.abs(score - 5) < 0.8;
   const ambiguous = confidence < CONFIDENCE_THRESHOLD || nearBoundary;
 

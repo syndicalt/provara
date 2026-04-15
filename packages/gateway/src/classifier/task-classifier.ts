@@ -6,45 +6,96 @@ const CONFIDENCE_THRESHOLD = 0.6;
 const CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
 const INLINE_CODE_REGEX = /`[^`]+`/g;
 
-const CODING_KEYWORDS = [
+// Split keywords into strong (high-signal) and weak (supporting context)
+const CODING_STRONG = [
+  "implement", "refactor", "debug", "compile", "deploy", "lint",
+  "write code", "write a function", "write a script", "code review",
+  "stack trace", "segfault", "unit test", "integration test",
+  "pull request", "merge conflict",
+];
+
+const CODING_WEAK = [
   "function", "class", "variable", "import", "export", "async", "await",
   "const", "let", "var", "return", "interface", "type", "enum",
-  "debug", "error", "bug", "fix", "refactor", "implement", "api",
-  "endpoint", "database", "query", "sql", "regex", "algorithm",
-  "compile", "runtime", "typescript", "javascript", "python", "rust",
-  "react", "node", "npm", "git", "docker", "deploy", "ci/cd",
-  "test", "unit test", "integration test", "lint", "build",
-  "stack trace", "exception", "null", "undefined", "segfault",
-  "write code", "write a function", "write a script", "code review",
+  "error", "bug", "fix", "api", "endpoint", "database", "query",
+  "sql", "regex", "algorithm", "runtime", "build", "test",
+  "typescript", "javascript", "python", "rust", "golang", "java",
+  "c++", "ruby", "swift", "kotlin", "scala", "haskell",
+  "react", "vue", "angular", "node", "npm", "pip", "cargo",
+  "git", "docker", "kubernetes", "ci/cd", "webpack", "vite",
+  "exception", "null", "undefined", "boolean", "array", "object",
+  "frontend", "backend", "fullstack", "microservice",
+  "message queue", "load balancer", "cache", "proxy",
+  "distributed", "scalable", "horizontal scaling",
+  "exactly-once", "at-least-once", "idempotent",
+  "latency", "throughput", "bandwidth",
+  "data structure", "tree", "graph", "heap", "queue", "stack",
+  "sorting", "quicksort", "mergesort", "binary search",
+  "linked list", "hash map", "hash table",
 ];
 
-const CREATIVE_KEYWORDS = [
-  "write a story", "write a poem", "creative writing", "fiction",
-  "narrative", "character", "plot", "dialogue", "screenplay",
-  "song lyrics", "haiku", "limerick", "metaphor", "imagery",
-  "brainstorm ideas", "imagine", "fantasy", "sci-fi",
-  "write me a", "compose", "draft a letter", "blog post",
-  "essay", "article", "copywriting", "tagline", "slogan",
+const CREATIVE_STRONG = [
+  "write a story", "write a poem", "write a song", "write a script",
+  "write a letter", "write a blog", "write an essay", "write an article",
+  "creative writing", "fiction", "screenplay", "song lyrics",
+  "brainstorm ideas", "brainstorm names",
+  "compose", "draft a", "come up with",
 ];
 
-const SUMMARIZATION_KEYWORDS = [
+const CREATIVE_WEAK = [
+  "story", "poem", "novel", "chapter", "narrative", "character",
+  "plot", "dialogue", "monologue", "scene", "setting",
+  "noir", "detective", "mystery", "thriller", "romance", "horror",
+  "fantasy", "sci-fi", "science fiction", "dystopian", "utopian",
+  "haiku", "limerick", "sonnet", "rhyme", "verse", "stanza",
+  "metaphor", "imagery", "allegory", "satire", "parody",
+  "imagine", "pretend", "roleplay", "persona",
+  "blog post", "essay", "article", "copywriting", "tagline", "slogan",
+  "headline", "caption", "bio", "pitch", "proposal",
+  "funny", "humorous", "witty", "sarcastic", "dramatic", "emotional",
+  "inspiring", "motivational",
+];
+
+const SUMMARIZATION_STRONG = [
   "summarize", "summary", "summarise", "tldr", "tl;dr",
   "key points", "main points", "brief overview", "condense",
-  "recap", "digest", "outline the main", "boil down",
-  "in a nutshell", "give me the gist", "shorten this",
+  "boil down", "in a nutshell", "give me the gist", "shorten this",
+  "recap", "digest", "outline the main",
 ];
 
-const QA_KEYWORDS = [
+const SUMMARIZATION_WEAK = [
+  "shorter", "concise", "brief", "extract", "highlights",
+  "takeaways", "bottom line",
+];
+
+const QA_STRONG = [
   "what is", "what are", "who is", "who are", "when did", "when was",
   "where is", "where are", "how does", "how do", "how is",
-  "why does", "why do", "why is", "explain", "describe",
-  "define", "meaning of", "difference between", "compare",
-  "tell me about", "what does", "is it true", "can you tell me",
+  "why does", "why do", "why is", "what does", "what causes",
+  "explain", "describe", "define", "meaning of",
+  "difference between", "compare", "contrast",
+  "tell me about", "is it true", "can you tell me",
+  "pros and cons", "advantages and disadvantages",
+  "tradeoffs", "trade-offs", "tradeoff", "trade-off",
+];
+
+const QA_WEAK = [
+  "versus", " vs ", " or ", "better",
+  "opinion", "recommend", "suggestion", "advice",
+  "example", "examples", "instance", "illustration",
 ];
 
 interface Signal {
   taskType: TaskType;
   weight: number;
+}
+
+function matchKeywords(text: string, keywords: string[]): number {
+  let count = 0;
+  for (const kw of keywords) {
+    if (text.includes(kw)) count++;
+  }
+  return count;
 }
 
 function collectSignals(messages: ChatMessage[]): Signal[] {
@@ -66,26 +117,68 @@ function collectSignals(messages: ChatMessage[]): Signal[] {
   }
 
   // System prompt hints
-  if (systemMessage.includes("code") || systemMessage.includes("developer") || systemMessage.includes("programmer")) {
+  if (systemMessage.includes("code") || systemMessage.includes("developer") || systemMessage.includes("programmer") || systemMessage.includes("engineer")) {
     signals.push({ taskType: "coding", weight: 0.3 });
   }
-  if (systemMessage.includes("creative") || systemMessage.includes("writer") || systemMessage.includes("storyteller")) {
+  if (systemMessage.includes("creative") || systemMessage.includes("writer") || systemMessage.includes("storyteller") || systemMessage.includes("author") || systemMessage.includes("poet")) {
     signals.push({ taskType: "creative", weight: 0.3 });
   }
+  if (systemMessage.includes("summarize") || systemMessage.includes("summarise") || systemMessage.includes("condense")) {
+    signals.push({ taskType: "summarization", weight: 0.3 });
+  }
 
-  // Keyword matching — weight by how many keywords match
-  const keywordSets: [TaskType, string[]][] = [
-    ["coding", CODING_KEYWORDS],
-    ["creative", CREATIVE_KEYWORDS],
-    ["summarization", SUMMARIZATION_KEYWORDS],
-    ["qa", QA_KEYWORDS],
+  // Strong keyword matching — high weight per match
+  const strongSets: [TaskType, string[]][] = [
+    ["coding", CODING_STRONG],
+    ["creative", CREATIVE_STRONG],
+    ["summarization", SUMMARIZATION_STRONG],
+    ["qa", QA_STRONG],
   ];
 
-  for (const [taskType, keywords] of keywordSets) {
-    const matchCount = keywords.filter((kw) => lastUserMessage.includes(kw)).length;
+  for (const [taskType, keywords] of strongSets) {
+    const matchCount = matchKeywords(lastUserMessage, keywords);
     if (matchCount > 0) {
-      const weight = Math.min(0.15 + matchCount * 0.08, 0.5);
+      const weight = Math.min(0.3 + matchCount * 0.15, 0.7);
       signals.push({ taskType, weight });
+    }
+  }
+
+  // Weak keyword matching — lower weight, needs more matches to be meaningful
+  const weakSets: [TaskType, string[]][] = [
+    ["coding", CODING_WEAK],
+    ["creative", CREATIVE_WEAK],
+    ["summarization", SUMMARIZATION_WEAK],
+    ["qa", QA_WEAK],
+  ];
+
+  for (const [taskType, keywords] of weakSets) {
+    const matchCount = matchKeywords(lastUserMessage, keywords);
+    if (matchCount > 0) {
+      const weight = Math.min(0.1 + matchCount * 0.06, 0.4);
+      signals.push({ taskType, weight });
+    }
+  }
+
+  // Structural signals
+  // Questions ending with "?" lean toward QA
+  if (lastUserMessage.trim().endsWith("?")) {
+    signals.push({ taskType: "qa", weight: 0.15 });
+  }
+
+  // "Write" at the start — check if it's about code or creative
+  if (/^write\b/.test(lastUserMessage)) {
+    const codeContext = matchKeywords(lastUserMessage, [
+      "code", "function", "script", "test", "query", "algorithm",
+      "program", "class", "module", "implementation",
+      "python", "javascript", "typescript", "rust", "java", "golang",
+      "c++", "ruby", "swift", "kotlin", "sql",
+      "quicksort", "mergesort", "binary search", "linked list",
+      "sorting", "parser", "server", "client", "api",
+    ]);
+    if (codeContext > 0) {
+      signals.push({ taskType: "coding", weight: 0.3 });
+    } else {
+      signals.push({ taskType: "creative", weight: 0.2 });
     }
   }
 

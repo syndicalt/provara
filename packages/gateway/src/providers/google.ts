@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { Provider, CompletionRequest, CompletionResponse } from "./types.js";
+import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
 import { nanoid } from "nanoid";
 
 export function createGoogleProvider(apiKey?: string): Provider {
@@ -39,6 +39,41 @@ export function createGoogleProvider(apiKey?: string): Provider {
           outputTokens: response.usageMetadata?.candidatesTokenCount || 0,
         },
         latencyMs,
+      };
+    },
+
+    async *stream(request: CompletionRequest): AsyncIterable<StreamChunk> {
+      const systemMessage = request.messages.find((m) => m.role === "system");
+      const model = genAI.getGenerativeModel({
+        model: request.model,
+        ...(systemMessage && { systemInstruction: systemMessage.content }),
+      });
+
+      const contents = request.messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({
+          role: m.role === "assistant" ? "model" : "user",
+          parts: [{ text: m.content }],
+        }));
+
+      const result = await model.generateContentStream({ contents });
+
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+
+      for await (const chunk of result.stream) {
+        const text = chunk.text() || "";
+        if (chunk.usageMetadata) {
+          totalInputTokens = chunk.usageMetadata.promptTokenCount || 0;
+          totalOutputTokens = chunk.usageMetadata.candidatesTokenCount || 0;
+        }
+        yield { content: text, done: false };
+      }
+
+      yield {
+        content: "",
+        done: true,
+        usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
       };
     },
   };

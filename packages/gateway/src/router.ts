@@ -14,6 +14,7 @@ import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createJudge } from "./routing/judge.js";
+import { getCached, putCache, cacheStats } from "./cache/index.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -59,9 +60,13 @@ export function createRouter(ctx: RouterContext) {
 
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {
-    const body = await c.req.json<CompletionRequest & { provider?: string }>();
-    const { provider: providerName, routing_hint, ...rest } = body;
+    const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean }>();
+    const { provider: providerName, routing_hint, cache: cacheParam, ...rest } = body;
     const request = rest as CompletionRequest;
+
+    // Determine if caching is eligible
+    const noCache = c.req.header("x-provara-no-cache") === "true" || cacheParam === false;
+    const isCacheable = !noCache && (!request.temperature || request.temperature === 0);
 
     // Route the request through the intelligent routing engine
     const tokenInfo = getTokenInfo(c.req.raw);
@@ -75,12 +80,194 @@ export function createRouter(ctx: RouterContext) {
 
     const tenantId = tokenInfo?.tenant || null;
 
+    // Check cache before calling any provider
+    const skipCache = !isCacheable || routingResult.routedBy === "ab-test";
+    if (!skipCache) {
+      const cached = getCached(request.messages);
+      if (cached) {
+        return c.json({
+          id: `chatcmpl-${cached.id}`,
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model: routingResult.model,
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: cached.content },
+              finish_reason: "stop",
+            },
+          ],
+          usage: {
+            prompt_tokens: cached.usage.inputTokens,
+            completion_tokens: cached.usage.outputTokens,
+            total_tokens: cached.usage.inputTokens + cached.usage.outputTokens,
+          },
+          _provara: {
+            provider: cached.provider,
+            latencyMs: 0,
+            cached: true,
+            routing: {
+              taskType: routingResult.taskType,
+              complexity: routingResult.complexity,
+              routedBy: routingResult.routedBy,
+              usedFallback: false,
+              usedLlmFallback: routingResult.usedLlmFallback,
+            },
+          },
+        });
+      }
+    }
+
     // Build the attempt order: primary target + fallbacks
     const attempts = [
       { provider: routingResult.provider, model: routingResult.model },
       ...routingResult.fallbacks,
     ];
 
+    const CONNECT_TIMEOUT_MS = 10_000;  // For initial connection / first chunk
+    const COMPLETION_TIMEOUT_MS = 120_000; // For full non-streaming response
+    const failedProviders = new Set<string>();
+
+    // --- Streaming path ---
+    if (request.stream) {
+      let usedProvider = routingResult.provider;
+      let usedModel = routingResult.model;
+      let lastError: unknown;
+
+      for (const attempt of attempts) {
+        if (failedProviders.has(attempt.provider)) continue;
+        const provider = ctx.registry.get(attempt.provider);
+        if (!provider) continue;
+
+        try {
+          const streamIter = provider.stream({ ...request, model: attempt.model });
+          const iterator = streamIter[Symbol.asyncIterator]();
+
+          // Pull the first chunk BEFORE committing to this provider
+          // If this throws (e.g. 429), we can still try the next provider
+          const first = await Promise.race([
+            iterator.next(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`Timed out after ${CONNECT_TIMEOUT_MS}ms`)), CONNECT_TIMEOUT_MS)
+            ),
+          ]);
+
+          if (first.done) continue;
+
+          usedProvider = attempt.provider;
+          usedModel = attempt.model;
+          const responseId = nanoid();
+          const start = performance.now();
+
+          const sseStream = new ReadableStream({
+            async start(controller) {
+              const encoder = new TextEncoder();
+              let fullContent = "";
+              let usage = { inputTokens: 0, outputTokens: 0 };
+
+              const emitChunk = (chunk: { content: string; done: boolean; usage?: { inputTokens: number; outputTokens: number } }) => {
+                fullContent += chunk.content;
+                if (chunk.usage) usage = chunk.usage;
+                const sseData = JSON.stringify({
+                  id: `chatcmpl-${responseId}`,
+                  object: "chat.completion.chunk",
+                  created: Math.floor(Date.now() / 1000),
+                  model: usedModel,
+                  choices: [{
+                    index: 0,
+                    delta: chunk.done ? {} : { content: chunk.content },
+                    finish_reason: chunk.done ? "stop" : null,
+                  }],
+                });
+                controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
+              };
+
+              try {
+                // Emit the first chunk we already pulled
+                emitChunk(first.value);
+
+                // Continue with remaining chunks
+                for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
+                  emitChunk(chunk);
+                }
+
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                controller.close();
+
+                // Log after stream completes
+                const latencyMs = Math.round(performance.now() - start);
+                const requestId = nanoid();
+                ctx.db
+                  .insert(requests)
+                  .values({
+                    id: requestId,
+                    provider: usedProvider,
+                    model: usedModel,
+                    prompt: JSON.stringify(request.messages),
+                    response: fullContent,
+                    inputTokens: usage.inputTokens,
+                    outputTokens: usage.outputTokens,
+                    latencyMs,
+                    taskType: routingResult.taskType,
+                    complexity: routingResult.complexity,
+                    routedBy: routingResult.routedBy,
+                    tenantId,
+                    abTestId: routingResult.abTestId || null,
+                  })
+                  .run();
+
+                logCost(ctx.db, {
+                  requestId,
+                  provider: usedProvider,
+                  model: usedModel,
+                  inputTokens: usage.inputTokens,
+                  outputTokens: usage.outputTokens,
+                  tenantId,
+                }).catch(() => {});
+
+                if (!skipCache) {
+                  putCache(request.messages, {
+                    id: responseId,
+                    provider: usedProvider,
+                    model: usedModel,
+                    content: fullContent,
+                    usage,
+                    latencyMs,
+                  });
+                }
+
+                judge.maybeJudge({
+                  requestId,
+                  tenantId,
+                  messages: request.messages,
+                  responseContent: fullContent,
+                }).catch(() => {});
+              } catch (err) {
+                controller.error(err);
+              }
+            },
+          });
+
+          return new Response(sseStream, {
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+          });
+        } catch (err) {
+          lastError = err;
+          failedProviders.add(attempt.provider);
+          console.warn(`Provider ${attempt.provider}/${attempt.model} stream failed:`, err instanceof Error ? err.message : err);
+          continue;
+        }
+      }
+
+      const errMsg = lastError instanceof Error ? lastError.message : "All providers failed";
+      return c.json({ error: { message: errMsg, type: "provider_error" } }, 502);
+    }
+
+    // --- Non-streaming path ---
     let response: CompletionResponse | undefined;
     let usedProvider: string = routingResult.provider;
     let usedModel: string = routingResult.model;
@@ -88,9 +275,8 @@ export function createRouter(ctx: RouterContext) {
     let lastError: unknown;
     let latencyMs = 0;
 
-    const PROVIDER_TIMEOUT_MS = 30_000;
-
     for (const attempt of attempts) {
+      if (failedProviders.has(attempt.provider)) continue;
       const provider = ctx.registry.get(attempt.provider);
       if (!provider) continue;
 
@@ -99,7 +285,7 @@ export function createRouter(ctx: RouterContext) {
         const result = await Promise.race([
           provider.complete({ ...request, model: attempt.model }),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`Timed out after ${PROVIDER_TIMEOUT_MS}ms`)), PROVIDER_TIMEOUT_MS)
+            setTimeout(() => reject(new Error(`Timed out after ${COMPLETION_TIMEOUT_MS}ms`)), COMPLETION_TIMEOUT_MS)
           ),
         ]);
         response = result;
@@ -110,6 +296,7 @@ export function createRouter(ctx: RouterContext) {
         break;
       } catch (err) {
         lastError = err;
+        failedProviders.add(attempt.provider);
         console.warn(`Provider ${attempt.provider}/${attempt.model} failed:`, err instanceof Error ? err.message : err);
         continue;
       }
@@ -152,6 +339,11 @@ export function createRouter(ctx: RouterContext) {
       tenantId,
     });
 
+    // Cache the response for future identical requests
+    if (!skipCache) {
+      putCache(request.messages, response);
+    }
+
     // Fire-and-forget: LLM-as-judge quality scoring on a sample of responses
     judge.maybeJudge({
       requestId,
@@ -181,6 +373,7 @@ export function createRouter(ctx: RouterContext) {
       _provara: {
         provider: usedProvider,
         latencyMs,
+        cached: false,
         routing: {
           taskType: routingResult.taskType,
           complexity: routingResult.complexity,
@@ -205,6 +398,9 @@ export function createRouter(ctx: RouterContext) {
   app.get("/v1/analytics/adaptive/scores", (c) => {
     return c.json({ cells: routingEngine.adaptive.getAllScores() });
   });
+
+  // Cache stats
+  app.get("/v1/cache/stats", (c) => c.json(cacheStats()));
 
   // Health check
   app.get("/health", (c) => c.json({ status: "ok" }));

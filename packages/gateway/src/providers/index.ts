@@ -8,7 +8,7 @@ import { createZAIProvider } from "./zai.js";
 import { createOllamaProvider } from "./ollama.js";
 import { createOpenAICompatibleProvider, type OpenAICompatibleConfig } from "./openai-compatible.js";
 
-export type { Provider, CompletionRequest, CompletionResponse, ChatMessage } from "./types.js";
+export type { Provider, CompletionRequest, CompletionResponse, ChatMessage, StreamChunk } from "./types.js";
 export { createOpenAICompatibleProvider, type OpenAICompatibleConfig } from "./openai-compatible.js";
 
 export interface ProviderRegistry {

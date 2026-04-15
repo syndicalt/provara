@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { Provider, CompletionRequest, CompletionResponse } from "./types.js";
+import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
 import { nanoid } from "nanoid";
 
 export function createOpenAIProvider(apiKey?: string): Provider {
@@ -35,6 +35,33 @@ export function createOpenAIProvider(apiKey?: string): Provider {
         },
         latencyMs,
       };
+    },
+
+    async *stream(request: CompletionRequest): AsyncIterable<StreamChunk> {
+      const stream = await client.chat.completions.create({
+        model: request.model,
+        messages: request.messages,
+        temperature: request.temperature,
+        max_tokens: request.max_tokens,
+        stream: true,
+        stream_options: { include_usage: true },
+      });
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta?.content || "";
+        const done = chunk.choices[0]?.finish_reason === "stop";
+
+        yield {
+          content: delta,
+          done,
+          usage: chunk.usage
+            ? {
+                inputTokens: chunk.usage.prompt_tokens || 0,
+                outputTokens: chunk.usage.completion_tokens || 0,
+              }
+            : undefined,
+        };
+      }
     },
   };
 }

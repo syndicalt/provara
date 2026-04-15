@@ -14,15 +14,36 @@ export function createAnalyticsRoutes(db: Db) {
     const model = c.req.query("model");
     const taskType = c.req.query("taskType");
 
-    let query = db.select().from(requests).orderBy(desc(requests.createdAt)).limit(limit).offset(offset);
-
-    // Filter in application code since drizzle dynamic where chaining is verbose
-    const rows = query.all().filter((r) => {
-      if (provider && r.provider !== provider) return false;
-      if (model && r.model !== model) return false;
-      if (taskType && r.taskType !== taskType) return false;
-      return true;
-    });
+    const rows = db
+      .select({
+        id: requests.id,
+        provider: requests.provider,
+        model: requests.model,
+        prompt: requests.prompt,
+        response: requests.response,
+        inputTokens: requests.inputTokens,
+        outputTokens: requests.outputTokens,
+        latencyMs: requests.latencyMs,
+        taskType: requests.taskType,
+        complexity: requests.complexity,
+        routedBy: requests.routedBy,
+        tenantId: requests.tenantId,
+        abTestId: requests.abTestId,
+        createdAt: requests.createdAt,
+        cost: costLogs.cost,
+      })
+      .from(requests)
+      .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
+      .orderBy(desc(requests.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all()
+      .filter((r) => {
+        if (provider && r.provider !== provider) return false;
+        if (model && r.model !== model) return false;
+        if (taskType && r.taskType !== taskType) return false;
+        return true;
+      });
 
     const total = db.select({ count: sql<number>`count(*)` }).from(requests).get();
 

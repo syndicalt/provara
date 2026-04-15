@@ -24,8 +24,18 @@ export interface CompletionResponse {
   latencyMs: number;
 }
 
+export interface StreamChunk {
+  content: string;
+  done: boolean;
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+  };
+}
+
 export interface Provider {
   name: string;
   models: string[];
   complete(request: CompletionRequest): Promise<CompletionResponse>;
+  stream(request: CompletionRequest): AsyncIterable<StreamChunk>;
 }
