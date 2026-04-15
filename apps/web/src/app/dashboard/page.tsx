@@ -4,8 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { formatCost, formatLatency, formatNumber, formatTokens } from "../../lib/format";
 import { DataTable, type Column } from "../../components/data-table";
 import { Badge } from "../../components/badge";
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
+import { gatewayClientFetch } from "../../lib/gateway-client";
 
 interface Overview {
   totalRequests: number;
@@ -79,8 +78,7 @@ export default function Dashboard() {
 
   const fetchRequests = useCallback(async (page: number, pageSize: number) => {
     try {
-      const res = await fetch(`${GATEWAY}/v1/analytics/requests?limit=${pageSize}&offset=${page * pageSize}`);
-      const data = await res.json();
+      const data = await gatewayClientFetch<{ requests: RequestRow[]; total: number }>(`/v1/analytics/requests?limit=${pageSize}&offset=${page * pageSize}`);
       setRecentRequests(data.requests || []);
       setTotalRequests(data.total || 0);
     } catch (err) {
@@ -91,12 +89,10 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [overviewRes, costsRes] = await Promise.all([
-          fetch(`${GATEWAY}/v1/analytics/overview`),
-          fetch(`${GATEWAY}/v1/analytics/costs/by-model`),
+        const [overviewData, costsData] = await Promise.all([
+          gatewayClientFetch<Overview>(`/v1/analytics/overview`),
+          gatewayClientFetch<{ costs: CostByModel[] }>(`/v1/analytics/costs/by-model`),
         ]);
-        const overviewData = await overviewRes.json();
-        const costsData = await costsRes.json();
         setOverview(overviewData);
         setCostsByModel(costsData.costs || []);
       } catch (err) {

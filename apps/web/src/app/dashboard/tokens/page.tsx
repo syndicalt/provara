@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCost, formatNumber, formatLatency } from "../../../lib/format";
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
+import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
 
 interface Token {
   id: string;
@@ -46,9 +45,9 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const res = await fetch(`${GATEWAY}/v1/admin/tokens`, {
+      const res = await fetch(gatewayUrl("/v1/admin/tokens"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body: JSON.stringify({
           name,
           tenant,
@@ -214,7 +213,7 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
 
   useEffect(() => {
     if (expanded) {
-      fetch(`${GATEWAY}/v1/admin/tokens/${token.id}`)
+      fetch(gatewayUrl(`/v1/admin/tokens/${token.id}`), { headers: adminHeaders() })
         .then((r) => r.json())
         .then((d) => setUsage(d.usage))
         .catch(() => {});
@@ -223,7 +222,7 @@ function TokenCard({ token, onDelete }: { token: Token; onDelete: () => void }) 
 
   async function handleDelete() {
     if (!confirm(`Revoke token "${token.name}"? This cannot be undone.`)) return;
-    await fetch(`${GATEWAY}/v1/admin/tokens/${token.id}`, { method: "DELETE" });
+    await fetch(gatewayUrl(`/v1/admin/tokens/${token.id}`), { method: "DELETE", headers: adminHeaders() });
     onDelete();
   }
 
@@ -298,8 +297,8 @@ export default function TokensPage() {
   async function fetchData() {
     try {
       const [tokensRes, usageRes] = await Promise.all([
-        fetch(`${GATEWAY}/v1/admin/tokens`),
-        fetch(`${GATEWAY}/v1/admin/tokens/usage/by-tenant`),
+        fetch(gatewayUrl("/v1/admin/tokens"), { headers: adminHeaders() }),
+        fetch(gatewayUrl("/v1/admin/tokens/usage/by-tenant"), { headers: adminHeaders() }),
       ]);
       const tokensData = await tokensRes.json();
       const usageData = await usageRes.json();

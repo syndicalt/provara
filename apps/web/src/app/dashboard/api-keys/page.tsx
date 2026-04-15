@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
+import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
 
 interface ApiKey {
   id: string;
@@ -51,9 +50,9 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
     setError("");
 
     try {
-      const res = await fetch(`${GATEWAY}/v1/api-keys`, {
+      const res = await fetch(gatewayUrl("/v1/api-keys"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body: JSON.stringify({ name, provider, value }),
       });
 
@@ -64,7 +63,7 @@ function AddKeyForm({ onSaved }: { onSaved: () => void }) {
       }
 
       // Reload providers to pick up the new key
-      await fetch(`${GATEWAY}/v1/providers/reload`, { method: "POST" });
+      await fetch(gatewayUrl("/v1/providers/reload"), { method: "POST", headers: adminHeaders() });
 
       setValue("");
       setOpen(false);
@@ -193,9 +192,9 @@ export default function ApiKeysPage() {
   async function fetchData() {
     try {
       const [statusRes, keysRes, providersRes] = await Promise.all([
-        fetch(`${GATEWAY}/v1/api-keys/status`),
-        fetch(`${GATEWAY}/v1/api-keys`).catch(() => null),
-        fetch(`${GATEWAY}/v1/providers`),
+        fetch(gatewayUrl("/v1/api-keys/status"), { headers: adminHeaders() }),
+        fetch(gatewayUrl("/v1/api-keys"), { headers: adminHeaders() }).catch(() => null),
+        fetch(gatewayUrl("/v1/providers"), { headers: adminHeaders() }),
       ]);
 
       const statusData = await statusRes.json();
@@ -217,8 +216,8 @@ export default function ApiKeysPage() {
 
   async function deleteKey(id: string) {
     try {
-      await fetch(`${GATEWAY}/v1/api-keys/${id}`, { method: "DELETE" });
-      await fetch(`${GATEWAY}/v1/providers/reload`, { method: "POST" });
+      await fetch(gatewayUrl(`/v1/api-keys/${id}`), { method: "DELETE", headers: adminHeaders() });
+      await fetch(gatewayUrl("/v1/providers/reload"), { method: "POST", headers: adminHeaders() });
       fetchData();
     } catch (err) {
       console.error("Failed to delete key:", err);

@@ -6,7 +6,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "../../../.env") });
 
 import { serve } from "@hono/node-server";
-import { resolve } from "node:path";
 import { createDb, runMigrations } from "@provara/db";
 import { createProviderRegistry } from "./providers/index.js";
 import { createRouter } from "./router.js";

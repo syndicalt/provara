@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatCost, formatLatency, formatNumber } from "../../../lib/format";
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
+import { gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
 
 interface AbTest {
   id: string;
@@ -65,7 +64,7 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
 
   useEffect(() => {
     if (open && providers.length === 0) {
-      fetch(`${GATEWAY}/v1/providers`)
+      fetch(gatewayUrl("/v1/providers"), { headers: adminHeaders() })
         .then((r) => r.json())
         .then((d) => setProviders(d.providers || []))
         .catch(() => {});
@@ -76,9 +75,9 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await fetch(`${GATEWAY}/v1/ab-tests`, {
+      await fetch(gatewayUrl("/v1/ab-tests"), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body: JSON.stringify({
           name,
           description: description || undefined,
@@ -271,15 +270,15 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
   const [expanded, setExpanded] = useState(false);
 
   async function fetchDetail() {
-    const res = await fetch(`${GATEWAY}/v1/ab-tests/${test.id}`);
+    const res = await fetch(gatewayUrl(`/v1/ab-tests/${test.id}`), { headers: adminHeaders() });
     const data = await res.json();
     setDetail(data);
   }
 
   async function updateStatus(status: string) {
-    await fetch(`${GATEWAY}/v1/ab-tests/${test.id}`, {
+    await fetch(gatewayUrl(`/v1/ab-tests/${test.id}`), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: adminHeaders(),
       body: JSON.stringify({ status }),
     });
     onUpdate();
@@ -384,7 +383,7 @@ export default function AbTestsPage() {
 
   async function fetchTests() {
     try {
-      const res = await fetch(`${GATEWAY}/v1/ab-tests`);
+      const res = await fetch(gatewayUrl("/v1/ab-tests"), { headers: adminHeaders() });
       const data = await res.json();
       setTests(data.tests || []);
     } catch (err) {

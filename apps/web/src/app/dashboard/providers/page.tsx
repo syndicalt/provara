@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
+import { gatewayClientFetch, gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
 
 interface BuiltinProvider {
   name: string;
@@ -59,9 +58,9 @@ function AddProviderForm({ onCreated }: { onCreated: () => void }) {
     const finalKeyRef = usePreset ? WELL_KNOWN_PROVIDERS.find((w) => w.name === preset)?.keyName || apiKeyRef : apiKeyRef;
 
     try {
-      const res = await fetch(`${GATEWAY}/v1/admin/providers`, {
+      const res = await fetch(gatewayUrl(`/v1/admin/providers`), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminHeaders(),
         body: JSON.stringify({
           name: finalName,
           baseURL: finalBaseURL,
@@ -77,7 +76,7 @@ function AddProviderForm({ onCreated }: { onCreated: () => void }) {
       }
 
       // Reload providers
-      await fetch(`${GATEWAY}/v1/providers/reload`, { method: "POST" });
+      await fetch(gatewayUrl(`/v1/providers/reload`), { method: "POST", headers: adminHeaders() });
 
       setOpen(false);
       setName("");
@@ -201,9 +200,9 @@ function CustomProviderCard({ provider, onUpdate }: { provider: CustomProvider; 
   async function handleDiscover() {
     setDiscovering(true);
     try {
-      const res = await fetch(`${GATEWAY}/v1/admin/providers/${provider.id}/discover`, { method: "POST" });
+      const res = await fetch(gatewayUrl(`/v1/admin/providers/${provider.id}/discover`), { method: "POST", headers: adminHeaders() });
       if (res.ok) {
-        await fetch(`${GATEWAY}/v1/providers/reload`, { method: "POST" });
+        await fetch(gatewayUrl(`/v1/providers/reload`), { method: "POST", headers: adminHeaders() });
         onUpdate();
       }
     } catch {
@@ -214,18 +213,18 @@ function CustomProviderCard({ provider, onUpdate }: { provider: CustomProvider; 
 
   async function handleDelete() {
     if (!confirm(`Remove provider "${provider.name}"?`)) return;
-    await fetch(`${GATEWAY}/v1/admin/providers/${provider.id}`, { method: "DELETE" });
-    await fetch(`${GATEWAY}/v1/providers/reload`, { method: "POST" });
+    await fetch(gatewayUrl(`/v1/admin/providers/${provider.id}`), { method: "DELETE", headers: adminHeaders() });
+    await fetch(gatewayUrl(`/v1/providers/reload`), { method: "POST", headers: adminHeaders() });
     onUpdate();
   }
 
   async function handleToggle() {
-    await fetch(`${GATEWAY}/v1/admin/providers/${provider.id}`, {
+    await fetch(gatewayUrl(`/v1/admin/providers/${provider.id}`), {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: adminHeaders(),
       body: JSON.stringify({ enabled: !provider.enabled }),
     });
-    await fetch(`${GATEWAY}/v1/providers/reload`, { method: "POST" });
+    await fetch(gatewayUrl(`/v1/providers/reload`), { method: "POST", headers: adminHeaders() });
     onUpdate();
   }
 
@@ -268,8 +267,8 @@ export default function ProvidersPage() {
   async function fetchData() {
     try {
       const [builtinRes, customRes] = await Promise.all([
-        fetch(`${GATEWAY}/v1/providers`),
-        fetch(`${GATEWAY}/v1/admin/providers`),
+        fetch(gatewayUrl(`/v1/providers`), { headers: adminHeaders() }),
+        fetch(gatewayUrl(`/v1/admin/providers`), { headers: adminHeaders() }),
       ]);
       const builtinData = await builtinRes.json();
       const customData = await customRes.json();

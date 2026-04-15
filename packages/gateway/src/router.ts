@@ -10,11 +10,13 @@ import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
+import { createAdminMiddleware } from "./auth/admin.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
+import { getMode } from "./config.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -29,9 +31,19 @@ export async function createRouter(ctx: RouterContext) {
   // Enable CORS for web dashboard
   app.use("/*", cors());
 
-  // Auth middleware — checks Bearer token on /v1/* routes
-  // Runs in "open mode" (no auth) when no tokens have been created
+  // Auth middleware — checks Bearer token on /v1/chat/completions
   app.use("/v1/*", createAuthMiddleware(ctx.db));
+
+  // Admin middleware — checks X-Admin-Key on dashboard/management routes
+  const adminAuth = createAdminMiddleware();
+  app.use("/v1/ab-tests/*", adminAuth);
+  app.use("/v1/analytics/*", adminAuth);
+  app.use("/v1/api-keys/*", adminAuth);
+  app.use("/v1/feedback/*", adminAuth);
+  app.use("/v1/admin/*", adminAuth);
+  app.use("/v1/providers", adminAuth);
+  app.use("/v1/providers/*", adminAuth);
+  app.use("/v1/cache/*", adminAuth);
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
@@ -402,8 +414,8 @@ export async function createRouter(ctx: RouterContext) {
   // Cache stats
   app.get("/v1/cache/stats", (c) => c.json(cacheStats()));
 
-  // Health check
-  app.get("/health", (c) => c.json({ status: "ok" }));
+  // Health check + config
+  app.get("/health", (c) => c.json({ status: "ok", mode: getMode() }));
 
   return app;
 }
