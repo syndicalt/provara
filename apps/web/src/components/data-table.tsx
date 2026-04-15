@@ -47,9 +47,8 @@ export function DataTable<T extends Record<string, any>>({
 
   const isServerPaginated = !!serverPagination;
 
-  // Client-side filtering
+  // Client-side filtering (applies even with server pagination — filters the current page)
   const filtered = useMemo(() => {
-    if (isServerPaginated) return data;
     const activeFilters = Object.entries(filters).filter(([, v]) => v.length > 0);
     if (activeFilters.length === 0) return data;
 
@@ -61,7 +60,7 @@ export function DataTable<T extends Record<string, any>>({
         return strVal.includes(filterVal.toLowerCase());
       })
     );
-  }, [data, filters, columns, isServerPaginated]);
+  }, [data, filters, columns]);
 
   // Client-side sorting
   const sorted = useMemo(() => {
