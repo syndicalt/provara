@@ -11,6 +11,7 @@ interface ProviderInfo {
 interface Message {
   role: "system" | "user" | "assistant";
   content: string;
+  model?: string;
 }
 
 interface ProvaraMetadata {
@@ -143,6 +144,7 @@ export default function PlaygroundPage() {
 
       const decoder = new TextDecoder();
       let fullContent = "";
+      let responseModel = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -157,6 +159,9 @@ export default function PlaygroundPage() {
             if (data === "[DONE]") continue;
             try {
               const parsed = JSON.parse(data);
+              if (!responseModel && parsed.model) {
+                responseModel = parsed.model;
+              }
               const content = parsed.choices?.[0]?.delta?.content || "";
               fullContent += content;
               setStreamingContent(fullContent);
@@ -167,7 +172,7 @@ export default function PlaygroundPage() {
         }
       }
 
-      setMessages([...newMessages, { role: "assistant", content: fullContent }]);
+      setMessages([...newMessages, { role: "assistant", content: fullContent, model: responseModel || undefined }]);
       setStreamingContent("");
 
       // Fetch the last request to get _provara metadata
@@ -273,6 +278,9 @@ export default function PlaygroundPage() {
                       : "bg-zinc-800 border border-zinc-700 text-zinc-200"
                   }`}
                 >
+                  {msg.model && !isGuardrail && (
+                    <p className="text-[10px] text-zinc-500 mb-1.5 font-mono">{msg.model}</p>
+                  )}
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 </div>
               </div>
