@@ -1,0 +1,694 @@
+openapi: 3.0.3
+info:
+  title: Provara Gateway API
+  version: 0.1.0
+  description: Multi-provider LLM gateway with intelligent routing, A/B testing, and cost optimization.
+
+servers:
+  - url: http://localhost:4000
+    description: Local
+  - url: https://provara-gateway-production.up.railway.app
+    description: Railway Production
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /v1/chat/completions:
+    post:
+      tags: [Chat]
+      summary: Chat completions (OpenAI-compatible)
+      operationId: chatCompletions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model:
+                  type: string
+                  example: gpt-4o-mini
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [system, user, assistant]
+                      content:
+                        type: string
+                  example:
+                    - role: user
+                      content: Hello, how are you?
+                provider:
+                  type: string
+                  description: Force a specific provider
+                  example: openai
+                stream:
+                  type: boolean
+                  default: false
+                temperature:
+                  type: number
+                  example: 0.7
+                max_tokens:
+                  type: integer
+                  example: 1024
+                routing_hint:
+                  type: object
+                  properties:
+                    task_type:
+                      type: string
+                    complexity:
+                      type: string
+                cache:
+                  type: boolean
+                  description: Enable/disable caching for this request
+      responses:
+        "200":
+          description: Chat completion response
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /v1/providers:
+    get:
+      tags: [Providers]
+      summary: List active providers and models
+      operationId: listProviders
+      responses:
+        "200":
+          description: Provider list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        models:
+                          type: array
+                          items:
+                            type: string
+
+  /v1/providers/reload:
+    post:
+      tags: [Providers]
+      summary: Reload provider registry
+      operationId: reloadProviders
+      responses:
+        "200":
+          description: Reloaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reloaded:
+                    type: boolean
+                  providers:
+                    type: array
+                    items:
+                      type: object
+
+  /v1/admin/providers:
+    get:
+      tags: [Custom Providers]
+      summary: List custom providers
+      operationId: listCustomProviders
+      responses:
+        "200":
+          description: Custom provider list
+
+    post:
+      tags: [Custom Providers]
+      summary: Add a custom provider
+      operationId: addCustomProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, baseURL, models]
+              properties:
+                name:
+                  type: string
+                  example: together
+                baseURL:
+                  type: string
+                  example: https://api.together.xyz/v1
+                apiKeyRef:
+                  type: string
+                  example: TOGETHER_API_KEY
+                models:
+                  type: array
+                  items:
+                    type: string
+                  example:
+                    - meta-llama/Llama-3-70b-chat-hf
+      responses:
+        "201":
+          description: Created
+
+  /v1/admin/providers/{id}:
+    patch:
+      tags: [Custom Providers]
+      summary: Update a custom provider
+      operationId: updateCustomProvider
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                baseURL:
+                  type: string
+                models:
+                  type: array
+                  items:
+                    type: string
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: Updated
+
+    delete:
+      tags: [Custom Providers]
+      summary: Delete a custom provider
+      operationId: deleteCustomProvider
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+
+  /v1/admin/providers/{id}/discover:
+    post:
+      tags: [Custom Providers]
+      summary: Discover models from a custom provider
+      operationId: discoverModels
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Discovered models
+
+  /v1/admin/providers/validate:
+    post:
+      tags: [Custom Providers]
+      summary: Validate a provider endpoint
+      operationId: validateProvider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [baseURL]
+              properties:
+                baseURL:
+                  type: string
+                apiKey:
+                  type: string
+      responses:
+        "200":
+          description: Validation result
+
+  /v1/api-keys/status:
+    get:
+      tags: [API Keys]
+      summary: Check master key status
+      operationId: apiKeyStatus
+      responses:
+        "200":
+          description: Master key status
+
+  /v1/api-keys:
+    get:
+      tags: [API Keys]
+      summary: List stored API keys
+      operationId: listApiKeys
+      responses:
+        "200":
+          description: API key list
+
+    post:
+      tags: [API Keys]
+      summary: Store an API key
+      operationId: storeApiKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, provider, value]
+              properties:
+                name:
+                  type: string
+                  example: OPENAI_API_KEY
+                provider:
+                  type: string
+                  example: openai
+                value:
+                  type: string
+                  example: sk-...
+      responses:
+        "201":
+          description: Stored
+
+  /v1/api-keys/{id}:
+    delete:
+      tags: [API Keys]
+      summary: Delete a stored API key
+      operationId: deleteApiKey
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+
+  /v1/admin/tokens:
+    get:
+      tags: [Tokens]
+      summary: List API tokens
+      operationId: listTokens
+      responses:
+        "200":
+          description: Token list
+
+    post:
+      tags: [Tokens]
+      summary: Create an API token
+      operationId: createToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, tenant]
+              properties:
+                name:
+                  type: string
+                  example: dev-token
+                tenant:
+                  type: string
+                  example: team-alpha
+                rateLimit:
+                  type: integer
+                  description: Requests per minute
+                spendLimit:
+                  type: number
+                  description: USD per billing period
+                spendPeriod:
+                  type: string
+                  enum: [monthly, weekly, daily]
+                routingProfile:
+                  type: string
+                  enum: [cost, balanced, quality]
+                expiresAt:
+                  type: string
+                  format: date-time
+      responses:
+        "201":
+          description: Created (returns plaintext token once)
+
+  /v1/admin/tokens/{id}:
+    get:
+      tags: [Tokens]
+      summary: Get token details
+      operationId: getToken
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Token details
+
+    patch:
+      tags: [Tokens]
+      summary: Update a token
+      operationId: updateToken
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                rateLimit:
+                  type: integer
+                spendLimit:
+                  type: number
+                spendPeriod:
+                  type: string
+                routingProfile:
+                  type: string
+      responses:
+        "200":
+          description: Updated
+
+    delete:
+      tags: [Tokens]
+      summary: Delete a token
+      operationId: deleteToken
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+
+  /v1/admin/tokens/usage/by-tenant:
+    get:
+      tags: [Tokens]
+      summary: Usage breakdown by tenant
+      operationId: usageByTenant
+      responses:
+        "200":
+          description: Tenant usage stats
+
+  /v1/ab-tests:
+    get:
+      tags: [A/B Tests]
+      summary: List A/B tests
+      operationId: listAbTests
+      responses:
+        "200":
+          description: A/B test list
+
+    post:
+      tags: [A/B Tests]
+      summary: Create an A/B test
+      operationId: createAbTest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, variants]
+              properties:
+                name:
+                  type: string
+                  example: GPT-4o vs Claude Sonnet
+                description:
+                  type: string
+                variants:
+                  type: array
+                  items:
+                    type: object
+                    required: [provider, model]
+                    properties:
+                      provider:
+                        type: string
+                      model:
+                        type: string
+                      weight:
+                        type: number
+                        default: 1
+                      taskType:
+                        type: string
+                      complexity:
+                        type: string
+                  example:
+                    - provider: openai
+                      model: gpt-4o
+                      weight: 1
+                    - provider: anthropic
+                      model: claude-sonnet-4-20250514
+                      weight: 1
+      responses:
+        "201":
+          description: Created
+
+  /v1/ab-tests/{id}:
+    get:
+      tags: [A/B Tests]
+      summary: Get A/B test with variants and stats
+      operationId: getAbTest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A/B test details
+
+    patch:
+      tags: [A/B Tests]
+      summary: Update A/B test status
+      operationId: updateAbTest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [active, paused, completed]
+      responses:
+        "200":
+          description: Updated
+
+    delete:
+      tags: [A/B Tests]
+      summary: Delete an A/B test
+      operationId: deleteAbTest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+
+  /v1/feedback:
+    get:
+      tags: [Feedback]
+      summary: List feedback entries
+      operationId: listFeedback
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Feedback list
+
+    post:
+      tags: [Feedback]
+      summary: Submit feedback for a request
+      operationId: submitFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [requestId, score]
+              properties:
+                requestId:
+                  type: string
+                score:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                comment:
+                  type: string
+                source:
+                  type: string
+                  enum: [user, judge]
+                  default: user
+      responses:
+        "201":
+          description: Submitted
+
+  /v1/feedback/quality/by-cell:
+    get:
+      tags: [Feedback]
+      summary: Quality scores by routing cell
+      operationId: qualityByCell
+      responses:
+        "200":
+          description: Quality breakdown
+
+  /v1/feedback/quality/by-model:
+    get:
+      tags: [Feedback]
+      summary: Quality scores by model
+      operationId: qualityByModel
+      responses:
+        "200":
+          description: Quality breakdown
+
+  /v1/analytics/requests:
+    get:
+      tags: [Analytics]
+      summary: List requests with pagination
+      operationId: listRequests
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: provider
+          in: query
+          schema:
+            type: string
+        - name: model
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Paginated request list
+
+  /v1/analytics/overview:
+    get:
+      tags: [Analytics]
+      summary: Dashboard overview stats
+      operationId: analyticsOverview
+      responses:
+        "200":
+          description: Overview metrics
+
+  /v1/analytics/costs/by-provider:
+    get:
+      tags: [Analytics]
+      summary: Cost breakdown by provider
+      operationId: costsByProvider
+      responses:
+        "200":
+          description: Provider costs
+
+  /v1/analytics/costs/by-model:
+    get:
+      tags: [Analytics]
+      summary: Cost breakdown by model
+      operationId: costsByModel
+      responses:
+        "200":
+          description: Model costs
+
+  /v1/analytics/routing/stats:
+    get:
+      tags: [Analytics]
+      summary: Routing method statistics
+      operationId: routingStats
+      responses:
+        "200":
+          description: Routing stats
+
+  /v1/analytics/routing/distribution:
+    get:
+      tags: [Analytics]
+      summary: Request distribution by provider
+      operationId: routingDistribution
+      responses:
+        "200":
+          description: Distribution data
+
+  /v1/analytics/adaptive/scores:
+    get:
+      tags: [Analytics]
+      summary: Adaptive routing EMA scores
+      operationId: adaptiveScores
+      responses:
+        "200":
+          description: Adaptive scores by cell
+
+  /v1/cache/stats:
+    get:
+      tags: [Cache]
+      summary: Cache hit/miss statistics
+      operationId: cacheStats
+      responses:
+        "200":
+          description: Cache stats
