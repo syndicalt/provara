@@ -30,6 +30,8 @@ interface VariantResult {
   avgInputTokens: number;
   avgOutputTokens: number;
   totalCost: number;
+  avgScore: number | null;
+  feedbackCount: number;
 }
 
 interface TestDetail {
@@ -264,14 +266,136 @@ function CreateTestForm({ onCreated }: { onCreated: () => void }) {
   );
 }
 
+interface AbTestRequest {
+  id: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  response: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  latencyMs: number | null;
+  cost: number | null;
+  createdAt: string;
+  feedbackScore: number | null;
+  feedbackComment: string | null;
+  feedbackSource: string | null;
+}
+
+function FeedbackButtons({ requestId, currentScore, onScored }: { requestId: string; currentScore: number | null; onScored: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submitScore(score: number) {
+    setSubmitting(true);
+    try {
+      await gatewayFetchRaw("/v1/feedback", {
+        method: "POST",
+        body: JSON.stringify({ requestId, score }),
+      });
+      onScored();
+    } catch (err) {
+      console.error("Failed to submit feedback:", err);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((score) => (
+        <button
+          key={score}
+          onClick={() => submitScore(score)}
+          disabled={submitting}
+          className={`w-7 h-7 rounded text-xs font-medium transition-colors ${
+            currentScore === score
+              ? "bg-blue-600 text-white"
+              : "bg-zinc-800 border border-zinc-700 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
+          } disabled:opacity-50`}
+        >
+          {score}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RequestRow({ req, onFeedback }: { req: AbTestRequest; onFeedback: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+
+  let messages: { role: string; content: string }[] = [];
+  try {
+    messages = JSON.parse(req.prompt);
+  } catch {
+    messages = [{ role: "user", content: req.prompt }];
+  }
+  const lastMessage = messages[messages.length - 1];
+
+  return (
+    <>
+      <tr
+        className="border-t border-zinc-800/50 hover:bg-zinc-800/30 cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <td className="py-2 font-mono text-xs">{req.provider}/{req.model}</td>
+        <td className="py-2 text-xs text-zinc-400 max-w-xs truncate">
+          {lastMessage?.content?.slice(0, 80) || "—"}
+          {(lastMessage?.content?.length || 0) > 80 ? "..." : ""}
+        </td>
+        <td className="py-2 text-right text-zinc-400 text-xs">{req.latencyMs ? formatLatency(req.latencyMs) : "—"}</td>
+        <td className="py-2 text-right text-zinc-400 text-xs">{req.cost != null ? formatCost(req.cost) : "—"}</td>
+        <td className="py-2 text-right">
+          <FeedbackButtons requestId={req.id} currentScore={req.feedbackScore} onScored={onFeedback} />
+        </td>
+        <td className="py-2 text-right text-zinc-500 text-xs">{expanded ? "▾" : "▸"}</td>
+      </tr>
+      {expanded && (
+        <tr>
+          <td colSpan={6} className="px-4 py-3 bg-zinc-800/20">
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-zinc-500 mb-1">Prompt</p>
+                {messages.map((m, i) => (
+                  <div key={i} className="mb-2">
+                    <span className="text-xs text-zinc-500 capitalize">{m.role}: </span>
+                    <span className="text-xs text-zinc-300 whitespace-pre-wrap">{m.content}</span>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <p className="text-xs text-zinc-500 mb-1">Response</p>
+                <p className="text-xs text-zinc-300 whitespace-pre-wrap">{req.response || "—"}</p>
+              </div>
+              {req.feedbackComment && (
+                <div>
+                  <p className="text-xs text-zinc-500 mb-1">Feedback Comment</p>
+                  <p className="text-xs text-zinc-300">{req.feedbackComment}</p>
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
   const [detail, setDetail] = useState<TestDetail | null>(null);
+  const [testRequests, setTestRequests] = useState<AbTestRequest[]>([]);
   const [expanded, setExpanded] = useState(false);
+  const [showRequests, setShowRequests] = useState(false);
 
   async function fetchDetail() {
     const res = await gatewayFetchRaw(`/v1/ab-tests/${test.id}`);
     const data = await res.json();
     setDetail(data);
+  }
+
+  async function fetchRequests() {
+    const res = await gatewayFetchRaw(`/v1/ab-tests/${test.id}/requests?limit=20`);
+    const data = await res.json();
+    setTestRequests(data.requests || []);
   }
 
   async function updateStatus(status: string) {
@@ -283,8 +407,16 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
   }
 
   useEffect(() => {
-    if (expanded) fetchDetail();
+    if (expanded) {
+      fetchDetail();
+      fetchRequests();
+    }
   }, [expanded]);
+
+  function handleFeedbackUpdate() {
+    fetchDetail();
+    fetchRequests();
+  }
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
@@ -337,7 +469,7 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
             </div>
           </div>
 
-          {/* Results */}
+          {/* Results with quality scores */}
           {detail.results.length > 0 && (
             <div>
               <h4 className="text-sm font-medium text-zinc-400 mb-2">Results</h4>
@@ -348,7 +480,9 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
                     <th className="pb-2 text-right">Requests</th>
                     <th className="pb-2 text-right">Avg Latency</th>
                     <th className="pb-2 text-right">Total Cost</th>
-                    <th className="pb-2 text-right">Cost/Request</th>
+                    <th className="pb-2 text-right">Cost/Req</th>
+                    <th className="pb-2 text-right">Quality</th>
+                    <th className="pb-2 text-right">Feedback</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -359,6 +493,14 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
                       <td className="py-2 text-right">{formatLatency(r.avgLatency)}</td>
                       <td className="py-2 text-right">{r.totalCost != null ? formatCost(r.totalCost) : "—"}</td>
                       <td className="py-2 text-right">{r.count > 0 && r.totalCost != null ? formatCost(r.totalCost / r.count) : "—"}</td>
+                      <td className="py-2 text-right">
+                        {r.avgScore != null ? (
+                          <span className={`font-medium ${r.avgScore >= 4 ? "text-emerald-400" : r.avgScore >= 3 ? "text-yellow-400" : "text-red-400"}`}>
+                            {r.avgScore.toFixed(1)}/5
+                          </span>
+                        ) : <span className="text-zinc-600">—</span>}
+                      </td>
+                      <td className="py-2 text-right text-zinc-500 text-xs">{r.feedbackCount || 0} rated</td>
                     </tr>
                   ))}
                 </tbody>
@@ -368,6 +510,42 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
 
           {detail.results.length === 0 && (
             <p className="text-sm text-zinc-500">No results yet. Send requests through the gateway to collect data.</p>
+          )}
+
+          {/* Request evaluation */}
+          {testRequests.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-sm font-medium text-zinc-400">
+                  Requests ({testRequests.length})
+                </h4>
+                <button
+                  onClick={() => setShowRequests(!showRequests)}
+                  className="text-xs text-blue-400 hover:text-blue-300"
+                >
+                  {showRequests ? "Hide" : "Show requests for evaluation"}
+                </button>
+              </div>
+              {showRequests && (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-zinc-500 text-left text-xs">
+                      <th className="pb-2">Model</th>
+                      <th className="pb-2">Prompt</th>
+                      <th className="pb-2 text-right">Latency</th>
+                      <th className="pb-2 text-right">Cost</th>
+                      <th className="pb-2 text-right">Score</th>
+                      <th className="pb-2 w-6"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {testRequests.map((req) => (
+                      <RequestRow key={req.id} req={req} onFeedback={handleFeedbackUpdate} />
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           )}
         </div>
       )}

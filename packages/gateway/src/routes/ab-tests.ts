@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { abTests, abTestVariants, requests } from "@provara/db";
-import { eq, and, sql } from "drizzle-orm";
+import { abTests, abTestVariants, requests, feedback, costLogs } from "@provara/db";
+import { eq, and, sql, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 
 export function createAbTestRoutes(db: Db) {
@@ -44,7 +44,72 @@ export function createAbTestRoutes(db: Db) {
       .groupBy(requests.model, requests.provider)
       .all();
 
-    return c.json({ test, variants, results });
+    // Get quality scores per variant from feedback
+    const qualityResults = await db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        avgScore: sql<number>`avg(${feedback.score})`,
+        feedbackCount: sql<number>`count(${feedback.id})`,
+      })
+      .from(feedback)
+      .innerJoin(requests, eq(feedback.requestId, requests.id))
+      .where(eq(requests.abTestId, id))
+      .groupBy(requests.provider, requests.model)
+      .all();
+
+    // Merge quality into results
+    const qualityMap = new Map(qualityResults.map((q) => [`${q.provider}/${q.model}`, q]));
+    const enrichedResults = results.map((r) => {
+      const q = qualityMap.get(`${r.provider}/${r.model}`);
+      return {
+        ...r,
+        avgScore: q?.avgScore || null,
+        feedbackCount: q?.feedbackCount || 0,
+      };
+    });
+
+    return c.json({ test, variants, results: enrichedResults });
+  });
+
+  // List individual requests for an A/B test (with prompt, response, feedback)
+  app.get("/:id/requests", async (c) => {
+    const { id } = c.req.param();
+    const limit = Math.min(parseInt(c.req.query("limit") || "20"), 100);
+    const offset = parseInt(c.req.query("offset") || "0");
+
+    const rows = await db
+      .select({
+        id: requests.id,
+        provider: requests.provider,
+        model: requests.model,
+        prompt: requests.prompt,
+        response: requests.response,
+        inputTokens: requests.inputTokens,
+        outputTokens: requests.outputTokens,
+        latencyMs: requests.latencyMs,
+        cost: costLogs.cost,
+        createdAt: requests.createdAt,
+        feedbackScore: feedback.score,
+        feedbackComment: feedback.comment,
+        feedbackSource: feedback.source,
+      })
+      .from(requests)
+      .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
+      .leftJoin(feedback, eq(requests.id, feedback.requestId))
+      .where(eq(requests.abTestId, id))
+      .orderBy(desc(requests.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .all();
+
+    const total = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(requests)
+      .where(eq(requests.abTestId, id))
+      .get();
+
+    return c.json({ requests: rows, total: total?.count || 0, limit, offset });
   });
 
   // Create a new A/B test
