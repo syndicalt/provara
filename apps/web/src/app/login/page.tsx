@@ -1,20 +1,41 @@
 "use client";
 
 import { Suspense } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect } from "react";
+import { PublicNav } from "../../components/public-nav";
+import { useAuth } from "../../lib/auth-context";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
 
 function LoginContent() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const { user, loading } = useAuth();
   const error = searchParams.get("error");
 
+  useEffect(() => {
+    if (!loading && user) {
+      router.replace("/dashboard");
+    }
+  }, [user, loading, router]);
+
+  if (loading) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center">
+        <p className="text-zinc-400">Loading...</p>
+      </div>
+    );
+  }
+
+  if (user) return null;
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+    <div className="min-h-[80vh] flex items-center justify-center">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
-          <h1 className="text-3xl font-bold">Provara</h1>
-          <p className="text-zinc-400 mt-2">Sign in to your dashboard</p>
+          <h1 className="text-3xl font-bold">Welcome back</h1>
+          <p className="text-zinc-400 mt-2">Sign in to your Provara dashboard</p>
         </div>
 
         {error && (
@@ -47,6 +68,10 @@ function LoginContent() {
             Sign in with GitHub
           </a>
         </div>
+
+        <p className="text-center text-xs text-zinc-500">
+          By signing in, you agree to our terms of service.
+        </p>
       </div>
     </div>
   );
@@ -54,8 +79,11 @@ function LoginContent() {
 
 export default function LoginPage() {
   return (
-    <Suspense>
-      <LoginContent />
-    </Suspense>
+    <>
+      <PublicNav />
+      <Suspense>
+        <LoginContent />
+      </Suspense>
+    </>
   );
 }
