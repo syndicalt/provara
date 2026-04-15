@@ -10,12 +10,13 @@ import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
-import { createAdminMiddleware } from "./auth/admin.js";
+import { createAdminMiddleware, requireRole } from "./auth/admin.js";
 import { createTenantMiddleware } from "./auth/tenant.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
+import { createTeamRoutes } from "./routes/team.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { getMode } from "./config.js";
@@ -55,6 +56,10 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/providers/*", adminAuth);
   app.use("/v1/cache/*", adminAuth);
 
+  // Role-based access — owner-only routes (after adminAuth attaches user)
+  app.use("/v1/admin/*", requireRole("owner"));
+  app.use("/v1/api-keys/*", requireRole("owner"));
+
   // Tenant middleware — enforces tenant context in multi_tenant mode
   app.use("/v1/*", createTenantMiddleware(ctx.db));
 
@@ -70,11 +75,14 @@ export async function createRouter(ctx: RouterContext) {
   // Mount feedback routes
   app.route("/v1/feedback", createFeedbackRoutes(ctx.db));
 
-  // Mount token management routes (admin — no auth required)
+  // Mount token management routes (owner only)
   app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
 
-  // Mount custom provider CRUD routes (admin)
+  // Mount custom provider CRUD routes (owner only)
   app.route("/v1/admin/providers", createProviderCrudRoutes(ctx.db));
+
+  // Mount team management routes (owner only, multi_tenant mode)
+  app.route("/v1/admin/team", createTeamRoutes(ctx.db));
 
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", async (c) => {
