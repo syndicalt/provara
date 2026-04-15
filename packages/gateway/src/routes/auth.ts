@@ -72,7 +72,7 @@ export function createAuthRoutes(db: Db) {
       const user = await upsertUser(db, "google", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
-      return c.redirect(DASHBOARD_URL());
+      return c.redirect(`${DASHBOARD_URL()}/dashboard`);
     } catch (err) {
       console.error("Google OAuth error:", err);
       return c.redirect(`${DASHBOARD_URL()}/login?error=oauth_failed`);
@@ -94,7 +94,7 @@ export function createAuthRoutes(db: Db) {
       const user = await upsertUser(db, "github", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
-      return c.redirect(DASHBOARD_URL());
+      return c.redirect(`${DASHBOARD_URL()}/dashboard`);
     } catch (err) {
       console.error("GitHub OAuth error:", err);
       return c.redirect(`${DASHBOARD_URL()}/login?error=oauth_failed`);
