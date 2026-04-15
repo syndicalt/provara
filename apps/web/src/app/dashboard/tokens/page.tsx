@@ -39,6 +39,7 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
   const [spendLimit, setSpendLimit] = useState("");
   const [spendPeriod, setSpendPeriod] = useState("monthly");
   const [routingProfile, setRoutingProfile] = useState("balanced");
+  const [customWeights, setCustomWeights] = useState({ quality: 40, cost: 40, latency: 20 });
   const [submitting, setSubmitting] = useState(false);
   const [createdToken, setCreatedToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -56,6 +57,13 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
           spendLimit: spendLimit ? parseFloat(spendLimit) : undefined,
           spendPeriod,
           routingProfile,
+          ...(routingProfile === "custom" ? {
+            routingWeights: {
+              quality: customWeights.quality / 100,
+              cost: customWeights.cost / 100,
+              latency: customWeights.latency / 100,
+            },
+          } : {}),
         }),
       });
       const data = await res.json();
@@ -203,12 +211,52 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
             onChange={(e) => setRoutingProfile(e.target.value)}
             className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
           >
-            <option value="cost">Cost (70% cost, 30% quality)</option>
-            <option value="balanced">Balanced (50/50)</option>
-            <option value="quality">Quality (80% quality, 20% cost)</option>
+            <option value="cost">Cost-optimized</option>
+            <option value="balanced">Balanced</option>
+            <option value="quality">Quality-first</option>
+            <option value="custom">Custom weights</option>
           </select>
         </div>
       </div>
+
+      {routingProfile === "custom" && (
+        <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-4 space-y-3">
+          <p className="text-xs text-zinc-400">Adjust how the adaptive router scores models. Weights must sum to 100%.</p>
+          {(["quality", "cost", "latency"] as const).map((key) => (
+            <div key={key} className="flex items-center gap-3">
+              <label className="text-sm text-zinc-400 w-16 capitalize">{key}</label>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={customWeights[key]}
+                onChange={(e) => {
+                  const newVal = parseInt(e.target.value);
+                  const others = (["quality", "cost", "latency"] as const).filter((k) => k !== key);
+                  const remaining = 100 - newVal;
+                  const otherTotal = others.reduce((s, k) => s + customWeights[k], 0) || 1;
+                  setCustomWeights({
+                    ...customWeights,
+                    [key]: newVal,
+                    [others[0]]: Math.round((customWeights[others[0]] / otherTotal) * remaining),
+                    [others[1]]: remaining - Math.round((customWeights[others[0]] / otherTotal) * remaining),
+                  });
+                }}
+                className="flex-1 accent-blue-500"
+              />
+              <span className="text-sm text-zinc-300 w-10 text-right">{customWeights[key]}%</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {routingProfile !== "custom" && (
+        <div className="text-xs text-zinc-500">
+          {routingProfile === "cost" && "Prioritizes cheaper models (70% cost, 20% quality, 10% latency)"}
+          {routingProfile === "balanced" && "Equal weight to quality and cost (40% each, 20% latency)"}
+          {routingProfile === "quality" && "Prioritizes highest-rated models (70% quality, 15% cost, 15% latency)"}
+        </div>
+      )}
 
       <button
         type="submit"

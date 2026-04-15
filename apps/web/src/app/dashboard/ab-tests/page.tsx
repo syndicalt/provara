@@ -380,6 +380,63 @@ function RequestRow({ req, onFeedback }: { req: AbTestRequest; onFeedback: () =>
   );
 }
 
+function WinnerRecommendation({ results }: { results: VariantResult[] }) {
+  const scored = results.filter((r) => r.avgScore != null && r.feedbackCount >= 2);
+
+  if (scored.length < 2) {
+    const totalFeedback = results.reduce((sum, r) => sum + (r.feedbackCount || 0), 0);
+    return (
+      <div className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-4">
+        <p className="text-sm text-zinc-400">
+          {totalFeedback === 0
+            ? "Rate responses to get a winner recommendation. Click \"Show requests for evaluation\" below."
+            : `Need at least 2 rated responses per variant for a recommendation. ${totalFeedback} rated so far.`}
+        </p>
+      </div>
+    );
+  }
+
+  // Compute composite score: quality-weighted with cost penalty
+  const maxCost = Math.max(...scored.map((r) => r.totalCost || 0.001));
+  const candidates = scored.map((r) => {
+    const qualityNorm = ((r.avgScore || 3) - 1) / 4; // 0-1
+    const costNorm = 1 - ((r.totalCost || 0) / r.count) / (maxCost / Math.min(...scored.map((s) => s.count))); // cheaper = higher
+    const latencyNorm = 1 / (1 + Math.log1p(r.avgLatency / 1000)); // faster = higher
+    const composite = 0.5 * qualityNorm + 0.3 * Math.max(0, costNorm) + 0.2 * latencyNorm;
+    return { ...r, composite, qualityNorm, confidence: r.feedbackCount >= 5 ? "high" : "low" };
+  });
+
+  candidates.sort((a, b) => b.composite - a.composite);
+  const winner = candidates[0];
+  const runnerUp = candidates[1];
+  const margin = winner.composite - runnerUp.composite;
+
+  return (
+    <div className={`rounded-lg p-4 border ${margin > 0.1 ? "bg-emerald-900/20 border-emerald-800/50" : "bg-blue-900/20 border-blue-800/50"}`}>
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-sm font-medium">
+          {margin > 0.1 ? "Recommended winner" : "Slight edge"}
+        </span>
+        <span className={`text-xs px-2 py-0.5 rounded ${winner.confidence === "high" ? "bg-emerald-900/50 text-emerald-300" : "bg-amber-900/50 text-amber-300"}`}>
+          {winner.confidence === "high" ? "High confidence" : "Low confidence"}
+        </span>
+      </div>
+      <p className="font-mono text-sm mb-1">{winner.provider}/{winner.model}</p>
+      <div className="flex gap-4 text-xs text-zinc-400">
+        <span>Quality: {winner.avgScore?.toFixed(1)}/5</span>
+        <span>Cost/req: {winner.count > 0 && winner.totalCost != null ? formatCost(winner.totalCost / winner.count) : "—"}</span>
+        <span>Latency: {formatLatency(winner.avgLatency)}</span>
+        <span>{winner.feedbackCount} ratings</span>
+      </div>
+      {runnerUp && (
+        <p className="text-xs text-zinc-500 mt-2">
+          vs {runnerUp.provider}/{runnerUp.model} (quality: {runnerUp.avgScore?.toFixed(1)}/5, {runnerUp.feedbackCount} ratings)
+        </p>
+      )}
+    </div>
+  );
+}
+
 function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
   const [detail, setDetail] = useState<TestDetail | null>(null);
   const [testRequests, setTestRequests] = useState<AbTestRequest[]>([]);
@@ -506,6 +563,11 @@ function TestCard({ test, onUpdate }: { test: AbTest; onUpdate: () => void }) {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {/* Winner recommendation */}
+          {detail.results.length >= 2 && (
+            <WinnerRecommendation results={detail.results} />
           )}
 
           {detail.results.length === 0 && (

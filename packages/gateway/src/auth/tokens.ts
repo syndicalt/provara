@@ -14,6 +14,7 @@ export interface TokenInfo {
   spendLimit: number | null;
   spendPeriod: string | null;
   routingProfile: string | null;
+  routingWeights: { quality: number; cost: number; latency: number } | null;
   expiresAt: Date | null;
 }
 
@@ -55,6 +56,7 @@ export async function verifyToken(db: Db, token: string): Promise<TokenInfo | nu
     spendLimit: row.spendLimit,
     spendPeriod: row.spendPeriod,
     routingProfile: row.routingProfile,
+    routingWeights: row.routingWeights ? JSON.parse(row.routingWeights) : null,
     expiresAt: row.expiresAt,
   };
 }

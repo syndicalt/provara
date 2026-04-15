@@ -97,6 +97,8 @@ export function createTokenRoutes(db: Db) {
       rateLimit?: number;
       spendLimit?: number;
       spendPeriod?: "monthly" | "weekly" | "daily";
+      routingProfile?: "cost" | "balanced" | "quality" | "custom";
+      routingWeights?: { quality: number; cost: number; latency: number };
       expiresAt?: string;
     }>();
 
@@ -117,10 +119,12 @@ export function createTokenRoutes(db: Db) {
         name: body.name,
         tenant: body.tenant,
         hashedToken: hashed,
-        tokenPrefix: plainToken.slice(0, 9), // "pvra_" + first 4 random chars
+        tokenPrefix: plainToken.slice(0, 9),
         rateLimit: body.rateLimit || null,
         spendLimit: body.spendLimit || null,
         spendPeriod: body.spendPeriod || "monthly",
+        routingProfile: body.routingProfile || "balanced",
+        routingWeights: body.routingWeights ? JSON.stringify(body.routingWeights) : null,
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
       })
       .run();

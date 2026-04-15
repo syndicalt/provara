@@ -7,7 +7,7 @@ import type { TaskType, Complexity } from "../classifier/types.js";
 import type { RoutingResult, RouteTarget } from "./types.js";
 import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
-import { createAdaptiveRouter, type RoutingProfile } from "./adaptive.js";
+import { createAdaptiveRouter, type RoutingProfile, type RoutingWeights } from "./adaptive.js";
 import { getPricing } from "../cost/index.js";
 
 export type { RoutingResult, RouteTarget } from "./types.js";
@@ -24,6 +24,7 @@ export interface RoutingRequest {
   model?: string;
   routingHint?: TaskType;
   routingProfile?: RoutingProfile;
+  routingWeights?: RoutingWeights;
 }
 
 export async function createRoutingEngine(config: RoutingEngineConfig) {
@@ -156,7 +157,7 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     // Try adaptive routing — uses quality scores from feedback
     const profile = request.routingProfile || "balanced";
     const availableProviders = new Set(config.registry.list().map((p) => p.name));
-    const adaptiveTarget = adaptive.getBestModel(taskType, complexity, profile, availableProviders);
+    const adaptiveTarget = adaptive.getBestModel(taskType, complexity, profile, availableProviders, request.routingWeights);
 
     if (adaptiveTarget) {
       return {

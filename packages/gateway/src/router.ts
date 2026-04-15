@@ -113,6 +113,7 @@ export async function createRouter(ctx: RouterContext) {
       model: request.model !== "" ? request.model : undefined,
       routingHint: routing_hint?.task_type,
       routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
+      routingWeights: tokenInfo?.routingWeights || undefined,
     });
 
     const tenantId = tokenInfo?.tenant || null;

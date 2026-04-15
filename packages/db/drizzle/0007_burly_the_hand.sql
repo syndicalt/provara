@@ -1,0 +1,1 @@
+ALTER TABLE `api_tokens` ADD `routing_weights` text;
