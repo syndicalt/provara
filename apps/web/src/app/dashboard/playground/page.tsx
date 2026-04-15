@@ -52,6 +52,7 @@ export default function PlaygroundPage() {
     return [];
   });
   const [input, setInput] = useState("");
+  const [topicStartIndex, setTopicStartIndex] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const [lastMeta, setLastMeta] = useState<ProvaraMetadata | null>(null);
@@ -93,9 +94,11 @@ export default function PlaygroundPage() {
     setStreamingContent("");
     setLastMeta(null);
 
+    // Only send messages from the current topic to the API
+    const activeMessages = newMessages.slice(topicStartIndex);
     const apiMessages = systemPrompt
-      ? [{ role: "system" as const, content: systemPrompt }, ...newMessages]
-      : newMessages;
+      ? [{ role: "system" as const, content: systemPrompt }, ...activeMessages]
+      : activeMessages;
 
     try {
       const headers: Record<string, string> = { ...adminHeaders() };
@@ -202,6 +205,7 @@ export default function PlaygroundPage() {
     setMessages([]);
     setStreamingContent("");
     setLastMeta(null);
+    setTopicStartIndex(0);
     sessionStorage.removeItem("pg:messages");
   }
 
@@ -246,6 +250,14 @@ export default function PlaygroundPage() {
             >
               Settings
             </button>
+            {messages.length > 0 && (
+              <button
+                onClick={() => { setTopicStartIndex(messages.length); }}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
+              >
+                New Topic
+              </button>
+            )}
             <button
               onClick={handleClear}
               className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
@@ -270,7 +282,15 @@ export default function PlaygroundPage() {
 
           {messages.map((msg, i) => {
             const isGuardrail = msg.role === "assistant" && msg.content.startsWith("Guardrail triggered:");
+            const showDivider = topicStartIndex > 0 && i === topicStartIndex;
             return (
+              <>{showDivider && (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="flex-1 h-px bg-zinc-800" />
+                  <span className="text-[10px] text-zinc-600 uppercase tracking-widest">New topic</span>
+                  <div className="flex-1 h-px bg-zinc-800" />
+                </div>
+              )}
               <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
                   className={`max-w-2xl rounded-xl px-4 py-3 ${
@@ -287,6 +307,7 @@ export default function PlaygroundPage() {
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 </div>
               </div>
+              </>
             );
           })}
 
