@@ -239,16 +239,16 @@ export default function AlertsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-start">
         <div>
           <h1 className="text-2xl font-bold">Alerts</h1>
           <p className="text-sm text-zinc-400 mt-1">Get notified when metrics exceed thresholds.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 shrink-0">
           <button
             onClick={handleEvaluate}
             disabled={evaluating || rules.length === 0}
-            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 rounded-lg text-sm font-medium transition-colors"
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 rounded-lg text-sm font-medium transition-colors h-fit"
           >
             {evaluating ? "Checking..." : "Check Now"}
           </button>

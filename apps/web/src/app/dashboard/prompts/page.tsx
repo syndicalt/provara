@@ -117,26 +117,28 @@ function CreateTemplateForm({ onCreated }: { onCreated: () => void }) {
           <button type="button" onClick={addMessage} className="text-xs text-blue-400 hover:text-blue-300">+ Add message</button>
         </div>
         {messages.map((msg, i) => (
-          <div key={i} className="flex gap-2">
-            <select
-              value={msg.role}
-              onChange={(e) => updateMessage(i, "role", e.target.value)}
-              className="bg-zinc-800 border border-zinc-700 rounded px-2 py-2 text-sm text-zinc-300 w-24 shrink-0 focus:outline-none focus:border-blue-500"
-            >
-              <option value="system">system</option>
-              <option value="user">user</option>
-              <option value="assistant">assistant</option>
-            </select>
+          <div key={i} className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <select
+                value={msg.role}
+                onChange={(e) => updateMessage(i, "role", e.target.value)}
+                className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm text-zinc-300 w-28 focus:outline-none focus:border-blue-500"
+              >
+                <option value="system">system</option>
+                <option value="user">user</option>
+                <option value="assistant">assistant</option>
+              </select>
+              {messages.length > 1 && (
+                <button type="button" onClick={() => removeMessage(i)} className="text-zinc-600 hover:text-red-400 text-xs ml-auto">Remove</button>
+              )}
+            </div>
             <textarea
               value={msg.content}
               onChange={(e) => updateMessage(i, "content", e.target.value)}
               rows={3}
-              className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-500 resize-y"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-500 resize-y"
               placeholder={`Use {{variable_name}} for variables`}
             />
-            {messages.length > 1 && (
-              <button type="button" onClick={() => removeMessage(i)} className="text-zinc-600 hover:text-red-400 text-sm px-1">X</button>
-            )}
           </div>
         ))}
       </div>
