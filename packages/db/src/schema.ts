@@ -190,6 +190,36 @@ export const guardrailLogs = sqliteTable("guardrail_logs", {
     .$defaultFn(() => new Date()),
 });
 
+export const alertRules = sqliteTable("alert_rules", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  name: text("name").notNull(),
+  metric: text("metric", { enum: ["spend", "latency_p95", "latency_avg", "error_rate", "request_count"] }).notNull(),
+  condition: text("condition", { enum: ["gt", "lt", "gte", "lte"] }).notNull().default("gt"),
+  threshold: real("threshold").notNull(),
+  window: text("window", { enum: ["1h", "6h", "24h", "7d"] }).notNull().default("1h"),
+  channel: text("channel", { enum: ["webhook"] }).notNull().default("webhook"),
+  webhookUrl: text("webhook_url"),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  lastTriggeredAt: integer("last_triggered_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const alertLogs = sqliteTable("alert_logs", {
+  id: text("id").primaryKey(),
+  ruleId: text("rule_id").references(() => alertRules.id),
+  ruleName: text("rule_name").notNull(),
+  metric: text("metric").notNull(),
+  value: real("value").notNull(),
+  threshold: real("threshold").notNull(),
+  acknowledged: integer("acknowledged", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
   requestId: text("request_id").references(() => requests.id),
