@@ -326,6 +326,12 @@ export default function Home() {
             <div className="flex justify-between items-center text-sm text-zinc-500">
               <span>Provara</span>
               <div className="flex gap-6">
+                <Link href="/privacy" className="hover:text-zinc-300 transition-colors">
+                  Privacy
+                </Link>
+                <Link href="/terms" className="hover:text-zinc-300 transition-colors">
+                  Terms
+                </Link>
                 <a href="https://github.com/syndicalt/provara" target="_blank" rel="noopener noreferrer" className="hover:text-zinc-300 transition-colors">
                   GitHub
                 </a>
