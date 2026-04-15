@@ -151,7 +151,7 @@ export async function createRouter(ctx: RouterContext) {
       routingWeights: tokenInfo?.routingWeights || undefined,
     });
 
-    const tenantId = tokenInfo?.tenant || null;
+    const tenantId = tokenInfo?.tenant || getTenantId(c.req.raw) || null;
 
     // Check cache before calling any provider
     const skipCache = !isCacheable || routingResult.routedBy === "ab-test";
