@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AuthProvider } from "../lib/auth-context";
+import { UserMenu } from "../components/user-menu";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -38,6 +40,7 @@ function Nav() {
               API Keys
             </Link>
           </div>
+          <UserMenu />
         </div>
       </div>
     </nav>
@@ -52,8 +55,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-zinc-950 text-zinc-100 antialiased">
-        <Nav />
-        {children}
+        <AuthProvider>
+          <Nav />
+          {children}
+        </AuthProvider>
       </body>
     </html>
   );
