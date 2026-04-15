@@ -206,7 +206,7 @@ export default function PlaygroundPage() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 space-y-6">
           {messages.length === 0 && !streamingContent && (
             <div className="flex items-center justify-center h-full">
               <div className="text-center max-w-md">
@@ -255,7 +255,7 @@ export default function PlaygroundPage() {
               placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
               disabled={streaming}
               rows={1}
-              className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50"
+              className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50 overflow-hidden"
               style={{ minHeight: "44px", maxHeight: "200px" }}
               onInput={(e) => {
                 const target = e.target as HTMLTextAreaElement;
