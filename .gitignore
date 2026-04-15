@@ -3,7 +3,10 @@ dist/
 .next/
 .turbo/
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
+tsconfig.tsbuildinfo
 .env
 .env.local
 .env*.local
