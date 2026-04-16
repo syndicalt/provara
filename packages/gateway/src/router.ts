@@ -37,10 +37,12 @@ export async function createRouter(ctx: RouterContext) {
   const routingEngine = await createRoutingEngine({ registry: ctx.registry, db: ctx.db });
   const judge = createJudge(ctx.registry, ctx.db);
 
-  // Enable CORS for web dashboard (credentials needed for session cookies)
+  // Enable CORS for web dashboard and browser-based API clients
   app.use("/*", cors({
-    origin: process.env.DASHBOARD_URL || "http://localhost:3000",
+    origin: (origin) => origin || "*",
     credentials: true,
+    allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
+    allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
