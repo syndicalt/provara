@@ -6,6 +6,8 @@ import {
 } from "recharts";
 import { formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
+import { AdaptiveHeatmap, type AdaptiveCell } from "../../../components/adaptive-heatmap";
+import { useAdaptiveScoreBuffer } from "../../../hooks/use-adaptive-score-buffer";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 
 interface QualityByModel {
@@ -15,20 +17,6 @@ interface QualityByModel {
   count: number;
   userCount: number;
   judgeCount: number;
-}
-
-interface AdaptiveScore {
-  provider: string;
-  model: string;
-  qualityScore: number;
-  sampleCount: number;
-  costPer1M: number;
-}
-
-interface AdaptiveCell {
-  taskType: string;
-  complexity: string;
-  scores: AdaptiveScore[];
 }
 
 interface FeedbackEntry {
@@ -58,8 +46,6 @@ interface JudgeConfig {
   enabled: boolean;
 }
 
-const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general"];
-const COMPLEXITIES = ["simple", "medium", "complex"];
 const RANGES = [
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
@@ -98,60 +84,6 @@ function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: 
           <span className="text-zinc-200 font-medium">{typeof entry.value === "number" ? entry.value.toFixed(2) : entry.value}</span>
         </div>
       ))}
-    </div>
-  );
-}
-
-function AdaptiveMatrix({ cells }: { cells: AdaptiveCell[] }) {
-  const matrix: Record<string, Record<string, AdaptiveScore | null>> = {};
-  for (const tt of TASK_TYPES) {
-    matrix[tt] = {};
-    for (const cx of COMPLEXITIES) {
-      const cell = cells.find((c) => c.taskType === tt && c.complexity === cx);
-      if (cell && cell.scores.length > 0) {
-        const best = [...cell.scores].sort((a, b) => b.qualityScore - a.qualityScore)[0];
-        matrix[tt][cx] = best;
-      } else {
-        matrix[tt][cx] = null;
-      }
-    }
-  }
-
-  return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-zinc-800 text-zinc-400 text-left">
-            <th className="px-4 py-3">Task Type</th>
-            {COMPLEXITIES.map((c) => (
-              <th key={c} className="px-4 py-3 text-center capitalize">{c}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {TASK_TYPES.map((tt) => (
-            <tr key={tt} className="border-b border-zinc-800/50">
-              <td className="px-4 py-3 capitalize font-medium">{tt}</td>
-              {COMPLEXITIES.map((cx) => {
-                const score = matrix[tt][cx];
-                return (
-                  <td key={cx} className="px-4 py-3 text-center">
-                    {score ? (
-                      <div>
-                        <p className="font-mono text-xs">{score.model}</p>
-                        <ScoreBar score={score.qualityScore} />
-                        <p className="text-xs text-zinc-500 mt-1">{score.sampleCount} samples</p>
-                      </div>
-                    ) : (
-                      <span className="text-zinc-600">No data</span>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -196,6 +128,7 @@ export default function QualityPage() {
   const [judgeConfig, setJudgeConfigState] = useState<JudgeConfig | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
+  const { getSparkline, pulsedKeys } = useAdaptiveScoreBuffer(adaptiveCells);
 
   const fetchTrend = useCallback(async () => {
     try {
@@ -234,6 +167,22 @@ export default function QualityPage() {
   useEffect(() => {
     fetchTrend();
   }, [fetchTrend]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function pollAdaptive() {
+      try {
+        const res = await gatewayFetchRaw("/v1/analytics/adaptive/scores");
+        const data = await res.json();
+        if (!cancelled) setAdaptiveCells(data.cells || []);
+      } catch {}
+    }
+    const id = setInterval(pollAdaptive, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   async function handleSaveConfig() {
     if (!judgeConfig) return;
@@ -345,13 +294,13 @@ export default function QualityPage() {
         </section>
       )}
 
-      {/* Adaptive Routing Matrix */}
+      {/* Adaptive Routing Heatmap */}
       <section>
-        <h2 className="text-lg font-semibold mb-4">Adaptive Routing Matrix</h2>
+        <h2 className="text-lg font-semibold mb-4">Adaptive Routing</h2>
         <p className="text-sm text-zinc-400 mb-3">
-          Best model per cell based on EMA quality scores from feedback. The router uses these scores to auto-select models.
+          Live quality EMA per routing cell. Each strip is a candidate model — color shows score, opacity shows sample confidence, dashed outlines mark models still below the adaptive-routing threshold.
         </p>
-        <AdaptiveMatrix cells={adaptiveCells} />
+        <AdaptiveHeatmap cells={adaptiveCells} pulsedKeys={pulsedKeys} getSparkline={getSparkline} />
       </section>
 
       {/* Quality by Model */}
