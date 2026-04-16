@@ -4,6 +4,7 @@ import type { Db } from "@provara/db";
 import { feedback } from "@provara/db";
 import { nanoid } from "nanoid";
 import { getPricing } from "../cost/index.js";
+import type { AdaptiveRouter } from "./adaptive.js";
 
 let judgeSampleRate = parseFloat(process.env.PROVARA_JUDGE_SAMPLE_RATE || "0.1");
 let judgeEnabled = true;
@@ -85,9 +86,13 @@ export interface JudgeContext {
   tenantId: string | null;
   messages: ChatMessage[];
   responseContent: string;
+  taskType: string | null;
+  complexity: string | null;
+  provider: string;
+  model: string;
 }
 
-export function createJudge(registry: ProviderRegistry, db: Db) {
+export function createJudge(registry: ProviderRegistry, db: Db, adaptive: AdaptiveRouter) {
   async function maybeJudge(ctx: JudgeContext): Promise<void> {
     if (!shouldJudge()) return;
 
@@ -131,6 +136,17 @@ export function createJudge(registry: ProviderRegistry, db: Db) {
           source: "judge",
         })
         .run();
+
+      if (ctx.taskType && ctx.complexity) {
+        await adaptive.updateScore(
+          ctx.taskType,
+          ctx.complexity,
+          ctx.provider,
+          ctx.model,
+          result.average,
+          "judge"
+        );
+      }
     } catch {
       // Judge failure is silent — don't affect the main request
     }

@@ -6,8 +6,9 @@ import { nanoid } from "nanoid";
 import { getTokenInfo } from "../auth/middleware.js";
 import { getTenantId } from "../auth/tenant.js";
 import { getJudgeConfig, setJudgeConfig } from "../routing/judge.js";
+import type { AdaptiveRouter } from "../routing/adaptive.js";
 
-export function createFeedbackRoutes(db: Db) {
+export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
   const app = new Hono();
 
   // Submit feedback for a request
@@ -55,6 +56,17 @@ export function createFeedbackRoutes(db: Db) {
         source: "user",
       })
       .run();
+
+    if (request.taskType && request.complexity) {
+      await adaptive.updateScore(
+        request.taskType,
+        request.complexity,
+        request.provider,
+        request.model,
+        body.score,
+        "user"
+      );
+    }
 
     return c.json({ id, requestId: body.requestId, score: body.score }, 201);
   });

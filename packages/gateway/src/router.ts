@@ -35,7 +35,7 @@ interface RouterContext {
 export async function createRouter(ctx: RouterContext) {
   const app = new Hono();
   const routingEngine = await createRoutingEngine({ registry: ctx.registry, db: ctx.db });
-  const judge = createJudge(ctx.registry, ctx.db);
+  const judge = createJudge(ctx.registry, ctx.db, routingEngine.adaptive);
 
   // Enable CORS for web dashboard and browser-based API clients
   app.use("/*", cors({
@@ -82,7 +82,7 @@ export async function createRouter(ctx: RouterContext) {
   app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));
 
   // Mount feedback routes
-  app.route("/v1/feedback", createFeedbackRoutes(ctx.db));
+  app.route("/v1/feedback", createFeedbackRoutes(ctx.db, routingEngine.adaptive));
 
   // Mount token management routes (owner only)
   app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
@@ -319,6 +319,16 @@ export async function createRouter(ctx: RouterContext) {
                   })
                   .run();
 
+                if (routingResult.taskType && routingResult.complexity) {
+                  routingEngine.adaptive.updateLatency(
+                    routingResult.taskType,
+                    routingResult.complexity,
+                    usedProvider,
+                    usedModel,
+                    latencyMs
+                  );
+                }
+
                 logCost(ctx.db, {
                   requestId,
                   provider: usedProvider,
@@ -344,6 +354,10 @@ export async function createRouter(ctx: RouterContext) {
                   tenantId,
                   messages: request.messages,
                   responseContent: fullContent,
+                  taskType: routingResult.taskType,
+                  complexity: routingResult.complexity,
+                  provider: usedProvider,
+                  model: usedModel,
                 }).catch(() => {});
               } catch (err) {
                 controller.error(err);
@@ -437,6 +451,16 @@ export async function createRouter(ctx: RouterContext) {
       })
       .run();
 
+    if (routingResult.taskType && routingResult.complexity) {
+      routingEngine.adaptive.updateLatency(
+        routingResult.taskType,
+        routingResult.complexity,
+        usedProvider,
+        usedModel,
+        latencyMs
+      );
+    }
+
     await logCost(ctx.db, {
       requestId,
       provider: usedProvider,
@@ -457,6 +481,10 @@ export async function createRouter(ctx: RouterContext) {
       tenantId,
       messages: request.messages,
       responseContent: response.content,
+      taskType: routingResult.taskType,
+      complexity: routingResult.complexity,
+      provider: usedProvider,
+      model: usedModel,
     }).catch(() => {});
 
     // Output guardrails — check response content before returning
