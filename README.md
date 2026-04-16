@@ -2,15 +2,19 @@
 
 Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and cost optimization. Self-host it or use the managed SaaS.
 
+![Dashboard](public/dashboard.png)
+
 ## Features
 
 - **Intelligent Routing** — Classifies queries by task type (coding, creative, summarization, Q&A, general) and complexity (simple, medium, complex), then routes to the optimal model
 - **Adaptive Quality Scoring** — Learns from feedback (user ratings + LLM-as-judge) to auto-optimize which model handles each task type
 - **A/B Testing** — Split traffic between models with weighted variants, scoped to routing cells
 - **8+ Providers** — OpenAI, Anthropic, Google, Mistral, xAI, Z.ai, Ollama, plus any OpenAI-compatible provider
+- **Dynamic Model Discovery** — Automatically detects available models from each provider's API at startup, with on-demand refresh
 - **Request Logs & Replay** — Browsable request history with full prompt/response detail, replay any request against a different model with side-by-side diff comparison
 - **Observability Dashboard** — Time-series charts for request volume, cost breakdown by provider, latency percentiles (p50/p95/p99), and model comparison tables
 - **Quality & Eval Pipeline** — LLM-as-judge auto-scoring with configurable sample rate, quality trends over time, manual 1-5 feedback from the dashboard, adaptive routing matrix
+- **Guardrails** — Built-in PII detection (SSN, credit card, email, phone, IP), content policies, and custom regex rules with redact/flag/block actions
 - **Alerting** — Configurable rules for spend, latency, and request count thresholds with webhook notifications and alert history
 - **Prompt Management** — Versioned prompt templates with `{{variable}}` interpolation, publish/rollback, and API resolution by name
 - **Cost Analytics** — Track spend per provider, model, and tenant with detailed cost breakdowns
@@ -20,6 +24,15 @@ Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and c
 - **Multi-Tenant** — OAuth (Google + GitHub), role-based access (owner/member), tenant-scoped data
 - **Encrypted Key Storage** — AES-256-GCM encryption for provider API keys at rest
 - **Web Dashboard** — Sidebar navigation with grouped sections: Monitor, Test, Configure, Admin
+
+### Screenshots
+
+| | |
+|---|---|
+| ![Analytics](public/analytics.png) **Analytics** — Request volume, cost by provider, latency percentiles, model comparison | ![Logs](public/logs.png) **Request Logs** — Searchable request history with prompt, model, routing, tokens, cost |
+| ![Quality](public/quality.png) **Quality** — LLM-as-judge scoring, adaptive routing matrix, quality trends | ![Playground](public/playground.png) **Playground** — Interactive chat with model selection or auto-routing |
+| ![Guardrails](public/guardrails.png) **Guardrails** — PII detection, content policies, custom regex rules | ![Providers](public/providers.png) **Providers** — Auto-discovered models with Refresh Models button |
+| ![API Keys](public/apikeys.png) **API Keys** — Encrypted provider key storage with active provider display | ![A/B Tests](public/abtests.png) **A/B Tests** — Head-to-head model comparison with quality scoring |
 
 ## Quick Start
 
@@ -93,6 +106,8 @@ provara/
 
 ## How Routing Works
 
+![Routing Pipeline](public/routing.png)
+
 ```
 Request arrives at POST /v1/chat/completions
   │
@@ -119,6 +134,8 @@ Each request logs which routing method was used in `_provara.routing.routedBy`:
 - `"classification"` — classifier picked the route
 
 ## A/B Testing Guide
+
+![A/B Tests](public/abtests.png)
 
 A/B tests let you compare two or more models head-to-head on real traffic. Here's a full walkthrough:
 
