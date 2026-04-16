@@ -7,9 +7,28 @@ export function createOpenAIProvider(apiKey?: string): Provider {
     apiKey: apiKey || process.env.OPENAI_API_KEY,
   });
 
-  return {
+  const provider: Provider = {
     name: "openai",
     models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "o3", "o4-mini"],
+
+    async listModels(): Promise<string[]> {
+      try {
+        const response = await client.models.list();
+        const chatModels: string[] = [];
+        for await (const model of response) {
+          // Only include chat-capable models, skip embeddings/tts/whisper/dall-e
+          if (model.id.startsWith("gpt-") || model.id.startsWith("o1") || model.id.startsWith("o3") || model.id.startsWith("o4")) {
+            chatModels.push(model.id);
+          }
+        }
+        if (chatModels.length > 0) {
+          provider.models = chatModels;
+        }
+        return provider.models;
+      } catch {
+        return provider.models;
+      }
+    },
 
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
       const start = performance.now();
@@ -64,4 +83,6 @@ export function createOpenAIProvider(apiKey?: string): Provider {
       }
     },
   };
+
+  return provider;
 }

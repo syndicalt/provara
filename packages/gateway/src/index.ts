@@ -23,6 +23,19 @@ const registry = await createProviderRegistry({
 });
 const app = await createRouter({ registry, db });
 
+// Discover available models from each provider's API at startup
+registry.refreshModels().then((results) => {
+  const discovered = results.filter((r) => r.discovered);
+  if (discovered.length > 0) {
+    console.log(`Discovered models from ${discovered.length} provider(s):`);
+    for (const r of discovered) {
+      console.log(`  ${r.provider}: ${r.models.length} models`);
+    }
+  }
+}).catch((err) => {
+  console.warn("Model discovery failed (using defaults):", err instanceof Error ? err.message : err);
+});
+
 console.log(`Provara gateway running on http://localhost:${port}`);
 console.log(`Providers: ${registry.list().map((p) => p.name).join(", ")}`);
 

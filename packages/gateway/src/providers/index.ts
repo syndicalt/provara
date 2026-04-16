@@ -11,11 +11,18 @@ import { createOpenAICompatibleProvider, type OpenAICompatibleConfig } from "./o
 export type { Provider, CompletionRequest, CompletionResponse, ChatMessage, StreamChunk } from "./types.js";
 export { createOpenAICompatibleProvider, type OpenAICompatibleConfig } from "./openai-compatible.js";
 
+export interface RefreshModelsResult {
+  provider: string;
+  models: string[];
+  discovered: boolean;
+}
+
 export interface ProviderRegistry {
   get(name: string): Provider | undefined;
   getForModel(model: string): Provider | undefined;
   list(): Provider[];
   reload(): void | Promise<void>;
+  refreshModels(): Promise<RefreshModelsResult[]>;
   addCustom(config: OpenAICompatibleConfig): void;
   removeCustom(name: string): void;
 }
@@ -77,6 +84,21 @@ export async function createProviderRegistry(config?: RegistryConfig): Promise<P
 
     reload() {
       load();
+    },
+
+    async refreshModels(): Promise<RefreshModelsResult[]> {
+      const results: RefreshModelsResult[] = [];
+      await Promise.allSettled(
+        providers.map(async (p) => {
+          if (p.listModels) {
+            const models = await p.listModels();
+            results.push({ provider: p.name, models, discovered: true });
+          } else {
+            results.push({ provider: p.name, models: p.models, discovered: false });
+          }
+        })
+      );
+      return results;
     },
 
     addCustom(customConfig: OpenAICompatibleConfig) {

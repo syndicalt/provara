@@ -261,6 +261,30 @@ export default function ProvidersPage() {
   const [builtinProviders, setBuiltinProviders] = useState<BuiltinProvider[]>([]);
   const [customProvidersList, setCustomProvidersList] = useState<CustomProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshResult, setRefreshResult] = useState<string | null>(null);
+
+  async function handleRefreshModels() {
+    setRefreshing(true);
+    setRefreshResult(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/providers/refresh-models`, { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        const discovered = (data.results || []).filter((r: { discovered: boolean }) => r.discovered);
+        const totalModels = discovered.reduce((sum: number, r: { models: string[] }) => sum + r.models.length, 0);
+        setRefreshResult(`Discovered ${totalModels} models from ${discovered.length} providers`);
+        await fetchData();
+      } else {
+        setRefreshResult("Failed to refresh models");
+      }
+    } catch {
+      setRefreshResult("Failed to connect to gateway");
+    } finally {
+      setRefreshing(false);
+      setTimeout(() => setRefreshResult(null), 5000);
+    }
+  }
 
   async function fetchData() {
     try {
@@ -295,8 +319,23 @@ export default function ProvidersPage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">Providers</h1>
-        <AddProviderForm onCreated={fetchData} />
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleRefreshModels}
+            disabled={refreshing}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 border border-zinc-700 rounded-lg text-sm font-medium transition-colors"
+          >
+            {refreshing ? "Refreshing..." : "Refresh Models"}
+          </button>
+          <AddProviderForm onCreated={fetchData} />
+        </div>
       </div>
+
+      {refreshResult && (
+        <div className="bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2 text-sm text-zinc-300">
+          {refreshResult}
+        </div>
+      )}
 
       {/* Active Providers (built-in) */}
       <section>

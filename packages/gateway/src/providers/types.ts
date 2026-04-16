@@ -38,4 +38,6 @@ export interface Provider {
   models: string[];
   complete(request: CompletionRequest): Promise<CompletionResponse>;
   stream(request: CompletionRequest): AsyncIterable<StreamChunk>;
+  /** Query the provider API for available models. Updates `models` in-place and returns the list. */
+  listModels?(): Promise<string[]>;
 }

@@ -7,9 +7,25 @@ export function createAnthropicProvider(apiKey?: string): Provider {
     apiKey: apiKey || process.env.ANTHROPIC_API_KEY,
   });
 
-  return {
+  const provider: Provider = {
     name: "anthropic",
     models: ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
+
+    async listModels(): Promise<string[]> {
+      try {
+        const response = await client.models.list({ limit: 100 });
+        const chatModels: string[] = [];
+        for (const model of response.data) {
+          chatModels.push(model.id);
+        }
+        if (chatModels.length > 0) {
+          provider.models = chatModels;
+        }
+        return provider.models;
+      } catch {
+        return provider.models;
+      }
+    },
 
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
       const start = performance.now();
@@ -74,4 +90,6 @@ export function createAnthropicProvider(apiKey?: string): Provider {
       };
     },
   };
+
+  return provider;
 }
