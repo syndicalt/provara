@@ -6,6 +6,8 @@ import { DataTable, type Column } from "../../../components/data-table";
 import { Badge } from "../../../components/badge";
 import { gatewayFetchRaw } from "../../../lib/gateway-client";
 import { PipelineVisualization } from "../../../components/pipeline-viz";
+import type { AdaptiveCell } from "../../../components/adaptive-heatmap";
+import { useAdaptiveScoreBuffer } from "../../../hooks/use-adaptive-score-buffer";
 
 interface RoutingStat {
   taskType: string | null;
@@ -115,7 +117,9 @@ const routingStatsColumns: Column<RoutingStat>[] = [
 export default function RoutingPage() {
   const [stats, setStats] = useState<RoutingStat[]>([]);
   const [distribution, setDistribution] = useState<Distribution | null>(null);
+  const [adaptiveCells, setAdaptiveCells] = useState<AdaptiveCell[]>([]);
   const [loading, setLoading] = useState(true);
+  const { pulseTick, recentUpdateCount } = useAdaptiveScoreBuffer(adaptiveCells);
 
   useEffect(() => {
     async function fetchData() {
@@ -137,6 +141,23 @@ export default function RoutingPage() {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function pollAdaptive() {
+      try {
+        const res = await gatewayFetchRaw("/v1/analytics/adaptive/scores");
+        const data = await res.json();
+        if (!cancelled) setAdaptiveCells(data.cells || []);
+      } catch {}
+    }
+    pollAdaptive();
+    const id = setInterval(pollAdaptive, 10_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -151,8 +172,21 @@ export default function RoutingPage() {
 
       {/* Pipeline Visualization */}
       <section>
-        <h2 className="text-lg font-semibold mb-4">Routing Pipeline</h2>
-        <PipelineVisualization />
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-lg font-semibold">Routing Pipeline</h2>
+          <div className="flex items-center gap-2 text-xs text-zinc-400">
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                recentUpdateCount > 0 ? "bg-emerald-400" : "bg-zinc-600"
+              }`}
+            />
+            <span>
+              <span className="font-mono text-zinc-200">{recentUpdateCount}</span>{" "}
+              learning {recentUpdateCount === 1 ? "update" : "updates"} in last 60s
+            </span>
+          </div>
+        </div>
+        <PipelineVisualization adaptivePulseTick={pulseTick} />
       </section>
 
       {/* Distribution Charts */}

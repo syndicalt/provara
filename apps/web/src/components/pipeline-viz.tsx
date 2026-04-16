@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ReactFlow,
   Background,
   Controls,
-  MiniMap,
   useNodesState,
   type Node,
   type Edge,
@@ -53,13 +52,30 @@ function PipelineNode({ data }: NodeProps) {
     active: boolean;
     color: string;
     detail?: string;
+    pulseTick?: number;
   };
+
+  const [pulsing, setPulsing] = useState(false);
+  const prevTick = useRef<number | undefined>(d.pulseTick);
+
+  useEffect(() => {
+    if (d.pulseTick === undefined) return;
+    if (prevTick.current === d.pulseTick) return;
+    prevTick.current = d.pulseTick;
+    setPulsing(true);
+    const id = setTimeout(() => setPulsing(false), 900);
+    return () => clearTimeout(id);
+  }, [d.pulseTick]);
 
   const borderColor = d.active ? d.color : "border-zinc-700";
   const bgColor = d.active ? `${d.color.replace("border-", "bg-")}/10` : "bg-zinc-900";
+  const animationStyle = pulsing ? { animation: "adaptive-tick 900ms ease-out" } : undefined;
 
   return (
-    <div className={`px-4 py-3 rounded-xl border-2 ${borderColor} ${bgColor} min-w-[160px] shadow-lg`}>
+    <div
+      className={`px-4 py-3 rounded-xl border-2 ${borderColor} ${bgColor} min-w-[160px] shadow-lg`}
+      style={animationStyle}
+    >
       <Handle type="target" position={Position.Left} className="!bg-zinc-600 !border-zinc-500 !w-2 !h-2" />
       <div className="flex items-center gap-2 mb-1">
         <span className="text-lg">{d.icon}</span>
@@ -91,7 +107,7 @@ function PipelineNode({ data }: NodeProps) {
 
 const nodeTypes = { pipeline: PipelineNode };
 
-function buildNodes(data: PipelineData | null): Node[] {
+function buildNodes(data: PipelineData | null, adaptivePulseTick = 0): Node[] {
   const s = data?.stages;
   return [
     {
@@ -149,6 +165,7 @@ function buildNodes(data: PipelineData | null): Node[] {
         active: s?.adaptive.active ?? false,
         color: "border-emerald-500",
         detail: s?.adaptive.feedbackCount ? `${s.adaptive.feedbackCount} feedback` : undefined,
+        pulseTick: adaptivePulseTick,
       },
     },
     {
@@ -192,16 +209,25 @@ const edges: Edge[] = [
   { id: "e-fb-prv", source: "fallback", target: "provider", animated: true, style: { stroke: "#f59e0b", strokeWidth: 1.5 } },
 ];
 
-export function PipelineVisualization() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(buildNodes(null));
+interface PipelineVisualizationProps {
+  adaptivePulseTick?: number;
+}
+
+export function PipelineVisualization({ adaptivePulseTick = 0 }: PipelineVisualizationProps = {}) {
+  const [nodes, setNodes, onNodesChange] = useNodesState(buildNodes(null, adaptivePulseTick));
+  const [data, setData] = useState<PipelineData | null>(null);
 
   useEffect(() => {
     gatewayClientFetch<PipelineData>("/v1/analytics/pipeline")
       .then((d) => {
-        setNodes(buildNodes(d));
+        setData(d);
       })
       .catch((err) => console.error("Failed to fetch pipeline data:", err));
-  }, [setNodes]);
+  }, []);
+
+  useEffect(() => {
+    setNodes(buildNodes(data, adaptivePulseTick));
+  }, [data, adaptivePulseTick, setNodes]);
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden" style={{ height: 400 }}>
