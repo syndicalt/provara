@@ -18,3 +18,8 @@ button, [role="button"], a, select, summary, label[for] {
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: #52525b;
 }
+
+@keyframes adaptive-tick {
+  0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.75); }
+  100% { box-shadow: 0 0 0 8px rgba(52, 211, 153, 0); }
+}
