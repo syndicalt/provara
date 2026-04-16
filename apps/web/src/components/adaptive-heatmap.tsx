@@ -37,10 +37,10 @@ export function cellKey(taskType: string, complexity: string, provider: string, 
   return `${taskType}:${complexity}:${provider}:${model}`;
 }
 
-function scoreColor(score: number): string {
+function scoreColor(score: number, alpha = 1): string {
   const clamped = Math.max(1, Math.min(5, score));
   const hue = ((clamped - 1) / 4) * 120;
-  return `hsl(${hue}, 55%, 42%)`;
+  return `hsla(${hue}, 55%, 42%, ${alpha})`;
 }
 
 function Strip({
@@ -49,24 +49,26 @@ function Strip({
   minSamples,
   pulsing,
   sparkline,
+  rowIndex,
 }: {
   score: AdaptiveScore;
   maxSamplesInCell: number;
   minSamples: number;
   pulsing: boolean;
   sparkline: SparklinePoint[] | undefined;
+  rowIndex: number;
 }) {
   const isBelowThreshold = score.sampleCount < minSamples;
-  const opacity = 0.35 + 0.65 * (score.sampleCount / Math.max(maxSamplesInCell, 1));
-  const fillColor = scoreColor(score.qualityScore);
+  const confidenceAlpha = 0.35 + 0.65 * (score.sampleCount / Math.max(maxSamplesInCell, 1));
+  const fillColor = scoreColor(score.qualityScore, confidenceAlpha);
   const animationStyle = pulsing ? { animation: "adaptive-tick 900ms ease-out" } : {};
+  const tooltipPositionClass = rowIndex === 0 ? "top-full mt-1" : "bottom-full mb-1";
 
   return (
     <div
       className="relative group rounded-sm"
       style={{
         backgroundColor: fillColor,
-        opacity,
         borderStyle: isBelowThreshold ? "dashed" : "solid",
         borderColor: "rgba(0,0,0,0.35)",
         borderWidth: "1px",
@@ -95,7 +97,7 @@ function Strip({
         </div>
       )}
 
-      <div className="invisible group-hover:visible absolute bottom-full left-0 z-20 mb-1 bg-zinc-950 border border-zinc-700 rounded p-2 text-[10px] whitespace-nowrap shadow-xl pointer-events-none">
+      <div className={`invisible group-hover:visible absolute ${tooltipPositionClass} left-0 z-20 bg-zinc-950 border border-zinc-700 rounded p-2 text-[10px] whitespace-nowrap shadow-xl pointer-events-none`}>
         <div className="text-zinc-200 font-medium mb-1 font-mono">{score.provider}/{score.model}</div>
         <div className="text-zinc-400 space-y-0.5">
           <div>
@@ -138,7 +140,7 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
           </div>
         ))}
 
-        {TASK_TYPES.map((tt) => (
+        {TASK_TYPES.map((tt, rowIndex) => (
           <React.Fragment key={tt}>
             <div className="border-b border-zinc-800 px-4 py-3 text-xs font-medium text-zinc-300 capitalize flex items-center">
               {tt}
@@ -169,6 +171,7 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
                             minSamples={minSamples}
                             pulsing={pulsedKeys?.has(key) ?? false}
                             sparkline={getSparkline?.(key)}
+                            rowIndex={rowIndex}
                           />
                         );
                       })}
