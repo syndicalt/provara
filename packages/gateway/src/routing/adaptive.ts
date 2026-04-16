@@ -1,13 +1,29 @@
+// Single-instance constraint: the EMA score map is in-process memory. Multiple gateway
+// replicas would each hold a drifting copy; updateScore writes from replica-1 would not
+// reach replica-2 until the next restart. The model_scores table is the durable source
+// of truth so a single process recovers cleanly on boot, but horizontal scaling needs
+// a sync mechanism (pub/sub or periodic reload). Tracked in issue #50.
 import type { Db } from "@provara/db";
-import { feedback, requests } from "@provara/db";
+import { feedback, modelScores, requests } from "@provara/db";
 import { eq, sql } from "drizzle-orm";
 import type { TaskType, Complexity } from "../classifier/types.js";
 import type { RouteTarget } from "./types.js";
 import { getPricing } from "../cost/index.js";
 
-// EMA decay factor: 0.1 = slow adaptation, 0.3 = moderate, 0.5 = fast
+// EMA decay factor: 0.1 = slow adaptation, 0.3 = moderate, 0.5 = fast.
+// Used for latency EMA and as the global override for quality EMA when per-source vars are unset.
 const EMA_ALPHA = parseFloat(process.env.PROVARA_EMA_ALPHA || "0.2");
 const MIN_SAMPLES = parseInt(process.env.PROVARA_MIN_SAMPLES || "5");
+
+export type FeedbackSource = "user" | "judge";
+
+function getQualityAlpha(source: FeedbackSource): number {
+  const envVar = source === "user" ? "PROVARA_EMA_ALPHA_USER" : "PROVARA_EMA_ALPHA_JUDGE";
+  const specific = process.env[envVar];
+  if (specific !== undefined) return parseFloat(specific);
+  if (process.env.PROVARA_EMA_ALPHA !== undefined) return parseFloat(process.env.PROVARA_EMA_ALPHA);
+  return source === "user" ? 0.4 : 0.2;
+}
 
 export type RoutingProfile = "cost" | "balanced" | "quality" | "custom";
 
@@ -71,10 +87,46 @@ function computeRouteScore(
   return weights.quality * normalizedQuality + weights.cost * normalizedCost + weights.latency * normalizedLatency;
 }
 
+export type AdaptiveRouter = Awaited<ReturnType<typeof createAdaptiveRouter>>;
+
 export async function createAdaptiveRouter(db: Db) {
-  // Load initial scores from existing feedback data
+  // Load initial scores. Precedence:
+  //  1. model_scores table — authoritative live EMA persisted across restarts.
+  //  2. feedback aggregation — seed for cells that have feedback history but no
+  //     model_scores row yet (first boot after the table was added, or cells that
+  //     predate live learning). Once updateScore fires for a cell, it becomes
+  //     authoritative and the seed path no longer applies to it.
   async function loadScoresFromDb(): Promise<void> {
-    const rows = await db
+    const persisted = await db
+      .select({
+        taskType: modelScores.taskType,
+        complexity: modelScores.complexity,
+        provider: modelScores.provider,
+        model: modelScores.model,
+        qualityScore: modelScores.qualityScore,
+        sampleCount: modelScores.sampleCount,
+      })
+      .from(modelScores)
+      .all();
+
+    for (const row of persisted) {
+      const ck = cellKey(row.taskType, row.complexity);
+      const mk = modelKey(row.provider, row.model);
+
+      if (!emaScores.has(ck)) emaScores.set(ck, new Map());
+      const cellScores = emaScores.get(ck)!;
+
+      cellScores.set(mk, {
+        provider: row.provider,
+        model: row.model,
+        qualityScore: row.qualityScore,
+        sampleCount: row.sampleCount,
+        costPer1M: getModelCost(row.model),
+        avgLatencyMs: 0, // populated from requests below
+      });
+    }
+
+    const feedbackRows = await db
       .select({
         provider: requests.provider,
         model: requests.model,
@@ -88,7 +140,7 @@ export async function createAdaptiveRouter(db: Db) {
       .groupBy(requests.provider, requests.model, requests.taskType, requests.complexity)
       .all();
 
-    for (const row of rows) {
+    for (const row of feedbackRows) {
       if (!row.taskType || !row.complexity) continue;
       const ck = cellKey(row.taskType, row.complexity);
       const mk = modelKey(row.provider, row.model);
@@ -96,13 +148,16 @@ export async function createAdaptiveRouter(db: Db) {
       if (!emaScores.has(ck)) emaScores.set(ck, new Map());
       const cellScores = emaScores.get(ck)!;
 
+      // Skip cells that already have a persisted EMA — that takes precedence.
+      if (cellScores.has(mk)) continue;
+
       cellScores.set(mk, {
         provider: row.provider,
         model: row.model,
         qualityScore: row.avgScore,
         sampleCount: row.count,
         costPer1M: getModelCost(row.model),
-        avgLatencyMs: 0, // Will be populated by updateLatency calls
+        avgLatencyMs: 0,
       });
     }
 
@@ -133,34 +188,54 @@ export async function createAdaptiveRouter(db: Db) {
     }
   }
 
-  // Update EMA score when new feedback arrives
-  function updateScore(
+  // Update EMA score when new feedback arrives and persist to model_scores.
+  // `source` picks the alpha: user feedback moves the needle harder than the judge.
+  async function updateScore(
     taskType: string,
     complexity: string,
     provider: string,
     model: string,
-    newScore: number
-  ): void {
+    newScore: number,
+    source: FeedbackSource
+  ): Promise<void> {
+    const alpha = getQualityAlpha(source);
     const ck = cellKey(taskType, complexity);
     const mk = modelKey(provider, model);
 
     if (!emaScores.has(ck)) emaScores.set(ck, new Map());
     const cellScores = emaScores.get(ck)!;
 
+    let qualityScore: number;
+    let sampleCount: number;
+
     const existing = cellScores.get(mk);
     if (existing) {
-      existing.qualityScore = EMA_ALPHA * newScore + (1 - EMA_ALPHA) * existing.qualityScore;
+      existing.qualityScore = alpha * newScore + (1 - alpha) * existing.qualityScore;
       existing.sampleCount++;
+      qualityScore = existing.qualityScore;
+      sampleCount = existing.sampleCount;
     } else {
+      qualityScore = newScore;
+      sampleCount = 1;
       cellScores.set(mk, {
         provider,
         model,
-        qualityScore: newScore,
-        sampleCount: 1,
+        qualityScore,
+        sampleCount,
         costPer1M: getModelCost(model),
         avgLatencyMs: 0,
       });
     }
+
+    const updatedAt = new Date();
+    await db
+      .insert(modelScores)
+      .values({ taskType, complexity, provider, model, qualityScore, sampleCount, updatedAt })
+      .onConflictDoUpdate({
+        target: [modelScores.taskType, modelScores.complexity, modelScores.provider, modelScores.model],
+        set: { qualityScore, sampleCount, updatedAt },
+      })
+      .run();
   }
 
   // Update latency EMA after each request
