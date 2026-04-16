@@ -5,6 +5,7 @@ import { eq, and, gte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { generateToken, hashToken, maskToken } from "../auth/tokens.js";
 import { getTenantId } from "../auth/tenant.js";
+import { getAuthUser } from "../auth/admin.js";
 
 export function createTokenRoutes(db: Db) {
   const app = new Hono();
@@ -100,7 +101,6 @@ export function createTokenRoutes(db: Db) {
   app.post("/", async (c) => {
     const body = await c.req.json<{
       name: string;
-      tenant: string;
       rateLimit?: number;
       spendLimit?: number;
       spendPeriod?: "monthly" | "weekly" | "daily";
@@ -109,12 +109,16 @@ export function createTokenRoutes(db: Db) {
       expiresAt?: string;
     }>();
 
-    if (!body.name || !body.tenant) {
+    if (!body.name) {
       return c.json(
-        { error: { message: "name and tenant are required", type: "validation_error" } },
+        { error: { message: "name is required", type: "validation_error" } },
         400
       );
     }
+
+    // Use the authenticated user's tenant ID, fall back to body.tenant for self_hosted mode
+    const authUser = getAuthUser(c.req.raw);
+    const tenant = authUser?.tenantId || getTenantId(c.req.raw) || "default";
 
     const plainToken = generateToken();
     const hashed = hashToken(plainToken);
@@ -124,7 +128,7 @@ export function createTokenRoutes(db: Db) {
       .values({
         id,
         name: body.name,
-        tenant: body.tenant,
+        tenant,
         hashedToken: hashed,
         tokenPrefix: plainToken.slice(0, 9),
         rateLimit: body.rateLimit || null,
@@ -142,7 +146,7 @@ export function createTokenRoutes(db: Db) {
         token: {
           id,
           name: body.name,
-          tenant: body.tenant,
+          tenant,
           tokenPrefix: plainToken.slice(0, 9),
           rateLimit: body.rateLimit || null,
           spendLimit: body.spendLimit || null,

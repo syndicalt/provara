@@ -35,7 +35,6 @@ interface TenantUsage {
 function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [tenant, setTenant] = useState("");
   const [rateLimit, setRateLimit] = useState("");
   const [spendLimit, setSpendLimit] = useState("");
   const [spendPeriod, setSpendPeriod] = useState("monthly");
@@ -53,7 +52,6 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
         method: "POST",
         body: JSON.stringify({
           name,
-          tenant,
           rateLimit: rateLimit ? parseInt(rateLimit) : undefined,
           spendLimit: spendLimit ? parseFloat(spendLimit) : undefined,
           spendPeriod,
@@ -90,7 +88,6 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
   function handleDone() {
     setCreatedToken(null);
     setName("");
-    setTenant("");
     setRateLimit("");
     setSpendLimit("");
     setOpen(false);
@@ -165,27 +162,15 @@ function CreateTokenForm({ onCreated }: { onCreated: () => void }) {
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1">Name</label>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-            placeholder="e.g. Production App"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-zinc-400 mb-1">Tenant</label>
-          <input
-            value={tenant}
-            onChange={(e) => setTenant(e.target.value)}
-            required
-            className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
-            placeholder="e.g. my-app"
-          />
-        </div>
+      <div>
+        <label className="block text-sm text-zinc-400 mb-1">Name</label>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+          className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
+          placeholder="e.g. Production App"
+        />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
