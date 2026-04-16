@@ -1,10 +1,13 @@
 import type { ChatMessage } from "../providers/types.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Db } from "@provara/db";
-import { feedback } from "@provara/db";
+import { appConfig, feedback } from "@provara/db";
+import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getPricing } from "../cost/index.js";
 import type { AdaptiveRouter } from "./adaptive.js";
+
+const JUDGE_CONFIG_KEY = "judge_config";
 
 let judgeSampleRate = parseFloat(process.env.PROVARA_JUDGE_SAMPLE_RATE || "0.1");
 let judgeEnabled = true;
@@ -13,13 +16,46 @@ export function getJudgeConfig() {
   return { sampleRate: judgeSampleRate, enabled: judgeEnabled };
 }
 
-export function setJudgeConfig(config: { sampleRate?: number; enabled?: boolean }) {
+export async function hydrateJudgeConfig(db: Db) {
+  const row = await db
+    .select()
+    .from(appConfig)
+    .where(eq(appConfig.key, JUDGE_CONFIG_KEY))
+    .get();
+  if (!row) return;
+  try {
+    const parsed = JSON.parse(row.value) as { sampleRate?: number; enabled?: boolean };
+    if (typeof parsed.sampleRate === "number") {
+      judgeSampleRate = Math.max(0, Math.min(1, parsed.sampleRate));
+    }
+    if (typeof parsed.enabled === "boolean") {
+      judgeEnabled = parsed.enabled;
+    }
+  } catch {
+    // Malformed row — leave defaults in place
+  }
+}
+
+export async function setJudgeConfig(
+  db: Db,
+  config: { sampleRate?: number; enabled?: boolean }
+) {
   if (config.sampleRate !== undefined) {
     judgeSampleRate = Math.max(0, Math.min(1, config.sampleRate));
   }
   if (config.enabled !== undefined) {
     judgeEnabled = config.enabled;
   }
+  const value = JSON.stringify({ sampleRate: judgeSampleRate, enabled: judgeEnabled });
+  const now = new Date();
+  await db
+    .insert(appConfig)
+    .values({ key: JUDGE_CONFIG_KEY, value, updatedAt: now })
+    .onConflictDoUpdate({
+      target: appConfig.key,
+      set: { value, updatedAt: now },
+    })
+    .run();
 }
 
 const JUDGE_PROMPT = `You are an impartial quality judge. Rate the AI assistant's response on three dimensions.

@@ -11,11 +11,13 @@ import { createProviderRegistry } from "./providers/index.js";
 import { createRouter } from "./router.js";
 import { getDecryptedKeys } from "./routes/api-keys.js";
 import { loadCustomProviders } from "./providers/custom-loader.js";
+import { hydrateJudgeConfig } from "./routing/judge.js";
 
 const port = parseInt(process.env.PORT || "4000", 10);
 
 const db = createDb();
 await runMigrations(db, resolve(process.cwd(), "packages/db/drizzle"));
+await hydrateJudgeConfig(db);
 
 const registry = await createProviderRegistry({
   getKeys: () => getDecryptedKeys(db),
