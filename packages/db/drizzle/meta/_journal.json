@@ -85,6 +85,13 @@
       "when": 1776269160795,
       "tag": "0011_oval_molly_hayes",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1776370620420,
+      "tag": "0012_giant_magma",
+      "breakpoints": true
     }
   ]
 }
