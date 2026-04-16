@@ -7,7 +7,7 @@ Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and c
 ## Features
 
 - **Intelligent Routing** — Classifies queries by task type (coding, creative, summarization, Q&A, general) and complexity (simple, medium, complex), then routes to the optimal model
-- **Adaptive Quality Scoring** — Learns from feedback (user ratings + LLM-as-judge) to auto-optimize which model handles each task type
+- **Adaptive Quality Scoring** — Every user rating and LLM-judge score updates a live quality EMA per routing cell (task × complexity × model), persisted across restarts. Winning models earn more traffic automatically — no retraining step, no manual model selection to keep current as providers ship new versions
 - **A/B Testing** — Split traffic between models with weighted variants, scoped to routing cells
 - **8+ Providers** — OpenAI, Anthropic, Google, Mistral, xAI, Z.ai, Ollama, plus any OpenAI-compatible provider
 - **Dynamic Model Discovery** — Automatically detects available models from each provider's API at startup, with on-demand refresh
@@ -130,8 +130,56 @@ Each request logs which routing method was used in `_provara.routing.routedBy`:
 - `"explicit"` — user specified provider/model
 - `"routing-hint"` — user provided a task type hint
 - `"ab-test"` — matched an active A/B test
-- `"adaptive"` — quality-based adaptive routing
+- `"adaptive"` — live quality-based routing (see [Adaptive Routing](#adaptive-routing))
 - `"classification"` — classifier picked the route
+
+## Adaptive Routing
+
+Provara's adaptive router learns from live traffic. Every user rating submitted to `/v1/feedback` and every score produced by the built-in LLM judge flows into a per-cell quality EMA. Over time, the router leans harder on the models that actually perform well on the traffic you're sending — without a retraining step and without you having to manually swap model names when providers ship new versions.
+
+### The feedback loop
+
+Two signal sources land in the same `feedback` table:
+
+- **User ratings** (`source: "user"`) — explicit 1–5 scores submitted via `POST /v1/feedback` or the dashboard's Quality view.
+- **LLM-as-judge** (`source: "judge"`) — the gateway automatically samples a configurable fraction of responses (default ~10%, tunable via `/v1/feedback/judge/config`) and asks a cheap model to score relevance, accuracy, and coherence. The average lands as a `feedback` row with `source: "judge"`.
+
+Both sources feed the same learning loop but with different weights — see [Live learning](#live-learning) below.
+
+A **routing cell** is the `(taskType, complexity)` tuple the classifier assigns to each request — e.g. `coding/medium` or `creative/simple`. The router tracks a running quality score per `(cell, provider, model)` independently: GPT-4o on `coding/complex` has its own score, separate from GPT-4o on `qa/simple`. This matters because a model that wins on one cell can lose on another, and a blended global score would hide that.
+
+### Live learning
+
+Every feedback event nudges the relevant score by an exponential moving average. User ratings move the EMA harder than judge scores, so:
+
+- A single user rating meaningfully shifts the result.
+- Judge scores accumulate into a stable baseline without any one sample swinging the decision.
+- A flood of automated judge traffic can't drown out sparser but higher-signal user feedback.
+
+Scores persist to a `model_scores` table on every update, so a Railway redeploy or local restart resumes with the exact running EMA — not a flat re-average of historical feedback. Weeks of signal don't get lost to a restart.
+
+### When adaptive routing kicks in
+
+Adaptive routing is sample-gated. A `(cell, provider, model)` combination needs at least a few feedback events before the router will pick it on quality grounds. Below that threshold, traffic falls through to cost-ranked fallback (cheapest viable provider first) or to an active A/B test if one scopes to the cell.
+
+Routing priority for each request:
+
+1. **Explicit user override** — the caller specified `provider` + `model` in the request body.
+2. **Active A/B test on the cell** — weighted random variant selection.
+3. **Adaptive** — the cell has enough signal; pick the highest-scoring model under the active routing profile.
+4. **Cost fallback** — no adaptive data yet; route to the cheapest provider that can handle the classification.
+
+Adaptive coexists cleanly with A/B tests: while a test is active, the test wins (so you get controlled comparison data); once it completes, the scores it generated continue shaping the adaptive decision for that cell.
+
+### Tuning the trade-off
+
+The adaptive winner isn't chosen on quality alone. Each candidate is scored against three dimensions — quality, cost, latency — weighted by a **routing profile**:
+
+- `cost` — cheapest wins unless quality is catastrophically bad (20/70/10).
+- `balanced` (default) — equal weight on quality and cost, a touch on latency (40/40/20).
+- `quality` — highest EMA wins unless cost or latency are egregious (70/15/15).
+
+Profiles can be set per API token (via `/v1/admin/tokens`) so a production workload and a throwaway experiment can share the same adaptive scores but route differently.
 
 ## A/B Testing Guide
 
@@ -213,7 +261,7 @@ curl -X POST http://localhost:4000/v1/feedback \
   }'
 ```
 
-Scores feed into the adaptive routing engine — after enough feedback, Provara will auto-route to the better model even without an A/B test.
+Scores also feed the live adaptive router — see [Adaptive Routing](#adaptive-routing) for how the feedback loop works and when it starts influencing traffic.
 
 ### 5. Complete the test
 
