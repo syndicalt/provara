@@ -285,7 +285,8 @@ export default function PlaygroundPage() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6 space-y-6">
+        <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6">
+          <div className="max-w-4xl mx-auto space-y-6">
           {messages.length === 0 && !streamingContent && (
             <div className="flex items-center justify-center h-full">
               <div className="text-center max-w-md">
@@ -350,6 +351,7 @@ export default function PlaygroundPage() {
           )}
 
           <div ref={messagesEndRef} />
+          </div>
         </div>
 
         {/* Input */}

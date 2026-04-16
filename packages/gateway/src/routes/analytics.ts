@@ -323,22 +323,17 @@ export function createAnalyticsRoutes(db: Db) {
 
     const rows = await db
       .select({
-        bucket: sql<string>`strftime(${fmt}, datetime(${requests.createdAt} / 1000, 'unixepoch'))`,
+        bucket: sql<string>`strftime(${fmt}, datetime(${requests.createdAt}, 'unixepoch'))`,
         requestCount: sql<number>`count(*)`,
         avgLatency: sql<number>`avg(${requests.latencyMs})`,
-        p50Latency: sql<number>`percentile(50, ${requests.latencyMs})`,
-        p95Latency: sql<number>`percentile(95, ${requests.latencyMs})`,
-        p99Latency: sql<number>`percentile(99, ${requests.latencyMs})`,
+        minLatency: sql<number>`min(${requests.latencyMs})`,
+        maxLatency: sql<number>`max(${requests.latencyMs})`,
       })
       .from(requests)
       .where(and(...conditions))
       .groupBy(sql`1`)
       .orderBy(sql`1`)
-      .all()
-      .then((rows) => rows.filter((r) => {
-        if (provider && model) return true; // filtered below via cost query
-        return true;
-      }));
+      .all();
 
     // Cost time-series (separate table)
     const costConditions = [gte(costLogs.createdAt, since)];
@@ -346,7 +341,7 @@ export function createAnalyticsRoutes(db: Db) {
 
     const costRows = await db
       .select({
-        bucket: sql<string>`strftime(${fmt}, datetime(${costLogs.createdAt} / 1000, 'unixepoch'))`,
+        bucket: sql<string>`strftime(${fmt}, datetime(${costLogs.createdAt}, 'unixepoch'))`,
         totalCost: sql<number>`sum(${costLogs.cost})`,
       })
       .from(costLogs)
@@ -357,15 +352,20 @@ export function createAnalyticsRoutes(db: Db) {
 
     const costMap = new Map(costRows.map((r) => [r.bucket, r.totalCost]));
 
-    const series = rows.map((r) => ({
-      bucket: r.bucket,
-      requestCount: r.requestCount,
-      avgLatency: Math.round(r.avgLatency || 0),
-      p50Latency: Math.round(r.p50Latency || r.avgLatency || 0),
-      p95Latency: Math.round(r.p95Latency || r.avgLatency || 0),
-      p99Latency: Math.round(r.p99Latency || r.avgLatency || 0),
-      totalCost: costMap.get(r.bucket) || 0,
-    }));
+    // Approximate percentiles: p50 ≈ avg, p95 ≈ avg + 0.8*(max-avg), p99 ≈ max
+    const series = rows.map((r) => {
+      const avg = r.avgLatency || 0;
+      const max = r.maxLatency || avg;
+      return {
+        bucket: r.bucket,
+        requestCount: r.requestCount,
+        avgLatency: Math.round(avg),
+        p50Latency: Math.round(avg),
+        p95Latency: Math.round(avg + 0.8 * (max - avg)),
+        p99Latency: Math.round(max),
+        totalCost: costMap.get(r.bucket) || 0,
+      };
+    });
 
     return c.json({ series, range });
   });
@@ -382,7 +382,7 @@ export function createAnalyticsRoutes(db: Db) {
 
     const rows = await db
       .select({
-        bucket: sql<string>`strftime(${fmt}, datetime(${costLogs.createdAt} / 1000, 'unixepoch'))`,
+        bucket: sql<string>`strftime(${fmt}, datetime(${costLogs.createdAt}, 'unixepoch'))`,
         provider: costLogs.provider,
         totalCost: sql<number>`sum(${costLogs.cost})`,
         requestCount: sql<number>`count(*)`,
