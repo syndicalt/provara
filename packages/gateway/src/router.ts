@@ -41,7 +41,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/*", cors({
     origin: (origin) => origin || "*",
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key"],
+    allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Lang", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Package-Version", "X-Stainless-Retry-Count"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
