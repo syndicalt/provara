@@ -16,9 +16,14 @@ export function createOpenAIProvider(apiKey?: string): Provider {
         const response = await client.models.list();
         const chatModels: string[] = [];
         for await (const model of response) {
-          // Only include chat-capable models, skip embeddings/tts/whisper/dall-e
-          if (model.id.startsWith("gpt-") || model.id.startsWith("o1") || model.id.startsWith("o3") || model.id.startsWith("o4")) {
-            chatModels.push(model.id);
+          // Only include chat completion-capable models
+          const id = model.id;
+          const isChat = id.startsWith("gpt-") || id.startsWith("o1") || id.startsWith("o3") || id.startsWith("o4");
+          const isNonChat = /-(tts|realtime|audio|transcribe|diarize|image|search)/.test(id)
+            || id.includes("instruct")
+            || id.startsWith("gpt-image");
+          if (isChat && !isNonChat) {
+            chatModels.push(id);
           }
         }
         if (chatModels.length > 0) {
