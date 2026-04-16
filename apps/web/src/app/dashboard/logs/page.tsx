@@ -209,7 +209,7 @@ export default function LogsPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                        className={`px-1.5 py-0.5 rounded text-xs font-medium border ${
                           PROVIDER_COLORS[r.provider] || "bg-zinc-800 text-zinc-300 border-zinc-700"
                         }`}
                       >
@@ -221,12 +221,12 @@ export default function LogsPage() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5">
                       {r.taskType && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
                           {r.taskType}
                         </span>
                       )}
                       {r.complexity && (
-                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/50">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/50">
                           {r.complexity}
                         </span>
                       )}

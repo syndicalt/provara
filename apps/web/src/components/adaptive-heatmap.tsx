@@ -79,7 +79,7 @@ function Strip({
         className="absolute inset-0 rounded-sm pointer-events-none"
         style={{ backgroundColor: fillColor, opacity: confidenceOpacity }}
       />
-      <div className="flex items-center justify-between px-2 py-1 text-[10px] text-zinc-50 font-mono relative z-10">
+      <div className="flex items-center justify-between px-2 py-1 text-xs text-zinc-50 font-mono relative z-10">
         <span className="truncate pr-1">{score.model}</span>
         <span className="opacity-90 shrink-0">{score.qualityScore.toFixed(2)}</span>
       </div>
@@ -101,7 +101,7 @@ function Strip({
         </div>
       )}
 
-      <div className={`invisible group-hover:visible absolute ${tooltipPositionClass} left-0 z-20 bg-zinc-950 border border-zinc-700 rounded p-2 text-[10px] whitespace-nowrap shadow-xl pointer-events-none`}>
+      <div className={`invisible group-hover:visible absolute ${tooltipPositionClass} left-0 z-20 bg-zinc-950 border border-zinc-700 rounded p-2 text-xs whitespace-nowrap shadow-xl pointer-events-none`}>
         <div className="text-zinc-200 font-medium mb-1 font-mono">{score.provider}/{score.model}</div>
         <div className="text-zinc-400 space-y-0.5">
           <div>
@@ -160,7 +160,7 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
                   className="border-b border-l border-zinc-800 p-1 min-h-[64px]"
                 >
                   {scores.length === 0 ? (
-                    <div className="h-full flex items-center justify-center text-[10px] text-zinc-600">
+                    <div className="h-full flex items-center justify-center text-xs text-zinc-600">
                       No data
                     </div>
                   ) : (
@@ -187,7 +187,7 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
           </React.Fragment>
         ))}
       </div>
-      <div className="border-t border-zinc-800 bg-zinc-950/40 px-4 py-2 flex items-center justify-between text-[10px] text-zinc-500">
+      <div className="border-t border-zinc-800 bg-zinc-950/40 px-4 py-2 flex items-center justify-between text-xs text-zinc-500">
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-3 h-3 rounded-sm" style={{ background: scoreColor(1.5) }} />

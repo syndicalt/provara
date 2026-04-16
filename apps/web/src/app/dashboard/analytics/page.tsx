@@ -206,8 +206,8 @@ export default function AnalyticsPage() {
               <ResponsiveContainer width="100%" height={240}>
                 <AreaChart data={timeseries.map((t) => ({ ...t, bucket: formatBucket(t.bucket) }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#71717a" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "#71717a" }} />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: "#71717a" }} />
+                  <YAxis tick={{ fontSize: 11, fill: "#71717a" }} />
                   <Tooltip content={<ChartTooltip />} />
                   <Area type="monotone" dataKey="requestCount" name="Requests" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.15} />
                 </AreaChart>
@@ -219,8 +219,8 @@ export default function AnalyticsPage() {
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={costPivot.map((c) => ({ ...c, bucket: formatBucket(String(c.bucket)) }))}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#71717a" }} />
-                  <YAxis tick={{ fontSize: 10, fill: "#71717a" }} tickFormatter={(v) => `$${v}`} />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: "#71717a" }} />
+                  <YAxis tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => `$${v}`} />
                   <Tooltip content={<ChartTooltip />} cursor={false} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   {providers.map((p) => (
@@ -237,8 +237,8 @@ export default function AnalyticsPage() {
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={timeseries.map((t) => ({ ...t, bucket: formatBucket(t.bucket) }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#71717a" }} />
-                <YAxis tick={{ fontSize: 10, fill: "#71717a" }} tickFormatter={(v) => `${v}ms`} />
+                <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: "#71717a" }} />
+                <YAxis tick={{ fontSize: 11, fill: "#71717a" }} tickFormatter={(v) => `${v}ms`} />
                 <Tooltip content={<ChartTooltip />} />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 <Line type="monotone" dataKey="p50Latency" name="p50" stroke="#34d399" strokeWidth={2} dot={false} />
@@ -272,7 +272,7 @@ export default function AnalyticsPage() {
                       <tr key={`${m.provider}/${m.model}`} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
                         <td className="px-6 py-3">
                           <div className="flex items-center gap-2">
-                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${BADGE_COLORS[m.provider] || "bg-zinc-800 text-zinc-300 border-zinc-700"}`}>
+                            <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${BADGE_COLORS[m.provider] || "bg-zinc-800 text-zinc-300 border-zinc-700"}`}>
                               {m.provider}
                             </span>
                             <span className="font-mono text-xs text-zinc-300">{m.model}</span>

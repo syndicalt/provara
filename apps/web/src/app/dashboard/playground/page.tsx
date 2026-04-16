@@ -305,7 +305,7 @@ export default function PlaygroundPage() {
               <>{showDivider && (
                 <div className="flex items-center gap-3 py-2">
                   <div className="flex-1 h-px bg-zinc-800" />
-                  <span className="text-[10px] text-zinc-600 uppercase tracking-widest">New topic</span>
+                  <span className="text-xs text-zinc-600 uppercase tracking-widest">New topic</span>
                   <div className="flex-1 h-px bg-zinc-800" />
                 </div>
               )}
@@ -320,7 +320,7 @@ export default function PlaygroundPage() {
                   }`}
                 >
                   {msg.model && !isGuardrail && (
-                    <p className="text-[10px] text-zinc-500 mb-1.5 font-mono">{msg.model}</p>
+                    <p className="text-xs text-zinc-500 mb-1.5 font-mono">{msg.model}</p>
                   )}
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 </div>
