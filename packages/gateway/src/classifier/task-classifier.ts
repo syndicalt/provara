@@ -6,6 +6,13 @@ const CONFIDENCE_THRESHOLD = 0.6;
 const CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
 const INLINE_CODE_REGEX = /`[^`]+`/g;
 
+/**
+ * Max characters of the last user message to scan for keywords.
+ * Prevents embedded content (e.g. a quality-checker prompt that includes
+ * a full technical answer) from flooding keyword counts.
+ */
+const USER_MSG_SCAN_LIMIT = 500;
+
 // Split keywords into strong (high-signal) and weak (supporting context)
 const CODING_STRONG = [
   "implement", "refactor", "debug", "compile", "deploy", "lint",
@@ -73,7 +80,8 @@ const QA_STRONG = [
   "where is", "where are", "how does", "how do", "how is",
   "why does", "why do", "why is", "what does", "what causes",
   "explain", "describe", "define", "meaning of",
-  "difference between", "compare", "contrast",
+  "difference between", "differences between",
+  "compare", "contrast", "comparison",
   "tell me about", "is it true", "can you tell me",
   "pros and cons", "advantages and disadvantages",
   "tradeoffs", "trade-offs", "tradeoff", "trade-off",
@@ -85,46 +93,83 @@ const QA_WEAK = [
   "example", "examples", "instance", "illustration",
 ];
 
+/**
+ * System prompt role patterns that signal a task type.
+ * These detect common agent/pipeline roles (e.g. "You are a research assistant")
+ * that the original system-prompt hints missed.
+ */
+const SYSTEM_ROLE_SIGNALS: [TaskType, RegExp][] = [
+  ["qa", /\b(?:research assistant|question answerer|knowledge base|fact.check|quality checker|evaluator)\b/],
+  ["qa", /\b(?:answer the question|evaluate if the answer|addresses the question)\b/],
+  ["coding", /\b(?:software engineer|developer|programmer|code assistant|coding assistant)\b/],
+  ["creative", /\b(?:creative writer|storyteller|author|poet|novelist|screenwriter)\b/],
+  ["summarization", /\b(?:summarizer|summariser|summarization|condensing)\b/],
+];
+
 interface Signal {
   taskType: TaskType;
   weight: number;
+  tier: "strong" | "weak" | "structural";
 }
 
+/**
+ * Match keywords against text using word-boundary-aware matching.
+ * Prevents partial hits like "how do" matching "how are you doing".
+ */
 function matchKeywords(text: string, keywords: string[]): number {
   let count = 0;
   for (const kw of keywords) {
-    if (text.includes(kw)) count++;
+    // Use word-boundary regex for short keywords (≤8 chars) to avoid
+    // false positives like "how do" matching inside "how are you doing"
+    if (kw.length <= 8) {
+      const pattern = new RegExp(`\\b${escapeRegex(kw)}\\b`);
+      if (pattern.test(text)) count++;
+    } else {
+      if (text.includes(kw)) count++;
+    }
   }
   return count;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function collectSignals(messages: ChatMessage[]): Signal[] {
   const signals: Signal[] = [];
   const allText = messages.map((m) => m.content).join("\n").toLowerCase();
-  const lastUserMessage = [...messages].reverse().find((m) => m.role === "user")?.content.toLowerCase() || "";
+  const rawLastUserMessage = [...messages].reverse().find((m) => m.role === "user")?.content.toLowerCase() || "";
+  const lastUserMessage = rawLastUserMessage.slice(0, USER_MSG_SCAN_LIMIT);
   const systemMessage = messages.find((m) => m.role === "system")?.content.toLowerCase() || "";
 
   // Code blocks are a strong signal
   const codeBlocks = allText.match(CODE_BLOCK_REGEX);
   if (codeBlocks && codeBlocks.length > 0) {
-    signals.push({ taskType: "coding", weight: 0.4 + Math.min(codeBlocks.length * 0.1, 0.3) });
+    signals.push({ taskType: "coding", weight: 0.4 + Math.min(codeBlocks.length * 0.1, 0.3), tier: "strong" });
   }
 
   // Inline code references
   const inlineCode = allText.match(INLINE_CODE_REGEX);
   if (inlineCode && inlineCode.length > 2) {
-    signals.push({ taskType: "coding", weight: 0.25 });
+    signals.push({ taskType: "coding", weight: 0.25, tier: "weak" });
   }
 
-  // System prompt hints
+  // System prompt hints (original keyword checks)
   if (systemMessage.includes("code") || systemMessage.includes("developer") || systemMessage.includes("programmer") || systemMessage.includes("engineer")) {
-    signals.push({ taskType: "coding", weight: 0.3 });
+    signals.push({ taskType: "coding", weight: 0.3, tier: "strong" });
   }
   if (systemMessage.includes("creative") || systemMessage.includes("writer") || systemMessage.includes("storyteller") || systemMessage.includes("author") || systemMessage.includes("poet")) {
-    signals.push({ taskType: "creative", weight: 0.3 });
+    signals.push({ taskType: "creative", weight: 0.3, tier: "strong" });
   }
   if (systemMessage.includes("summarize") || systemMessage.includes("summarise") || systemMessage.includes("condense")) {
-    signals.push({ taskType: "summarization", weight: 0.3 });
+    signals.push({ taskType: "summarization", weight: 0.3, tier: "strong" });
+  }
+
+  // System prompt role patterns (regex-based, catches pipeline roles)
+  for (const [taskType, pattern] of SYSTEM_ROLE_SIGNALS) {
+    if (pattern.test(systemMessage)) {
+      signals.push({ taskType, weight: 0.35, tier: "strong" });
+    }
   }
 
   // Strong keyword matching — high weight per match
@@ -139,11 +184,11 @@ function collectSignals(messages: ChatMessage[]): Signal[] {
     const matchCount = matchKeywords(lastUserMessage, keywords);
     if (matchCount > 0) {
       const weight = Math.min(0.3 + matchCount * 0.15, 0.7);
-      signals.push({ taskType, weight });
+      signals.push({ taskType, weight, tier: "strong" });
     }
   }
 
-  // Weak keyword matching — lower weight, needs more matches to be meaningful
+  // Weak keyword matching — lower weight, capped lower than strong
   const weakSets: [TaskType, string[]][] = [
     ["coding", CODING_WEAK],
     ["creative", CREATIVE_WEAK],
@@ -154,15 +199,15 @@ function collectSignals(messages: ChatMessage[]): Signal[] {
   for (const [taskType, keywords] of weakSets) {
     const matchCount = matchKeywords(lastUserMessage, keywords);
     if (matchCount > 0) {
-      const weight = Math.min(0.1 + matchCount * 0.06, 0.4);
-      signals.push({ taskType, weight });
+      const weight = Math.min(0.1 + matchCount * 0.04, 0.25);
+      signals.push({ taskType, weight, tier: "weak" });
     }
   }
 
   // Structural signals
   // Questions ending with "?" lean toward QA
   if (lastUserMessage.trim().endsWith("?")) {
-    signals.push({ taskType: "qa", weight: 0.15 });
+    signals.push({ taskType: "qa", weight: 0.2, tier: "structural" });
   }
 
   // "Write" at the start — check if it's about code or creative
@@ -176,9 +221,9 @@ function collectSignals(messages: ChatMessage[]): Signal[] {
       "sorting", "parser", "server", "client", "api",
     ]);
     if (codeContext > 0) {
-      signals.push({ taskType: "coding", weight: 0.3 });
+      signals.push({ taskType: "coding", weight: 0.3, tier: "strong" });
     } else {
-      signals.push({ taskType: "creative", weight: 0.2 });
+      signals.push({ taskType: "creative", weight: 0.2, tier: "structural" });
     }
   }
 
@@ -203,6 +248,22 @@ function resolveSignals(signals: Signal[]): ClassificationResult<TaskType> {
     scores[signal.taskType] += signal.weight;
   }
 
+  // Strong-beats-weak: if any category has a strong signal, dampen categories
+  // that only have weak signals. This prevents vocabulary flooding (e.g. 12
+  // coding-weak keywords) from overriding a clear strong QA signal.
+  const hasStrong = new Set<TaskType>();
+  for (const signal of signals) {
+    if (signal.tier === "strong") hasStrong.add(signal.taskType);
+  }
+
+  if (hasStrong.size > 0) {
+    for (const taskType of Object.keys(scores) as TaskType[]) {
+      if (scores[taskType] > 0 && !hasStrong.has(taskType)) {
+        scores[taskType] *= 0.5;
+      }
+    }
+  }
+
   const sorted = (Object.entries(scores) as [TaskType, number][]).sort((a, b) => b[1] - a[1]);
   const [topType, topScore] = sorted[0];
   const [, secondScore] = sorted[1];
@@ -211,9 +272,12 @@ function resolveSignals(signals: Signal[]): ClassificationResult<TaskType> {
   const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
   const confidence = totalScore > 0 ? topScore / totalScore : 0;
 
-  // If top two are too close, it's ambiguous
+  // If top two are too close, it's ambiguous.
+  // Also mark as ambiguous when total signal weight is very low — a single
+  // weak signal shouldn't produce high-confidence classification.
   const margin = topScore - secondScore;
-  const ambiguous = confidence < CONFIDENCE_THRESHOLD || margin < 0.15;
+  const lowSignal = totalScore < 0.3;
+  const ambiguous = confidence < CONFIDENCE_THRESHOLD || margin < 0.15 || lowSignal;
 
   return { value: topType, confidence, ambiguous };
 }
