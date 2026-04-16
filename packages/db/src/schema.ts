@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -247,6 +247,20 @@ export const promptVersions = sqliteTable("prompt_versions", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+export const modelScores = sqliteTable("model_scores", {
+  taskType: text("task_type").notNull(),
+  complexity: text("complexity").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  qualityScore: real("quality_score").notNull(),
+  sampleCount: integer("sample_count").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  primaryKey({ columns: [table.taskType, table.complexity, table.provider, table.model] }),
+]);
 
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
