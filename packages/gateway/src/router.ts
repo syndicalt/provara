@@ -112,6 +112,12 @@ export async function createRouter(ctx: RouterContext) {
     return c.json({ reloaded: true, providers });
   });
 
+  // Refresh models by querying each provider's API
+  app.post("/v1/providers/refresh-models", async (c) => {
+    const results = await ctx.registry.refreshModels();
+    return c.json({ results });
+  });
+
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {
     const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean }>();

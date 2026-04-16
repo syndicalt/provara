@@ -2,12 +2,38 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
 import { nanoid } from "nanoid";
 
-export function createGoogleProvider(apiKey?: string): Provider {
-  const genAI = new GoogleGenerativeAI(apiKey || process.env.GOOGLE_API_KEY || "");
+const GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
-  return {
+export function createGoogleProvider(apiKey?: string): Provider {
+  const key = apiKey || process.env.GOOGLE_API_KEY || "";
+  const genAI = new GoogleGenerativeAI(key);
+
+  const provider: Provider = {
     name: "google",
     models: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+
+    async listModels(): Promise<string[]> {
+      try {
+        // Google's JS SDK doesn't expose listModels, so use the REST API directly
+        const res = await fetch(`${GOOGLE_API_BASE}/models?key=${key}&pageSize=100`);
+        if (!res.ok) return provider.models;
+        const data = await res.json() as { models?: { name: string; supportedGenerationMethods?: string[] }[] };
+        const chatModels: string[] = [];
+        for (const m of data.models || []) {
+          // Only include models that support generateContent (chat)
+          if (m.supportedGenerationMethods?.includes("generateContent")) {
+            // Model name is "models/gemini-2.5-pro" — strip the prefix
+            chatModels.push(m.name.replace("models/", ""));
+          }
+        }
+        if (chatModels.length > 0) {
+          provider.models = chatModels;
+        }
+        return provider.models;
+      } catch {
+        return provider.models;
+      }
+    },
 
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
       const start = performance.now();
@@ -77,4 +103,6 @@ export function createGoogleProvider(apiKey?: string): Provider {
       };
     },
   };
+
+  return provider;
 }

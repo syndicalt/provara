@@ -15,9 +15,25 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
     baseURL: config.baseURL,
   });
 
-  return {
+  const provider: Provider = {
     name: config.name,
     models: [...config.models],
+
+    async listModels(): Promise<string[]> {
+      try {
+        const response = await client.models.list();
+        const discovered: string[] = [];
+        for await (const model of response) {
+          discovered.push(model.id);
+        }
+        if (discovered.length > 0) {
+          provider.models = discovered;
+        }
+        return provider.models;
+      } catch {
+        return provider.models;
+      }
+    },
 
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
       const start = performance.now();
@@ -74,6 +90,8 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
       }
     },
   };
+
+  return provider;
 }
 
 // Validate that a provider is OpenAI-compatible by testing the /models endpoint
