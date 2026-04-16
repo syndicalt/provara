@@ -176,7 +176,7 @@ export async function createRouter(ctx: RouterContext) {
       messages: request.messages,
       provider: providerName,
       model: request.model !== "" ? request.model : undefined,
-      routingHint: routing_hint?.task_type,
+      routingHint: routing_hint,
       routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
       routingWeights: tokenInfo?.routingWeights || undefined,
     });
