@@ -242,7 +242,7 @@ export default function RequestDetailPage() {
           <div>
             <p className="text-xs text-zinc-500 mb-1">Provider / Model</p>
             <div className="flex items-center gap-2">
-              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${PROVIDER_COLORS[request.provider] || "bg-zinc-800 text-zinc-300 border-zinc-700"}`}>
+              <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${PROVIDER_COLORS[request.provider] || "bg-zinc-800 text-zinc-300 border-zinc-700"}`}>
                 {request.provider}
               </span>
               <span className="text-sm font-mono text-zinc-300">{request.model}</span>
@@ -329,7 +329,7 @@ export default function RequestDetailPage() {
                 : "bg-zinc-900 border-zinc-800"
             }`}
           >
-            <p className={`text-[10px] font-semibold uppercase tracking-widest mb-2 ${
+            <p className={`text-xs font-semibold uppercase tracking-widest mb-2 ${
               msg.role === "user" ? "text-blue-400" : msg.role === "assistant" ? "text-emerald-400" : "text-zinc-500"
             }`}>
               {msg.role}
@@ -346,7 +346,7 @@ export default function RequestDetailPage() {
         <div className="space-y-3">
           <h2 className="text-sm font-semibold text-zinc-400">Response</h2>
           <div className="bg-zinc-900 border border-emerald-900/30 rounded-lg p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-widest mb-2 text-emerald-400">
+            <p className="text-xs font-semibold uppercase tracking-widest mb-2 text-emerald-400">
               assistant
             </p>
             <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
@@ -473,7 +473,7 @@ export default function RequestDetailPage() {
                     Diff
                   </button>
                 </div>
-                <div className="flex gap-4 text-[10px] text-zinc-500">
+                <div className="flex gap-4 text-xs text-zinc-500">
                   <span>Original: {request.latencyMs}ms, {request.inputTokens}/{request.outputTokens} tok, {formatCost(request.cost)}</span>
                   <span>Replay: {replayResult.latencyMs}ms, {replayResult.inputTokens}/{replayResult.outputTokens} tok</span>
                 </div>
@@ -511,7 +511,7 @@ export default function RequestDetailPage() {
                       replay={replayResult.content}
                     />
                   </div>
-                  <div className="flex gap-4 mt-2 text-[10px] text-zinc-600">
+                  <div className="flex gap-4 mt-2 text-xs text-zinc-600">
                     <span className="flex items-center gap-1">
                       <span className="inline-block w-3 h-2 rounded-sm bg-red-900/40 border border-red-800/30" />
                       Removed from original

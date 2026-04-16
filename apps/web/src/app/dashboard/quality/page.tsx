@@ -232,8 +232,8 @@ export default function QualityPage() {
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={trend.map((t) => ({ ...t, bucket: formatBucket(t.bucket) }))}>
               <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#71717a" }} />
-              <YAxis domain={[0, 5]} tick={{ fontSize: 10, fill: "#71717a" }} />
+              <XAxis dataKey="bucket" tick={{ fontSize: 11, fill: "#71717a" }} />
+              <YAxis domain={[0, 5]} tick={{ fontSize: 11, fill: "#71717a" }} />
               <Tooltip content={<ChartTooltip />} />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line type="monotone" dataKey="avgScore" name="Avg Score" stroke="#34d399" strokeWidth={2} dot={false} />
@@ -277,7 +277,7 @@ export default function QualityPage() {
                 onChange={(e) => setJudgeConfigState({ ...judgeConfig, sampleRate: parseInt(e.target.value) / 100 })}
                 className="w-full accent-blue-500"
               />
-              <div className="flex justify-between text-[10px] text-zinc-600 mt-1">
+              <div className="flex justify-between text-xs text-zinc-600 mt-1">
                 <span>0%</span>
                 <span>50%</span>
                 <span>100%</span>

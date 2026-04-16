@@ -176,7 +176,7 @@ export function DashboardNav() {
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
         {navGroups.map((group) => (
           <div key={group.label}>
-            <p className="px-2 mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-600">
+            <p className="px-2 mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-600">
               {group.label}
             </p>
             <div className="space-y-0.5">

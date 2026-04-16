@@ -284,7 +284,7 @@ export default function AlertsPage() {
                   </div>
                   <div className="flex items-center gap-4">
                     {rule.webhookUrl && (
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">webhook</span>
+                      <span className="text-xs px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">webhook</span>
                     )}
                     <span className="text-xs text-zinc-500">
                       Last fired: {formatTimestamp(rule.lastTriggeredAt)}

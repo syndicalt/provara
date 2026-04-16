@@ -204,7 +204,7 @@ function TemplateDetail({ template, onClose, onRefresh }: { template: PromptTemp
             {template.description && <p className="text-xs text-zinc-500 mt-0.5">{template.description}</p>}
           </div>
           <div className="flex items-center gap-3">
-            <code className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-1 rounded font-mono">
+            <code className="text-xs text-zinc-600 bg-zinc-800 px-2 py-1 rounded font-mono">
               /v1/admin/prompts/resolve/{template.name}
             </code>
             <button onClick={handleDelete} className="px-3 py-1 bg-red-900/50 hover:bg-red-800/50 text-red-300 rounded text-xs">Delete</button>
@@ -229,7 +229,7 @@ function TemplateDetail({ template, onClose, onRefresh }: { template: PromptTemp
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold">v{v.version}</span>
                       {isPublished && (
-                        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-300 border border-emerald-800/50">Published</span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-emerald-900/50 text-emerald-300 border border-emerald-800/50">Published</span>
                       )}
                       {v.note && <span className="text-xs text-zinc-500">— {v.note}</span>}
                     </div>
@@ -250,7 +250,7 @@ function TemplateDetail({ template, onClose, onRefresh }: { template: PromptTemp
                   <div className="space-y-2">
                     {messages.map((msg, i) => (
                       <div key={i} className="bg-zinc-800/50 rounded p-3">
-                        <p className={`text-[10px] font-semibold uppercase tracking-widest mb-1 ${
+                        <p className={`text-xs font-semibold uppercase tracking-widest mb-1 ${
                           msg.role === "user" ? "text-blue-400" : msg.role === "assistant" ? "text-emerald-400" : "text-zinc-500"
                         }`}>{msg.role}</p>
                         <pre className="text-xs text-zinc-300 whitespace-pre-wrap font-sans">{msg.content}</pre>
@@ -260,9 +260,9 @@ function TemplateDetail({ template, onClose, onRefresh }: { template: PromptTemp
 
                   {variables.length > 0 && (
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-zinc-600">Variables:</span>
+                      <span className="text-xs text-zinc-600">Variables:</span>
                       {variables.map((v) => (
-                        <span key={v} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-300 border border-blue-800/50 font-mono">{`{{${v}}}`}</span>
+                        <span key={v} className="text-xs px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-300 border border-blue-800/50 font-mono">{`{{${v}}}`}</span>
                       ))}
                     </div>
                   )}
@@ -331,12 +331,12 @@ export default function PromptsPage() {
             >
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-sm">{t.name}</h3>
-                <span className="text-[10px] text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded">
+                <span className="text-xs text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded">
                   v{t.latestVersion} ({t.versionCount} ver{t.versionCount !== 1 ? "s" : ""})
                 </span>
               </div>
               {t.description && <p className="text-xs text-zinc-500">{t.description}</p>}
-              <div className="flex items-center justify-between text-[10px] text-zinc-600">
+              <div className="flex items-center justify-between text-xs text-zinc-600">
                 <span>Created {formatDate(t.createdAt)}</span>
                 <span>Updated {formatDate(t.updatedAt)}</span>
               </div>

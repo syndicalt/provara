@@ -141,7 +141,7 @@ export default function Dashboard() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">Dashboard</h1>
-        <span className="flex items-center gap-1.5 text-[10px] text-zinc-600">
+        <span className="flex items-center gap-1.5 text-xs text-zinc-600">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
           Live
         </span>
