@@ -37,10 +37,10 @@ export function cellKey(taskType: string, complexity: string, provider: string, 
   return `${taskType}:${complexity}:${provider}:${model}`;
 }
 
-function scoreColor(score: number, alpha = 1): string {
+function scoreColor(score: number): string {
   const clamped = Math.max(1, Math.min(5, score));
   const hue = ((clamped - 1) / 4) * 120;
-  return `hsla(${hue}, 55%, 42%, ${alpha})`;
+  return `hsl(${hue}, 55%, 42%)`;
 }
 
 function Strip({
@@ -59,8 +59,8 @@ function Strip({
   rowIndex: number;
 }) {
   const isBelowThreshold = score.sampleCount < minSamples;
-  const confidenceAlpha = 0.35 + 0.65 * (score.sampleCount / Math.max(maxSamplesInCell, 1));
-  const fillColor = scoreColor(score.qualityScore, confidenceAlpha);
+  const confidenceOpacity = 0.35 + 0.65 * (score.sampleCount / Math.max(maxSamplesInCell, 1));
+  const fillColor = scoreColor(score.qualityScore);
   const animationStyle = pulsing ? { animation: "adaptive-tick 900ms ease-out" } : {};
   const tooltipPositionClass = rowIndex === 0 ? "top-full mt-1" : "bottom-full mb-1";
 
@@ -68,19 +68,23 @@ function Strip({
     <div
       className="relative group rounded-sm"
       style={{
-        backgroundColor: fillColor,
         borderStyle: isBelowThreshold ? "dashed" : "solid",
-        borderColor: "rgba(0,0,0,0.35)",
+        borderColor: "rgba(255,255,255,0.6)",
         borderWidth: "1px",
         ...animationStyle,
       }}
     >
+      <div
+        aria-hidden
+        className="absolute inset-0 rounded-sm pointer-events-none"
+        style={{ backgroundColor: fillColor, opacity: confidenceOpacity }}
+      />
       <div className="flex items-center justify-between px-2 py-1 text-[10px] text-zinc-50 font-mono relative z-10">
         <span className="truncate pr-1">{score.model}</span>
         <span className="opacity-90 shrink-0">{score.qualityScore.toFixed(2)}</span>
       </div>
       {sparkline && sparkline.length >= 2 && (
-        <div className="absolute inset-0 pointer-events-none opacity-55">
+        <div className="absolute inset-0 pointer-events-none opacity-55 z-[5]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={sparkline} margin={{ top: 2, right: 2, bottom: 2, left: 2 }}>
               <YAxis domain={[1, 5]} hide />
