@@ -221,7 +221,7 @@ export default function AnalyticsPage() {
                   <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                   <XAxis dataKey="bucket" tick={{ fontSize: 10, fill: "#71717a" }} />
                   <YAxis tick={{ fontSize: 10, fill: "#71717a" }} tickFormatter={(v) => `$${v}`} />
-                  <Tooltip content={<ChartTooltip />} />
+                  <Tooltip content={<ChartTooltip />} cursor={false} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   {providers.map((p) => (
                     <Bar key={p} dataKey={p} name={p} stackId="cost" fill={getProviderColor(p)} />
