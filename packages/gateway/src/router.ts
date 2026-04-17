@@ -36,6 +36,7 @@ import type { Scheduler } from "./scheduler/index.js";
 import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
 import { createRegressionRoutes } from "./routes/regression.js";
 import { createMigrationRoutes } from "./routes/migrations.js";
+import { createWebhookRoutes } from "./routes/webhooks.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -100,6 +101,11 @@ export async function createRouter(ctx: RouterContext) {
   // accidentally gate it. Admin create/revoke operations use /v1/shares/*.
   const shareHandlers = createShareHandlers(ctx.db);
   app.get("/v1/shared/:token", shareHandlers.getPublic);
+
+  // Stripe webhooks mount BEFORE auth middleware — they come from Stripe,
+  // not an authenticated user, and are authenticated via HMAC signature
+  // against STRIPE_WEBHOOK_SECRET instead of a session/bearer.
+  app.route("/v1/webhooks", createWebhookRoutes(ctx.db));
 
   // Auth middleware — checks Bearer token on /v1/chat/completions
   app.use("/v1/*", createAuthMiddleware(ctx.db));
