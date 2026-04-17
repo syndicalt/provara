@@ -179,7 +179,7 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
       sampleRate?: number;
       enabled?: boolean;
     }>();
-    setJudgeConfig(body);
+    await setJudgeConfig(db, body);
     return c.json(getJudgeConfig());
   });
 

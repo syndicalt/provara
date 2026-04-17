@@ -262,6 +262,14 @@ export const modelScores = sqliteTable("model_scores", {
   primaryKey({ columns: [table.taskType, table.complexity, table.provider, table.model] }),
 ]);
 
+export const appConfig = sqliteTable("app_config", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const costLogs = sqliteTable("cost_logs", {
   id: text("id").primaryKey(),
   requestId: text("request_id").references(() => requests.id),
