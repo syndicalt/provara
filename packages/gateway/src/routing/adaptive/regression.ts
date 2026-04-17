@@ -128,6 +128,12 @@ async function distinctEligibleCells(db: Db): Promise<CellGroup[]> {
  * requests for the (tenant, cell, model) combo, joined with their
  * feedback score. Returns candidates sorted by recency — embedding-based
  * diversity filtering happens in `populateBankForCell`.
+ *
+ * Only judge-scored feedback qualifies (#160). User ratings are systematically
+ * more generous than the judge ("A 5 should be rare" per the judge prompt),
+ * so mixing user baselines with judge replays produced a consistent false-
+ * positive regression signal on every cell. Restricting to judge source
+ * means baseline and replay come from the same grader — apples to apples.
  */
 async function fetchCandidates(db: Db, cell: CellGroup, limit = 200) {
   const baseWhere = and(
@@ -151,6 +157,7 @@ async function fetchCandidates(db: Db, cell: CellGroup, limit = 200) {
     .where(
       and(
         baseWhere,
+        eq(feedback.source, "judge"),
         sql`${feedback.score} >= ${REPLAY_BANK_MIN_SCORE}`,
       ),
     )
@@ -461,22 +468,57 @@ export async function runReplayCycle(
       const replayMean = mean(replayScores);
       const delta = replayMean - originalMean;
       if (delta <= REGRESSION_DELTA_THRESHOLD) {
-        await db
-          .insert(regressionEvents)
-          .values({
-            id: nanoid(),
-            tenantId: cell.tenantId,
-            taskType: cell.taskType,
-            complexity: cell.complexity,
-            provider: cell.provider,
-            model: cell.model,
-            replayCount: replayScores.length,
-            originalMean,
-            replayMean,
-            delta,
-            costUsd: cellCost,
-          })
-          .run();
+        // Dedupe (#160): if an unresolved event already exists for this
+        // (tenant, cell, model), update it in place with the latest
+        // measurements and accumulate cost. Preserve `detectedAt` so the UI
+        // continues to show "this has been regressing since X". Once the
+        // operator dismisses via `resolveRegressionEvent`, new events can
+        // fire again on the next cycle.
+        const existing = await db
+          .select()
+          .from(regressionEvents)
+          .where(
+            and(
+              cell.tenantId ? eq(regressionEvents.tenantId, cell.tenantId) : isNull(regressionEvents.tenantId),
+              eq(regressionEvents.taskType, cell.taskType),
+              eq(regressionEvents.complexity, cell.complexity),
+              eq(regressionEvents.provider, cell.provider),
+              eq(regressionEvents.model, cell.model),
+              isNull(regressionEvents.resolvedAt),
+            ),
+          )
+          .get();
+
+        if (existing) {
+          await db
+            .update(regressionEvents)
+            .set({
+              replayCount: replayScores.length,
+              originalMean,
+              replayMean,
+              delta,
+              costUsd: existing.costUsd + cellCost,
+            })
+            .where(eq(regressionEvents.id, existing.id))
+            .run();
+        } else {
+          await db
+            .insert(regressionEvents)
+            .values({
+              id: nanoid(),
+              tenantId: cell.tenantId,
+              taskType: cell.taskType,
+              complexity: cell.complexity,
+              provider: cell.provider,
+              model: cell.model,
+              replayCount: replayScores.length,
+              originalMean,
+              replayMean,
+              delta,
+              costUsd: cellCost,
+            })
+            .run();
+        }
         stats.regressionsDetected++;
         console.warn(
           `[regression] detected ${cell.provider}/${cell.model} on ${cell.taskType}+${cell.complexity}: Δ=${delta.toFixed(2)}`,
