@@ -155,6 +155,10 @@ export async function createRouter(ctx: RouterContext) {
     const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean; complexity_hint?: "simple" | "medium" | "complex" }>();
     const { provider: providerName, routing_hint, complexity_hint, cache: cacheParam, ...rest } = body;
     const request = rest as CompletionRequest;
+    // Serialize once for all downstream DB writes (cache-hit row, streaming
+    // row, non-streaming row). Messages is otherwise stringified 2–3× per
+    // request on the hot path.
+    const promptJson = JSON.stringify(request.messages);
 
     // Input guardrails — check all message content before routing
     const tenantIdForGuardrails = getTenantId(c.req.raw);
@@ -236,7 +240,7 @@ export async function createRouter(ctx: RouterContext) {
           id: hitId,
           provider: providerForResp,
           model: modelForResp,
-          prompt: JSON.stringify(request.messages),
+          prompt: promptJson,
           response: content,
           inputTokens,
           outputTokens,
@@ -432,7 +436,7 @@ export async function createRouter(ctx: RouterContext) {
                     id: requestId,
                     provider: usedProvider,
                     model: usedModel,
-                    prompt: JSON.stringify(request.messages),
+                    prompt: promptJson,
                     response: fullContent,
                     inputTokens: usage.inputTokens,
                     outputTokens: usage.outputTokens,
@@ -585,7 +589,7 @@ export async function createRouter(ctx: RouterContext) {
         id: requestId,
         provider: usedProvider,
         model: usedModel,
-        prompt: JSON.stringify(request.messages),
+        prompt: promptJson,
         response: response.content,
         inputTokens: response.usage.inputTokens,
         outputTokens: response.usage.outputTokens,
