@@ -15,66 +15,117 @@ const response = await client.chat.completions.create({
   messages: [{ role: "user", content: "Hello!" }],
 });`;
 
-const features = [
+interface FeatureItem {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+}
+
+interface FeatureGroup {
+  heading: string;
+  tagline: string;
+  items: FeatureItem[];
+}
+
+const featureGroups: FeatureGroup[] = [
   {
-    title: "Intelligent Routing",
-    description:
-      "Automatically route requests to the best model based on task type, complexity, and quality scores. No manual rules needed.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-      </svg>
-    ),
+    heading: "Routing that learns",
+    tagline: "Traffic quietly migrates to the models that actually perform on your workload.",
+    items: [
+      {
+        title: "Adaptive routing",
+        description: "Per-cell quality EMA picks the best model for each (task, complexity) pair. No retraining loop.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M7 15l4-4 4 4 5-5" />
+          </svg>
+        ),
+      },
+      {
+        title: "LLM-as-judge scoring",
+        description: "Sample a configurable slice of responses and score them automatically. Pin a judge model to avoid grade inflation.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.56.56 0 011.04 0l2.13 5.1a.56.56 0 00.47.35l5.52.44c.5.04.7.66.32.99l-4.2 3.6a.56.56 0 00-.18.56l1.28 5.38a.56.56 0 01-.84.61L12 17.3a.56.56 0 00-.58 0L6.98 20.54a.56.56 0 01-.84-.61l1.28-5.38a.56.56 0 00-.18-.56L3.04 10.39a.56.56 0 01.32-.99l5.52-.44a.56.56 0 00.47-.35L11.48 3.5z" />
+          </svg>
+        ),
+      },
+      {
+        title: "Cost-aware fallback",
+        description: "Primary provider fails? Automatic fallback chain sorted cheapest-first keeps your requests alive.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.8l.88.66c1.17.88 3.07.88 4.24 0 1.17-.88 1.17-2.3 0-3.18C13.54 12.22 12.77 12 12 12c-.73 0-1.45-.22-2-.66-1.11-.88-1.11-2.3 0-3.18s2.9-.88 4 0l.42.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+      },
+    ],
   },
   {
-    title: "Observability",
-    description:
-      "Real-time analytics with cost breakdown by provider, latency percentiles (p50/p95/p99), request volume charts, and model comparison tables.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
-      </svg>
-    ),
+    heading: "Know what's working",
+    tagline: "Every routing decision, cost, and quality signal is visible and queryable.",
+    items: [
+      {
+        title: "Live observability",
+        description: "Request logs with routing metadata, per-model cost breakdowns, latency percentiles, and adaptive-matrix heatmaps.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.13C3 12.5 3.5 12 4.13 12h2.25c.62 0 1.12.5 1.12 1.13v6.75c0 .62-.5 1.12-1.12 1.12H4.13A1.13 1.13 0 013 19.88v-6.75zM9.75 8.63c0-.63.5-1.13 1.13-1.13h2.24c.63 0 1.13.5 1.13 1.13v11.24c0 .63-.5 1.13-1.13 1.13h-2.24a1.13 1.13 0 01-1.13-1.13V8.63zM16.5 4.13c0-.63.5-1.13 1.13-1.13h2.25C20.5 3 21 3.5 21 4.13v15.74c0 .63-.5 1.13-1.13 1.13h-2.25a1.13 1.13 0 01-1.13-1.13V4.13z" />
+          </svg>
+        ),
+      },
+      {
+        title: "A/B tests scoped per cell",
+        description: "Run controlled comparisons on specific task/complexity combinations without polluting the rest of your traffic.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+          </svg>
+        ),
+      },
+      {
+        title: "Fallback attribution",
+        description: "When a provider fails, you see exactly which ones were tried and why — surfaced in the response and persisted to logs.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.01M5.07 19h13.86a2 2 0 001.74-3L13.73 4a2 2 0 00-3.46 0L3.34 16a2 2 0 001.73 3z" />
+          </svg>
+        ),
+      },
+    ],
   },
   {
-    title: "A/B Testing",
-    description:
-      "Compare models side-by-side with weighted traffic splitting. Measure latency, cost, and quality across real production traffic.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-      </svg>
-    ),
-  },
-  {
-    title: "Cost Optimization",
-    description:
-      "Route simple queries to cheaper models, complex ones to premium models. Adaptive scoring learns from real quality feedback.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-    ),
-  },
-  {
-    title: "Prompt Management",
-    description:
-      "Version, publish, and deploy prompt templates from the dashboard. Use variables for dynamic content. Resolve by name via API.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-      </svg>
-    ),
-  },
-  {
-    title: "Self-Hosted",
-    description:
-      "Your data stays on your infrastructure. Deploy anywhere with Docker. No vendor lock-in, no data leaving your network.",
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
-      </svg>
-    ),
+    heading: "Own your stack",
+    tagline: "Drop-in API, your infra, your data.",
+    items: [
+      {
+        title: "OpenAI-compatible API",
+        description: "Change the base URL in your existing code — any SDK that speaks /v1/chat/completions Just Works.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25M6.75 17.25L1.5 12l5.25-5.25M14.25 4.5L9.75 19.5" />
+          </svg>
+        ),
+      },
+      {
+        title: "Self-host with Docker",
+        description: "One compose file, zero telemetry. All traffic, keys, and scores stay on your infrastructure.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.74 5.1a3.38 3.38 0 012.7-1.35h7.13c1.06 0 2.06.5 2.7 1.35l2.58 3.45a4.5 4.5 0 01.9 2.7" />
+          </svg>
+        ),
+      },
+      {
+        title: "Prompt templates",
+        description: "Version and publish prompts from the dashboard. Resolve by name via API — ship prompt changes without redeploying code.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.63A3.38 3.38 0 0016.13 8.25h-1.5A1.13 1.13 0 0113.5 7.13v-1.5A3.38 3.38 0 0010.13 2.25H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.63c-.63 0-1.13.5-1.13 1.13v17.25c0 .62.5 1.12 1.13 1.12h12.75c.62 0 1.12-.5 1.12-1.12V11.25a9 9 0 00-9-9z" />
+          </svg>
+        ),
+      },
+    ],
   },
 ];
 
@@ -133,30 +184,40 @@ export default function Home() {
           <div className="absolute inset-0 bg-gradient-to-b from-blue-950/20 to-transparent" />
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-20 relative">
             <div className="text-center max-w-3xl mx-auto">
-              <h1 className="text-5xl sm:text-6xl font-bold tracking-tight leading-tight">
-                The Intelligent Gateway
+              <div className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded-full bg-blue-950/40 border border-blue-900/40 text-xs text-blue-300">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                Self-hostable · OpenAI-compatible · Open source
+              </div>
+              <h1 className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.05]">
+                One gateway. Every LLM provider.
                 <br />
-                <span className="text-blue-400">for LLMs</span>
+                <span className="text-blue-400">Smarter with every request.</span>
               </h1>
               <p className="mt-6 text-lg text-zinc-400 leading-relaxed">
-                Route requests across providers, optimize costs with adaptive routing,
-                and compare models with built-in A/B testing.
-                OpenAI-compatible API — works with any existing SDK.
+                Route traffic across OpenAI, Anthropic, Groq, DeepSeek, xAI, and more — then watch the gateway learn which models perform best on your workload and quietly shift routing toward them. No retraining, no manual tuning, no SDK swap.
               </p>
-              <div className="mt-10 flex gap-4 justify-center">
+              <div className="mt-10 flex gap-3 justify-center flex-wrap">
                 <Link
                   href="/login"
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
                 >
-                  Get Started
+                  Start free
                 </Link>
-                <Link
-                  href="/models"
-                  className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg font-medium transition-colors"
+                <a
+                  href="https://github.com/syndicalt/provara"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg font-medium transition-colors flex items-center gap-2"
                 >
-                  Explore Models
-                </Link>
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
+                  </svg>
+                  Star on GitHub
+                </a>
               </div>
+              <Link href="/models" className="inline-block mt-4 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+                or browse all available models →
+              </Link>
             </div>
           </div>
         </section>
@@ -179,27 +240,99 @@ export default function Home() {
         </section>
 
         {/* Features */}
-        <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
-          <div className="text-center mb-16">
+        <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24 space-y-20">
+          <div className="text-center">
             <h2 className="text-3xl font-bold">More than a proxy</h2>
             <p className="mt-4 text-zinc-400 max-w-2xl mx-auto">
-              Provara doesn't just forward requests. It learns which models perform best,
-              tracks every request, and gives you the tools to optimize quality, cost, and latency.
+              Provara isn't just a router. It learns which models perform best on your actual traffic, gives you the evidence to prove it, and stays out of your way.
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {features.map((feature) => (
-              <div
-                key={feature.title}
-                className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-8 hover:border-zinc-700 transition-colors"
-              >
-                <div className="w-10 h-10 rounded-lg bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-4">
-                  {feature.icon}
-                </div>
-                <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
-                <p className="text-sm text-zinc-400 leading-relaxed">{feature.description}</p>
+
+          {featureGroups.map((group) => (
+            <div key={group.heading}>
+              <div className="mb-8">
+                <h3 className="text-xl font-semibold">{group.heading}</h3>
+                <p className="text-sm text-zinc-500 mt-1">{group.tagline}</p>
               </div>
-            ))}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {group.items.map((item) => (
+                  <div
+                    key={item.title}
+                    className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 hover:border-zinc-700 transition-colors"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mb-3">
+                      {item.icon}
+                    </div>
+                    <h4 className="text-base font-semibold mb-1.5">{item.title}</h4>
+                    <p className="text-sm text-zinc-400 leading-relaxed">{item.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </section>
+
+        {/* How it learns */}
+        <section className="border-y border-zinc-800/50 bg-zinc-900/10">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+              <div>
+                <p className="text-xs text-blue-400 uppercase tracking-widest mb-3">How it learns</p>
+                <h2 className="text-3xl font-bold mb-4">Smarter with every request.</h2>
+                <p className="text-zinc-400 leading-relaxed mb-6">
+                  Every request is classified into a <span className="text-zinc-200 font-mono text-sm px-1.5 py-0.5 bg-zinc-800 rounded">(task, complexity)</span> cell. Explicit user ratings and the built-in LLM judge feed a per-cell quality EMA for every model you route to. Over time, models that actually perform on your traffic earn more of it — automatically.
+                </p>
+                <ul className="space-y-3 text-sm text-zinc-300">
+                  <li className="flex gap-3">
+                    <span className="shrink-0 mt-1 w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span><span className="text-zinc-100 font-medium">Weighted learning.</span> User feedback nudges scores harder than automated judge scores — your signal always wins.</span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="shrink-0 mt-1 w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span><span className="text-zinc-100 font-medium">Persistent across restarts.</span> EMA scores live in SQLite, not memory. Weeks of signal survive every deploy.</span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="shrink-0 mt-1 w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span><span className="text-zinc-100 font-medium">Sample-gated.</span> A model needs real evidence before the router picks it on quality. Under-sampled cells fall back to cost-cheapest.</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Visual: stylized adaptive matrix */}
+              <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 font-mono text-xs shadow-2xl shadow-blue-950/30">
+                <div className="flex items-center justify-between mb-3 pb-2 border-b border-zinc-800">
+                  <span className="text-zinc-400">Adaptive Routing</span>
+                  <span className="text-zinc-600">live</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 text-center">
+                  <div></div>
+                  <div className="text-zinc-500 text-[10px]">simple</div>
+                  <div className="text-zinc-500 text-[10px]">medium</div>
+                  <div className="text-zinc-500 text-[10px]">complex</div>
+
+                  <div className="text-zinc-400 text-right pr-1 self-center">coding</div>
+                  <div className="bg-emerald-600/30 text-emerald-300 py-1.5 rounded">nano · 4.7</div>
+                  <div className="bg-emerald-600/40 text-emerald-200 py-1.5 rounded">haiku · 4.8</div>
+                  <div className="bg-emerald-600/50 text-emerald-100 py-1.5 rounded">sonnet · 4.9</div>
+
+                  <div className="text-zinc-400 text-right pr-1 self-center">qa</div>
+                  <div className="bg-emerald-600/40 text-emerald-200 py-1.5 rounded">flash · 4.5</div>
+                  <div className="bg-emerald-600/30 text-emerald-300 py-1.5 rounded">nano · 4.6</div>
+                  <div className="bg-emerald-600/40 text-emerald-200 py-1.5 rounded">haiku · 4.7</div>
+
+                  <div className="text-zinc-400 text-right pr-1 self-center">creative</div>
+                  <div className="bg-emerald-600/30 text-emerald-300 py-1.5 rounded">nano · 4.4</div>
+                  <div className="bg-emerald-600/50 text-emerald-100 py-1.5 rounded">opus · 4.9</div>
+                  <div className="bg-emerald-600/50 text-emerald-100 py-1.5 rounded">opus · 4.9</div>
+
+                  <div className="text-zinc-400 text-right pr-1 self-center">general</div>
+                  <div className="bg-emerald-600/40 text-emerald-200 py-1.5 rounded">nano · 4.7</div>
+                  <div className="bg-emerald-600/30 text-emerald-300 py-1.5 rounded">gpt-4o · 4.5</div>
+                  <div className="bg-emerald-600/40 text-emerald-200 py-1.5 rounded">sonnet · 4.8</div>
+                </div>
+                <p className="text-[10px] text-zinc-600 mt-3 text-center">Color = quality score · updates on every scored request</p>
+              </div>
+            </div>
           </div>
         </section>
 
