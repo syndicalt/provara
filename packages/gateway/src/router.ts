@@ -34,6 +34,7 @@ import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getMode } from "./config.js";
 import type { Scheduler } from "./scheduler/index.js";
 import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
+import { createRegressionRoutes } from "./routes/regression.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -129,6 +130,7 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
+  app.route("/v1/regression", createRegressionRoutes(ctx.db));
 
   // Mount analytics routes
   app.route("/v1/analytics", createAnalyticsRoutes(ctx.db));
