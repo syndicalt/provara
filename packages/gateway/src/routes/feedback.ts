@@ -44,13 +44,40 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
     }
 
     const tokenInfo = getTokenInfo(c.req.raw);
-    const id = nanoid();
+    const resolvedTenant = tenantId || tokenInfo?.tenant || null;
 
+    // Upsert: one user-feedback row per (requestId, tenant). If the caller is
+    // updating their rating, patch the existing row in place so we don't flood
+    // the table with duplicates. Adaptive updates only fire on first insert —
+    // rating changes don't re-push the EMA (avoids double-counting the same
+    // signal from the same user).
+    const existing = await db
+      .select()
+      .from(feedback)
+      .where(
+        and(
+          eq(feedback.requestId, body.requestId),
+          eq(feedback.source, "user"),
+          resolvedTenant ? eq(feedback.tenantId, resolvedTenant) : sql`${feedback.tenantId} IS NULL`,
+        ),
+      )
+      .get();
+
+    if (existing) {
+      await db
+        .update(feedback)
+        .set({ score: body.score, comment: body.comment ?? existing.comment })
+        .where(eq(feedback.id, existing.id))
+        .run();
+      return c.json({ id: existing.id, requestId: body.requestId, score: body.score, updated: true });
+    }
+
+    const id = nanoid();
     await db.insert(feedback)
       .values({
         id,
         requestId: body.requestId,
-        tenantId: tenantId || tokenInfo?.tenant || null,
+        tenantId: resolvedTenant,
         score: body.score,
         comment: body.comment || null,
         source: "user",
@@ -64,11 +91,11 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
         request.provider,
         request.model,
         body.score,
-        "user"
+        "user",
       );
     }
 
-    return c.json({ id, requestId: body.requestId, score: body.score }, 201);
+    return c.json({ id, requestId: body.requestId, score: body.score, updated: false }, 201);
   });
 
   // List recent feedback
