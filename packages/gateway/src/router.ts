@@ -135,7 +135,7 @@ export async function createRouter(ctx: RouterContext) {
   app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
 
   // Mount analytics routes
-  app.route("/v1/analytics", createAnalyticsRoutes(ctx.db));
+  app.route("/v1/analytics", createAnalyticsRoutes(ctx.db, ctx.registry));
 
   // Mount API key management routes
   app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));

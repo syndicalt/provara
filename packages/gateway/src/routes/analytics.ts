@@ -4,6 +4,19 @@ import { requests, costLogs, abTests, feedback } from "@provara/db";
 import { desc, asc, sql, eq, and, gte } from "drizzle-orm";
 import type { SQLWrapper } from "drizzle-orm";
 import { getTenantId } from "../auth/tenant.js";
+import type { ProviderRegistry } from "../providers/index.js";
+
+/**
+ * Count providers that are currently ready to accept a routing decision.
+ * The registry registers a provider unconditionally when its module loads
+ * (Ollama in particular always registers even when the server is
+ * unreachable), so we require `models.length > 0` as a liveness proxy —
+ * reachable providers always resolve at least one model, unreachable
+ * ones come back empty after the startup discovery pass.
+ */
+function countLiveProviders(registry: ProviderRegistry): number {
+  return registry.list().filter((p) => p.models.length > 0).length;
+}
 
 // Whitelist of columns exposed to client-driven sort on /requests. Never map
 // raw user input into a SQL expression — anything not in this table silently
@@ -21,7 +34,7 @@ const REQUESTS_SORT_COLUMNS: Record<string, SQLWrapper> = {
   cost: costLogs.cost,
 };
 
-export function createAnalyticsRoutes(db: Db) {
+export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
   const app = new Hono();
 
   // List recent requests with pagination
@@ -238,17 +251,16 @@ export function createAnalyticsRoutes(db: Db) {
     const totalCost = await db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined).get();
     const avgLatency = await db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
 
-    const providerCount = await db
-      .select({ count: sql<number>`count(distinct ${requests.provider})` })
-      .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
-      .get();
+    // Authoritative source for "active providers" is the registry, not the
+    // requests table — historical distinct-count conflated "ever routed
+    // through" with "ready to route," see #157.
+    const providerCount = registry ? countLiveProviders(registry) : 0;
 
     return c.json({
       totalRequests: totalRequests?.count || 0,
       totalCost: totalCost?.total || 0,
       avgLatency: avgLatency?.avg || 0,
-      providerCount: providerCount?.count || 0,
+      providerCount,
     });
   });
 
@@ -359,12 +371,8 @@ export function createAnalyticsRoutes(db: Db) {
       .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
       .get();
 
-    // Provider count
-    const providerCount = await db
-      .select({ count: sql<number>`count(distinct ${requests.provider})` })
-      .from(requests)
-      .where(tenantFilter)
-      .get();
+    // Active provider count — registry is authoritative (see #157).
+    const providerCount = registry ? countLiveProviders(registry) : 0;
 
     // Total requests
     const totalRequests = await db
@@ -426,7 +434,7 @@ export function createAnalyticsRoutes(db: Db) {
         providers: {
           count: totalRequests?.count || 0,
           active: true,
-          providerCount: providerCount?.count || 0,
+          providerCount,
         },
       },
     });
