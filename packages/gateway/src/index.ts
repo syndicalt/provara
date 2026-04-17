@@ -16,6 +16,7 @@ import { hydrateRoutingConfig } from "./routing/config.js";
 import { createScheduler } from "./scheduler/index.js";
 import { runAutoAbCycle } from "./routing/adaptive/auto-ab.js";
 import { runBankPopulationCycle, runReplayCycle } from "./routing/adaptive/regression.js";
+import { runCostMigrationCycle } from "./routing/adaptive/migrations.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getJudgeConfig } from "./routing/judge.js";
 
@@ -85,9 +86,30 @@ await scheduler.schedule({
     }
   },
 });
-scheduler.start();
-
 const app = await createRouter({ registry, db, dbKeys, scheduler });
+
+const COST_MIGRATION_INTERVAL_MS = parseInt(
+  process.env.PROVARA_COST_MIGRATION_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
+  10,
+);
+await scheduler.schedule({
+  name: "cost-migration",
+  intervalMs: COST_MIGRATION_INTERVAL_MS,
+  initialDelayMs: 90_000,
+  handler: async () => {
+    const stats = await runCostMigrationCycle(db);
+    if (stats.executed.length > 0) {
+      console.log(
+        `[cost-migration] executed ${stats.executed.length} migration(s), projected $${stats.executed.reduce((s, m) => s + m.projectedMonthlySavingsUsd, 0).toFixed(2)}/mo saved`,
+      );
+      // Refresh the boost table so the router picks up the new migration
+      // without a restart — boost applies on the very next routing decision.
+      await app.routingEngine.boostTable.refresh();
+    }
+  },
+});
+
+scheduler.start();
 
 // Discover available models from each provider's API at startup
 registry.refreshModels().then((results) => {

@@ -35,6 +35,7 @@ import { getMode } from "./config.js";
 import type { Scheduler } from "./scheduler/index.js";
 import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
 import { createRegressionRoutes } from "./routes/regression.js";
+import { createMigrationRoutes } from "./routes/migrations.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -131,6 +132,7 @@ export async function createRouter(ctx: RouterContext) {
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
   app.route("/v1/regression", createRegressionRoutes(ctx.db));
+  app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
 
   // Mount analytics routes
   app.route("/v1/analytics", createAnalyticsRoutes(ctx.db));
@@ -783,5 +785,5 @@ export async function createRouter(ctx: RouterContext) {
   // Health check + config
   app.get("/health", (c) => c.json({ status: "ok", mode: getMode() }));
 
-  return app;
+  return Object.assign(app, { routingEngine });
 }

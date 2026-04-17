@@ -8,6 +8,7 @@ import { gatewayFetchRaw } from "../../../lib/gateway-client";
 import { PipelineVisualization } from "../../../components/pipeline-viz";
 import type { AdaptiveCell } from "../../../components/adaptive-heatmap";
 import { useAdaptiveScoreBuffer } from "../../../hooks/use-adaptive-score-buffer";
+import { MigrationsPanel } from "../../../components/migrations-panel";
 
 interface RoutingStat {
   taskType: string | null;
@@ -270,6 +271,12 @@ export default function RoutingPage() {
           Based on historical request count. See <a href="/dashboard/quality" className="text-blue-400 hover:text-blue-300 underline">Quality → Adaptive Routing</a> for quality-based routing decisions.
         </p>
         <RoutingMatrix stats={stats} />
+      </section>
+
+      {/* Cost migrations */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Cost Migrations</h2>
+        <MigrationsPanel />
       </section>
 
       {/* Detailed Stats */}
