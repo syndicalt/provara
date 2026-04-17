@@ -349,6 +349,71 @@ export const appConfig = sqliteTable("app_config", {
 });
 
 /**
+ * Bank of representative historical prompts used for silent-regression
+ * detection (#152). One row per `(tenantId, cell, provider/model, prompt)`;
+ * populated by a daily job that picks high-signal prompts (user-rated or
+ * judge-scored ≥ 4) with embedding-based diversity sampling. The replay
+ * job draws from this table and compares re-run output quality against
+ * `originalScore`. Embedding is stored so diversity ranking survives a
+ * restart and we can reject cross-model vectors on lookup.
+ */
+export const replayBank = sqliteTable("replay_bank", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  taskType: text("task_type").notNull(),
+  complexity: text("complexity").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  /** Original user prompt (serialized messages JSON). */
+  prompt: text("prompt").notNull(),
+  /** Original assistant response captured when the prompt was eligible. */
+  response: text("response").notNull(),
+  /** 1–5 score at capture time — either user-rated or judge-scored. */
+  originalScore: real("original_score").notNull(),
+  originalScoreSource: text("original_score_source", { enum: ["user", "judge"] }).notNull(),
+  /** Source requestId for traceability. */
+  sourceRequestId: text("source_request_id"),
+  embedding: blob("embedding", { mode: "buffer" }),
+  embeddingDim: integer("embedding_dim"),
+  embeddingModel: text("embedding_model"),
+  lastReplayedAt: integer("last_replayed_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Per-cell regression detection events (#152). One row per detection;
+ * history is preserved so the UI can show "this cell regressed 3 times
+ * in the last 30 days." `resolvedAt` is null while the alert is live;
+ * operators flip it when they've actioned the regression (rollback,
+ * migration, or explicit dismissal).
+ */
+export const regressionEvents = sqliteTable("regression_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  taskType: text("task_type").notNull(),
+  complexity: text("complexity").notNull(),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  /** Number of bank prompts replayed in this batch. */
+  replayCount: integer("replay_count").notNull(),
+  /** Mean of the captured originalScore values (baseline). */
+  originalMean: real("original_mean").notNull(),
+  /** Mean of the judge's re-run scores. */
+  replayMean: real("replay_mean").notNull(),
+  /** replayMean − originalMean. Negative = regression. */
+  delta: real("delta").notNull(),
+  /** Total API spend this replay cycle cost (USD). */
+  costUsd: real("cost_usd").notNull().default(0),
+  detectedAt: integer("detected_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  resolvedAt: integer("resolved_at", { mode: "timestamp" }),
+  resolutionNote: text("resolution_note"),
+});
+
+/**
  * Persistent state for the in-process scheduler. One row per named job.
  * Survives restart so re-scheduled jobs can resume their cadence and the
  * UI can surface last-run telemetry. The scheduler itself still lives

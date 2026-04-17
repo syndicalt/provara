@@ -148,6 +148,13 @@
       "when": 1776454112175,
       "tag": "0020_aromatic_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1776455101820,
+      "tag": "0021_tranquil_paladin",
+      "breakpoints": true
     }
   ]
 }

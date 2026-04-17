@@ -7,6 +7,7 @@ import {
 import { formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
 import { AdaptiveHeatmap, type AdaptiveCell } from "../../../components/adaptive-heatmap";
+import { RegressionPanel } from "../../../components/regression-panel";
 import { useAdaptiveScoreBuffer } from "../../../hooks/use-adaptive-score-buffer";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 
@@ -337,6 +338,12 @@ export default function QualityPage() {
           Live quality EMA per routing cell. Each strip is a candidate model — color shows score, opacity shows sample confidence, dashed outlines mark models still below the adaptive-routing threshold.
         </p>
         <AdaptiveHeatmap cells={adaptiveCells} pulsedKeys={pulsedKeys} getSparkline={getSparkline} />
+      </section>
+
+      {/* Silent-regression detection */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Regression Watch</h2>
+        <RegressionPanel />
       </section>
 
       {/* Quality by Model */}

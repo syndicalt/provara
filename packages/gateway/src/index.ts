@@ -15,6 +15,9 @@ import { hydrateJudgeConfig } from "./routing/judge.js";
 import { hydrateRoutingConfig } from "./routing/config.js";
 import { createScheduler } from "./scheduler/index.js";
 import { runAutoAbCycle } from "./routing/adaptive/auto-ab.js";
+import { runBankPopulationCycle, runReplayCycle } from "./routing/adaptive/regression.js";
+import { createEmbeddingProvider } from "./embeddings/index.js";
+import { getJudgeConfig } from "./routing/judge.js";
 
 const port = parseInt(process.env.PORT || "4000", 10);
 
@@ -41,6 +44,44 @@ await scheduler.schedule({
     const { created, resolved } = await runAutoAbCycle(db);
     if (created.length || resolved.length) {
       console.log(`[auto-ab] cycle complete: ${created.length} created, ${resolved.length} resolved`);
+    }
+  },
+});
+
+const BANK_POPULATE_INTERVAL_MS = parseInt(
+  process.env.PROVARA_REPLAY_BANK_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
+  10,
+);
+const REPLAY_CYCLE_INTERVAL_MS = parseInt(
+  process.env.PROVARA_REPLAY_CYCLE_INTERVAL_MS || `${7 * 24 * 60 * 60 * 1000}`,
+  10,
+);
+await scheduler.schedule({
+  name: "replay-bank-populate",
+  intervalMs: BANK_POPULATE_INTERVAL_MS,
+  initialDelayMs: 60_000,
+  handler: async () => {
+    const embeddings = createEmbeddingProvider({ dbKeys });
+    const results = await runBankPopulationCycle(db, embeddings);
+    if (results.length > 0) {
+      console.log(`[regression] bank populate: ${results.length} cell(s) updated`);
+    }
+  },
+});
+await scheduler.schedule({
+  name: "replay-execute",
+  intervalMs: REPLAY_CYCLE_INTERVAL_MS,
+  initialDelayMs: 120_000,
+  handler: async () => {
+    const config = getJudgeConfig();
+    const target = config.provider && config.model
+      ? { provider: config.provider, model: config.model }
+      : null;
+    const stats = await runReplayCycle(db, registry, target);
+    if (stats.replaysExecuted > 0 || stats.regressionsDetected > 0) {
+      console.log(
+        `[regression] replay cycle: evaluated=${stats.cellsEvaluated} replays=${stats.replaysExecuted} regressions=${stats.regressionsDetected} cost=$${stats.totalCostUsd.toFixed(4)}`,
+      );
     }
   },
 });
