@@ -131,7 +131,7 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
-  app.route("/v1/regression", createRegressionRoutes(ctx.db));
+  app.route("/v1/regression", createRegressionRoutes(ctx.db, routingEngine.regressionCellTable));
   app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
 
   // Mount analytics routes

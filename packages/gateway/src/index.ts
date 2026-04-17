@@ -69,6 +69,12 @@ await scheduler.schedule({
     }
   },
 });
+const app = await createRouter({ registry, db, dbKeys, scheduler });
+
+// Replay cycle registered after the router because it needs access to the
+// adaptive EMA writer (#163): replay judge scores feed back into
+// `model_scores`, and if a regression fires we refresh the regression-cell
+// table so the next routing decision boosts exploration on that cell.
 await scheduler.schedule({
   name: "replay-execute",
   intervalMs: REPLAY_CYCLE_INTERVAL_MS,
@@ -78,7 +84,10 @@ await scheduler.schedule({
     const target = config.provider && config.model
       ? { provider: config.provider, model: config.model }
       : null;
-    const stats = await runReplayCycle(db, registry, target);
+    const stats = await runReplayCycle(db, registry, target, app.routingEngine.adaptive);
+    if (stats.regressionsDetected > 0) {
+      await app.routingEngine.regressionCellTable.refresh();
+    }
     if (stats.replaysExecuted > 0 || stats.regressionsDetected > 0) {
       console.log(
         `[regression] replay cycle: evaluated=${stats.cellsEvaluated} replays=${stats.replaysExecuted} regressions=${stats.regressionsDetected} cost=$${stats.totalCostUsd.toFixed(4)}`,
@@ -86,7 +95,6 @@ await scheduler.schedule({
     }
   },
 });
-const app = await createRouter({ registry, db, dbKeys, scheduler });
 
 const COST_MIGRATION_INTERVAL_MS = parseInt(
   process.env.PROVARA_COST_MIGRATION_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,

@@ -27,6 +27,15 @@ export const EXPLORATION_RATE = numFromEnv(process.env.PROVARA_EXPLORATION_RATE,
 export const STALE_EXPLORATION_RATE = numFromEnv(process.env.PROVARA_STALE_EXPLORATION_RATE, 0.5);
 
 /**
+ * Exploration rate applied when a cell has an active regression event
+ * (#163). After a regression fires, the replay cycle feeds the degraded
+ * model's judge scores into the EMA so its rank drops immediately — but
+ * the router still needs samples on *alternative* models to promote a
+ * new winner. This boosted rate accelerates that discovery.
+ */
+export const REGRESSED_EXPLORATION_RATE = numFromEnv(process.env.PROVARA_REGRESSED_EXPLORATION_RATE, 0.5);
+
+/**
  * How long a cell can go without any score update before it's treated as
  * stale. Default 30 days. Units: milliseconds internally; the env var is
  * in days for human readability.
@@ -40,18 +49,24 @@ export const STALE_AFTER_MS =
  * Requires at least 2 eligible candidates — there's no meaningful choice
  * to make otherwise.
  *
- * When `options.stale` is true, the higher `STALE_EXPLORATION_RATE`
- * applies instead of the normal rate. Stale detection itself lives in
- * `adaptive/router.ts`.
+ * Rate precedence: `regressed > stale > normal`. A cell currently firing
+ * an unresolved regression is the strongest signal we need to try
+ * alternatives, so it takes priority if both flags are set. Detection
+ * for both lives in `adaptive/router.ts` (stale) and `regression.ts`
+ * (regressed).
  */
 export function pickExploration(
   allCandidates: RouteTarget[],
   availableProviders: Set<string>,
-  options: { stale?: boolean } = {},
+  options: { stale?: boolean; regressed?: boolean } = {},
 ): RouteTarget | null {
   const eligible = allCandidates.filter((c) => availableProviders.has(c.provider));
   if (eligible.length <= 1) return null;
-  const rate = options.stale ? STALE_EXPLORATION_RATE : EXPLORATION_RATE;
+  const rate = options.regressed
+    ? REGRESSED_EXPLORATION_RATE
+    : options.stale
+    ? STALE_EXPLORATION_RATE
+    : EXPLORATION_RATE;
   if (Math.random() >= rate) return null;
   return eligible[Math.floor(Math.random() * eligible.length)];
 }

@@ -10,9 +10,10 @@ import {
   listRegressionEvents,
   resolveRegressionEvent,
   setRegressionOptIn,
+  type RegressionCellTable,
 } from "../routing/adaptive/regression.js";
 
-export function createRegressionRoutes(db: Db) {
+export function createRegressionRoutes(db: Db, regressionCellTable?: RegressionCellTable) {
   const app = new Hono();
 
   app.get("/status", async (c) => {
@@ -55,6 +56,11 @@ export function createRegressionRoutes(db: Db) {
     // is a private op; surfacing 404 vs 403 isn't interesting here.
     if (!ok) return c.json({ error: { message: "event not found", type: "not_found" } }, 404);
     void tenantId;
+    // Refresh the in-memory regression cell table so the router stops
+    // boosting exploration on this cell on the very next routing decision
+    // (#163). Without this, the cell stays "regressing" in memory until the
+    // next replay cycle refresh.
+    if (regressionCellTable) await regressionCellTable.refresh();
     return c.json({ resolved: true });
   });
 

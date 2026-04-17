@@ -549,3 +549,168 @@ describe("regression event dedupe (#160)", () => {
     expect(all.filter((e) => e.resolvedAt === null)).toHaveLength(1);
   });
 });
+
+describe("closed feedback loop (#163)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+  });
+
+  it("runReplayCycle feeds judge scores into adaptive.updateScore when writer is provided", async () => {
+    await setRegressionOptIn(db, "t", true);
+    // Seed bank with judge-scored baselines (post-#160 requirement)
+    for (let i = 0; i < 3; i++) {
+      await db.insert(replayBank).values({
+        id: `bank-${i}`,
+        tenantId: "t",
+        taskType: "coding",
+        complexity: "complex",
+        provider: "openai",
+        model: "gpt-4o",
+        prompt: JSON.stringify([{ role: "user", content: `p-${i}` }]),
+        response: "original",
+        originalScore: 5,
+        originalScoreSource: "judge",
+        sourceRequestId: `req-${i}`,
+      }).run();
+      await makeRequestRow(db, {
+        id: `req-${i}-t`,
+        tenantId: "t",
+        provider: "openai",
+        model: "gpt-4o",
+        taskType: "coding",
+        complexity: "complex",
+      });
+    }
+
+    const updates: Array<{ taskType: string; complexity: string; provider: string; model: string; score: number; source: string }> = [];
+    const adaptiveStub = {
+      async updateScore(taskType: string, complexity: string, provider: string, model: string, score: number, source: "user" | "judge") {
+        updates.push({ taskType, complexity, provider, model, score, source });
+      },
+    };
+
+    const registry = mockRegistry(new Map([
+      ["openai::gpt-4o", [
+        { content: "weak 1" }, { content: "weak 2" }, { content: "weak 3" },
+      ]],
+      ["openai::judge", [
+        { content: '{"score": 2}' }, { content: '{"score": 2}' }, { content: '{"score": 2}' },
+      ]],
+    ]));
+
+    await runReplayCycle(db, registry, { provider: "openai", model: "judge" }, adaptiveStub);
+
+    expect(updates).toHaveLength(3);
+    for (const u of updates) {
+      expect(u).toMatchObject({
+        taskType: "coding",
+        complexity: "complex",
+        provider: "openai",
+        model: "gpt-4o",
+        score: 2,
+        source: "judge",
+      });
+    }
+  });
+
+  it("does not fail when adaptive writer is omitted (back-compat)", async () => {
+    await setRegressionOptIn(db, "t", true);
+    for (let i = 0; i < 3; i++) {
+      await db.insert(replayBank).values({
+        id: `bank-${i}`,
+        tenantId: "t",
+        taskType: "coding",
+        complexity: "complex",
+        provider: "openai",
+        model: "gpt-4o",
+        prompt: JSON.stringify([{ role: "user", content: `p-${i}` }]),
+        response: "o",
+        originalScore: 5,
+        originalScoreSource: "judge",
+        sourceRequestId: `req-${i}`,
+      }).run();
+      await makeRequestRow(db, {
+        id: `req-${i}-t`,
+        tenantId: "t",
+        provider: "openai",
+        model: "gpt-4o",
+        taskType: "coding",
+        complexity: "complex",
+      });
+    }
+
+    const registry = mockRegistry(new Map([
+      ["openai::gpt-4o", [{ content: "w1" }, { content: "w2" }, { content: "w3" }]],
+      ["openai::judge", [
+        { content: '{"score": 3}' }, { content: '{"score": 3}' }, { content: '{"score": 3}' },
+      ]],
+    ]));
+
+    const stats = await runReplayCycle(db, registry, { provider: "openai", model: "judge" });
+    expect(stats.replaysExecuted).toBe(3);
+  });
+});
+
+describe("RegressionCellTable (#163)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+  });
+
+  it("reports false for cells with no events", async () => {
+    const { createRegressionCellTable } = await import("../src/routing/adaptive/regression.js");
+    const table = createRegressionCellTable(db);
+    await table.refresh();
+    expect(table.isRegressing("coding", "complex")).toBe(false);
+  });
+
+  it("reports true for cells with an unresolved regression event", async () => {
+    await db.insert(regressionEvents).values({
+      id: "e1",
+      tenantId: "t",
+      taskType: "coding",
+      complexity: "complex",
+      provider: "openai",
+      model: "gpt-4o",
+      replayCount: 5,
+      originalMean: 4.8,
+      replayMean: 3.5,
+      delta: -1.3,
+      costUsd: 0.05,
+    }).run();
+
+    const { createRegressionCellTable } = await import("../src/routing/adaptive/regression.js");
+    const table = createRegressionCellTable(db);
+    await table.refresh();
+    expect(table.isRegressing("coding", "complex")).toBe(true);
+    expect(table.isRegressing("qa", "simple")).toBe(false);
+  });
+
+  it("refresh picks up new events and drops resolved ones", async () => {
+    const { createRegressionCellTable } = await import("../src/routing/adaptive/regression.js");
+    const table = createRegressionCellTable(db);
+    await table.refresh();
+    expect(table.isRegressing("coding", "complex")).toBe(false);
+
+    await db.insert(regressionEvents).values({
+      id: "e1",
+      tenantId: "t",
+      taskType: "coding",
+      complexity: "complex",
+      provider: "openai",
+      model: "gpt-4o",
+      replayCount: 5,
+      originalMean: 4.5,
+      replayMean: 3.5,
+      delta: -1,
+      costUsd: 0.05,
+    }).run();
+    await table.refresh();
+    expect(table.isRegressing("coding", "complex")).toBe(true);
+
+    await db.update(regressionEvents).set({ resolvedAt: new Date() }).where(eq(regressionEvents.id, "e1")).run();
+    await table.refresh();
+    expect(table.isRegressing("coding", "complex")).toBe(false);
+  });
+});

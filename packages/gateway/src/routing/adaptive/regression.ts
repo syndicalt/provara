@@ -356,10 +356,27 @@ export interface ReplayCycleStats {
   budgetSkipped: number;
 }
 
+/**
+ * Narrow interface the replay cycle uses to write judge scores back into
+ * the adaptive router's EMA (#163). Typed as a thin subset so this module
+ * doesn't need to import the full AdaptiveRouter and create a cycle.
+ */
+export interface AdaptiveScoreWriter {
+  updateScore(
+    taskType: string,
+    complexity: string,
+    provider: string,
+    model: string,
+    score: number,
+    source: "user" | "judge",
+  ): Promise<void>;
+}
+
 export async function runReplayCycle(
   db: Db,
   registry: ProviderRegistry,
   judgeTarget: { provider: string; model: string } | null,
+  adaptive?: AdaptiveScoreWriter | null,
 ): Promise<ReplayCycleStats> {
   if (!judgeTarget) {
     return { cellsEvaluated: 0, replaysExecuted: 0, regressionsDetected: 0, totalCostUsd: 0, budgetSkipped: 0 };
@@ -445,6 +462,28 @@ export async function runReplayCycle(
           originalScores.push(entry.originalScore);
           replayScores.push(score);
           stats.replaysExecuted++;
+          // Feed the judge score back into the adaptive EMA (#163). Treats
+          // replay scores identically to live-traffic judge scores — same
+          // grader, same 1–5 scale. Result: when the current model has
+          // degraded, its EMA drops on the very next routing decision
+          // instead of waiting for natural judge sampling to catch up.
+          if (adaptive) {
+            try {
+              await adaptive.updateScore(
+                cell.taskType,
+                cell.complexity,
+                cell.provider,
+                cell.model,
+                score,
+                "judge",
+              );
+            } catch (err) {
+              console.warn(
+                `[regression] feeding adaptive EMA failed for ${cell.provider}/${cell.model}:`,
+                err instanceof Error ? err.message : err,
+              );
+            }
+          }
         }
 
         await db
@@ -567,4 +606,50 @@ export async function resolveRegressionEvent(
     .where(eq(regressionEvents.id, id))
     .run();
   return true;
+}
+
+/**
+ * In-memory lookup for "does this cell have an active regression?" (#163).
+ * The adaptive router consults this on every routing decision to decide
+ * whether to boost the ε-greedy exploration rate for the cell. Cell-scoped
+ * rather than model-scoped — any unresolved regression on a cell forces
+ * exploration so the router samples alternatives and converges on a new
+ * winner faster.
+ *
+ * Mirrors the cost-migration boost table (#153). Loaded at boot and
+ * refreshed by callers after a replay cycle (new detections possible)
+ * or an event resolution (alert cleared).
+ */
+export interface RegressionCellTable {
+  isRegressing(taskType: string, complexity: string): boolean;
+  refresh(): Promise<void>;
+}
+
+export function createRegressionCellTable(db: Db): RegressionCellTable {
+  const cells = new Set<string>();
+
+  function key(taskType: string, complexity: string): string {
+    return `${taskType}::${complexity}`;
+  }
+
+  async function refresh(): Promise<void> {
+    cells.clear();
+    const active = await db
+      .select({
+        taskType: regressionEvents.taskType,
+        complexity: regressionEvents.complexity,
+      })
+      .from(regressionEvents)
+      .where(isNull(regressionEvents.resolvedAt))
+      .all();
+    for (const row of active) {
+      cells.add(key(row.taskType, row.complexity));
+    }
+  }
+
+  function isRegressing(taskType: string, complexity: string): boolean {
+    return cells.has(key(taskType, complexity));
+  }
+
+  return { isRegressing, refresh };
 }

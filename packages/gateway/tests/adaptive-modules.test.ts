@@ -161,6 +161,20 @@ describe("pickExploration", () => {
     const stale = pickExploration(candidates, available, { stale: true });
     expect(stale).not.toBeNull();
   });
+
+  it("regressed cells also hit the boosted rate (#163)", () => {
+    vi.spyOn(Math, "random").mockReturnValueOnce(0.3).mockReturnValueOnce(0.0);
+    const regressed = pickExploration(candidates, available, { regressed: true });
+    expect(regressed).not.toBeNull();
+  });
+
+  it("regressed takes precedence over stale when both flags pass", () => {
+    // Both rates default to 0.5 so behavior is identical; this test pins
+    // the signature contract — regressed flag alone is enough to boost.
+    vi.spyOn(Math, "random").mockReturnValueOnce(0.3).mockReturnValueOnce(0.0);
+    const both = pickExploration(candidates, available, { stale: true, regressed: true });
+    expect(both).not.toBeNull();
+  });
 });
 
 describe("isStaleTimestamp", () => {
