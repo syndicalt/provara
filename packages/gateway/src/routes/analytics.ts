@@ -114,11 +114,19 @@ export function createAnalyticsRoutes(db: Db) {
       return c.json({ error: { message: "Request not found", type: "not_found" } }, 404);
     }
 
-    // Get feedback for this request
+    // Get feedback for this request. The request itself is already scoped to
+    // tenant above, so in practice no cross-tenant feedback can exist for
+    // this requestId. Adding an explicit tenant filter here is
+    // defense-in-depth — if a future write path ever misses the tenant
+    // check, this query won't start silently leaking.
     const feedbackRows = await db
       .select()
       .from(feedback)
-      .where(eq(feedback.requestId, id))
+      .where(
+        tenantId
+          ? and(eq(feedback.requestId, id), eq(feedback.tenantId, tenantId))
+          : eq(feedback.requestId, id),
+      )
       .all();
 
     return c.json({ request: row, feedback: feedbackRows });

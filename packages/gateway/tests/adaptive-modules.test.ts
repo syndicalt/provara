@@ -49,6 +49,25 @@ describe("getQualityAlpha", () => {
     expect(getQualityAlpha("user")).toBe(0.8);
     expect(getQualityAlpha("judge")).toBe(0.5);
   });
+
+  it("empty-string env var falls back to default (regression — parseFloat('') = NaN)", () => {
+    process.env.PROVARA_EMA_ALPHA_USER = "";
+    process.env.PROVARA_EMA_ALPHA_JUDGE = "";
+    process.env.PROVARA_EMA_ALPHA = "";
+    expect(getQualityAlpha("user")).toBe(0.4);
+    expect(getQualityAlpha("judge")).toBe(0.2);
+  });
+
+  it("non-numeric env var falls back to default", () => {
+    process.env.PROVARA_EMA_ALPHA_USER = "not-a-number";
+    expect(getQualityAlpha("user")).toBe(0.4);
+  });
+
+  it("falls through empty source-specific to global when global is valid", () => {
+    process.env.PROVARA_EMA_ALPHA = "0.5";
+    process.env.PROVARA_EMA_ALPHA_USER = "";
+    expect(getQualityAlpha("user")).toBe(0.5);
+  });
 });
 
 describe("resolveWeights", () => {

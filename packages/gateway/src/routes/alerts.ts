@@ -5,6 +5,64 @@ import { eq, and, sql, gte, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTenantId } from "../auth/tenant.js";
 
+/**
+ * Validate a webhook URL before storing/invoking it. Guards against SSRF:
+ * the gateway is a server that sends outbound POSTs to webhook URLs when
+ * alerts fire; a hostile or sloppy operator could point a webhook at
+ * `http://169.254.169.254/` (cloud metadata), `http://localhost:*`
+ * (internal services), or a private IP, and exfiltrate data that way.
+ *
+ * Rules:
+ *  - https:// only (http allowed only for localhost.explicit opt-in via
+ *    PROVARA_ALLOW_HTTP_WEBHOOKS=true, to keep local dev working)
+ *  - Hostname must not resolve to a private/loopback/link-local address
+ *    *by string*. A full DNS-based SSRF defense requires DNS-pinning at
+ *    request time; this catches the common cases without that machinery.
+ *  - Reject obvious cloud-metadata endpoints explicitly.
+ *
+ * Returns null when valid; otherwise a human-readable error reason.
+ */
+function validateWebhookUrl(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "invalid URL";
+  }
+  const allowHttp = process.env.PROVARA_ALLOW_HTTP_WEBHOOKS === "true";
+  if (u.protocol !== "https:" && !(allowHttp && u.protocol === "http:")) {
+    return "webhook URL must use https://";
+  }
+  const host = u.hostname.toLowerCase();
+
+  // Cloud metadata endpoints (AWS, GCP, Azure, Alibaba, DigitalOcean)
+  const metadataHosts = new Set([
+    "169.254.169.254",
+    "metadata.google.internal",
+    "metadata",
+    "100.100.100.200", // Alibaba
+  ]);
+  if (metadataHosts.has(host)) return "webhook URL points at cloud metadata";
+
+  // Obvious private/loopback/link-local ranges (IPv4 + a few IPv6)
+  const privatePatterns: RegExp[] = [
+    /^127\./,
+    /^10\./,
+    /^192\.168\./,
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+    /^169\.254\./,
+    /^0\./,
+    /^::1$/,
+    /^fc[0-9a-f]{2}:/i,
+    /^fd[0-9a-f]{2}:/i,
+    /^fe80:/i,
+  ];
+  if (host === "localhost" || privatePatterns.some((r) => r.test(host))) {
+    return "webhook URL points at a private/loopback address";
+  }
+  return null;
+}
+
 export function createAlertRoutes(db: Db) {
   const app = new Hono();
 
@@ -34,6 +92,11 @@ export function createAlertRoutes(db: Db) {
 
     if (!body.name || !body.metric || !body.threshold) {
       return c.json({ error: { message: "name, metric, and threshold are required", type: "validation_error" } }, 400);
+    }
+
+    if (body.webhookUrl) {
+      const err = validateWebhookUrl(body.webhookUrl);
+      if (err) return c.json({ error: { message: err, type: "validation_error" } }, 400);
     }
 
     const id = nanoid();
@@ -69,6 +132,11 @@ export function createAlertRoutes(db: Db) {
     const rule = await db.select().from(alertRules).where(ruleWhere).get();
     if (!rule) {
       return c.json({ error: { message: "Rule not found", type: "not_found" } }, 404);
+    }
+
+    if (body.webhookUrl) {
+      const err = validateWebhookUrl(body.webhookUrl);
+      if (err) return c.json({ error: { message: err, type: "validation_error" } }, 400);
     }
 
     const updates: Record<string, unknown> = {};
