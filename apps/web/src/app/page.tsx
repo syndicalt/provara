@@ -188,8 +188,10 @@ export default function Home() {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                 Self-hostable · OpenAI-compatible · Open source
               </div>
-              <h1 className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.05]">
-                One gateway. Every LLM provider.
+              <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-[1.05]">
+                One gateway.
+                <br />
+                Every LLM provider.
                 <br />
                 <span className="text-blue-400">Smarter with every request.</span>
               </h1>
