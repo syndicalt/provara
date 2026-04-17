@@ -15,6 +15,13 @@ import { getPricing } from "../cost/index.js";
 const EMA_ALPHA = parseFloat(process.env.PROVARA_EMA_ALPHA || "0.2");
 const MIN_SAMPLES = parseInt(process.env.PROVARA_MIN_SAMPLES || "5");
 
+// ε-greedy exploration: with this probability, bypass the EMA and pick
+// uniformly at random from the full candidate list — including models with
+// zero samples. Prevents cold-start lock-in where one model accumulates enough
+// samples to clear MIN_SAMPLES before any competitor does and then wins
+// permanently because no alternative is ever eligible. Set to 0 to disable.
+const EXPLORATION_RATE = parseFloat(process.env.PROVARA_EXPLORATION_RATE || "0.1");
+
 export type FeedbackSource = "user" | "judge";
 
 function getQualityAlpha(source: FeedbackSource): number {
@@ -258,14 +265,28 @@ export async function createAdaptiveRouter(db: Db) {
     }
   }
 
-  // Get the best model for a routing cell, considering quality scores and profile
+  // Get the best model for a routing cell, considering quality scores and profile.
+  // Returns `via: "exploration"` when the ε-greedy branch fired (uniform-random
+  // from allCandidates, ignoring EMA) and `via: "adaptive"` when the EMA-scoring
+  // branch picked the winner. Returns null when no adaptive candidate qualifies
+  // and exploration didn't fire — caller falls through to cheapest-first.
   function getBestModel(
     taskType: TaskType,
     complexity: Complexity,
     profile: RoutingProfile,
     availableProviders: Set<string>,
+    allCandidates: RouteTarget[],
     customWeights?: RoutingWeights
-  ): RouteTarget | null {
+  ): { target: RouteTarget; via: "adaptive" | "exploration" } | null {
+    // ε-greedy: skip the EMA and pick uniformly at random from the full
+    // candidate list. Runs before the sample-count filter so zero-sample
+    // models get a chance to accumulate their first ratings.
+    const eligibleForExploration = allCandidates.filter((c) => availableProviders.has(c.provider));
+    if (eligibleForExploration.length > 1 && Math.random() < EXPLORATION_RATE) {
+      const pick = eligibleForExploration[Math.floor(Math.random() * eligibleForExploration.length)];
+      return { target: pick, via: "exploration" };
+    }
+
     const ck = cellKey(taskType, complexity);
     const cellScores = emaScores.get(ck);
 
@@ -293,7 +314,7 @@ export async function createAdaptiveRouter(db: Db) {
       }
     }
 
-    return best?.target || null;
+    return best ? { target: best.target, via: "adaptive" } : null;
   }
 
   // Get all scores for a cell (for dashboard display)

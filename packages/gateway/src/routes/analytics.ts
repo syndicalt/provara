@@ -306,6 +306,12 @@ export function createAnalyticsRoutes(db: Db) {
           active: (feedbackCount?.count || 0) > 0,
           feedbackCount: feedbackCount?.count || 0,
         },
+        exploration: {
+          count: routedByMap["exploration"]?.count || 0,
+          avgLatency: routedByMap["exploration"]?.avgLatency || 0,
+          active: parseFloat(process.env.PROVARA_EXPLORATION_RATE || "0.1") > 0,
+          rate: parseFloat(process.env.PROVARA_EXPLORATION_RATE || "0.1"),
+        },
         fallback: {
           count: fallbackStats?.count || 0,
           avgLatency: Math.round(fallbackStats?.avgLatency || 0),

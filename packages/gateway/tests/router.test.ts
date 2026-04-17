@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { createRoutingEngine } from "../src/routing/index.js";
 import { setRoutingConfig } from "../src/routing/config.js";
 import { makeTestDb } from "./_setup/db.js";
@@ -145,6 +145,82 @@ describe("routing engine", () => {
       if (result.complexity === "medium") {
         expect(result.routedBy).toBe("ab-test");
       }
+    });
+  });
+
+  // ε-greedy exploration (#103): breaks cold-start lock-in where one model
+  // accumulates enough samples to clear MIN_SAMPLES and then wins forever
+  // because no competitor is ever eligible. Math.random is stubbed to make
+  // the two branches deterministic.
+  describe("epsilon-greedy exploration (#103)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("exploration branch picks a candidate regardless of sample count when Math.random < ε", async () => {
+      // Force exploration: Math.random always returns 0.0, which is < ε=0.1,
+      // and also makes the index pick land on 0 (the first candidate).
+      // Using mockReturnValue (not Once) avoids brittleness if other code paths
+      // consume the mock before getBestModel runs.
+      vi.spyOn(Math, "random").mockReturnValue(0.0);
+
+      const db = await makeTestDb();
+      const registry = makeFakeRegistry([
+        makeFakeProvider({ name: "openai", models: ["gpt-4.1-nano"] }),
+        makeFakeProvider({ name: "anthropic", models: ["claude-opus-4-7"] }),
+      ]);
+      const engine = await createRoutingEngine({ registry, db });
+
+      const result = await engine.route({
+        messages: [{ role: "user", content: "hi" }],
+        routingHint: "general",
+      });
+
+      // Neither model has any samples — the only path that produces a route
+      // without the cheapest-first fallback firing is exploration.
+      expect(result.routedBy).toBe("exploration");
+    });
+
+    it("skips exploration when Math.random >= ε and falls through normally", async () => {
+      // Return 0.5 on every call — well above ε=0.1 default, so exploration never fires.
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+      const db = await makeTestDb();
+      const registry = makeFakeRegistry([
+        makeFakeProvider({ name: "openai", models: ["gpt-4.1-nano"] }),
+        makeFakeProvider({ name: "anthropic", models: ["claude-opus-4-7"] }),
+      ]);
+      const engine = await createRoutingEngine({ registry, db });
+
+      const result = await engine.route({
+        messages: [{ role: "user", content: "hi" }],
+        routingHint: "general",
+      });
+
+      // With no samples anywhere, adaptive returns null and we fall through to
+      // the cheapest-first classification fallback. Critically, routedBy is
+      // NOT "exploration".
+      expect(result.routedBy).not.toBe("exploration");
+    });
+
+    it("exploration is disabled when only one candidate exists (no meaningful choice)", async () => {
+      // Gate at 0.0 would normally force exploration, but the single-candidate
+      // guard should skip the branch and fall through to the normal flow.
+      vi.spyOn(Math, "random").mockReturnValue(0.0);
+
+      const db = await makeTestDb();
+      const registry = makeFakeRegistry([
+        makeFakeProvider({ name: "openai", models: ["gpt-4.1-nano"] }),
+      ]);
+      const engine = await createRoutingEngine({ registry, db });
+
+      const result = await engine.route({
+        messages: [{ role: "user", content: "hi" }],
+        routingHint: "general",
+      });
+
+      expect(result.routedBy).not.toBe("exploration");
+      expect(result.model).toBe("gpt-4.1-nano");
     });
   });
 });

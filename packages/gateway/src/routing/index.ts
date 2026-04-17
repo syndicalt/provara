@@ -149,12 +149,19 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
 
     // A/B test candidate (may or may not run before adaptive based on config)
     const abResult = await findActiveAbTest(taskType, complexity);
-    const adaptiveTarget = adaptive.getBestModel(taskType, complexity, profile, availableProviders, request.routingWeights);
+    const adaptiveResult = adaptive.getBestModel(
+      taskType,
+      complexity,
+      profile,
+      availableProviders,
+      allFallbacks,
+      request.routingWeights
+    );
 
     // Ordering:
-    //   - abTestPreempts=true (default): A/B test wins if present, else adaptive.
-    //   - abTestPreempts=false: adaptive wins if it has enough samples, else A/B test.
-    const preferAb = abTestPreempts || !adaptiveTarget;
+    //   - abTestPreempts=true (default): A/B test wins if present, else adaptive/exploration.
+    //   - abTestPreempts=false: adaptive/exploration wins if one was produced, else A/B test.
+    const preferAb = abTestPreempts || !adaptiveResult;
 
     if (preferAb && abResult) {
       return {
@@ -172,17 +179,18 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    if (adaptiveTarget) {
+    if (adaptiveResult) {
+      const { target, via } = adaptiveResult;
       return {
-        provider: adaptiveTarget.provider,
-        model: adaptiveTarget.model,
+        provider: target.provider,
+        model: target.model,
         taskType,
         complexity,
-        routedBy: "adaptive",
+        routedBy: via === "exploration" ? "exploration" : "adaptive",
         usedFallback: false,
         usedLlmFallback: classification.usedLlmFallback,
         fallbacks: allFallbacks.filter(
-          (t) => !(t.provider === adaptiveTarget.provider && t.model === adaptiveTarget.model)
+          (t) => !(t.provider === target.provider && t.model === target.model)
         ),
       };
     }
