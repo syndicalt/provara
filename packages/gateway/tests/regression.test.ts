@@ -50,7 +50,7 @@ function makeRequestRow(
     .run();
 }
 
-function makeFeedbackRow(db: Db, requestId: string, score: number, source: "user" | "judge" = "user") {
+function makeFeedbackRow(db: Db, requestId: string, score: number, source: "user" | "judge" = "judge") {
   return db
     .insert(feedback)
     .values({
@@ -394,5 +394,158 @@ describe("listRegressionEvents / resolveRegressionEvent", () => {
   it("returns false when resolving a missing event", async () => {
     const ok = await resolveRegressionEvent(db, "missing", null);
     expect(ok).toBe(false);
+  });
+});
+
+describe("bank calibration: user-rated entries excluded (#160)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+  });
+
+  it("user-rated prompts are NOT ingested into the bank", async () => {
+    await setRegressionOptIn(db, "t", true);
+
+    // Three judge-scored (should be banked), three user-rated (should NOT be)
+    for (let i = 0; i < 3; i++) {
+      await makeRequestRow(db, {
+        id: `j-${i}`,
+        tenantId: "t",
+        provider: "openai",
+        model: "gpt-4o",
+        taskType: "coding",
+        complexity: "complex",
+      });
+      await makeFeedbackRow(db, `j-${i}`, 5, "judge");
+    }
+    for (let i = 0; i < 3; i++) {
+      await makeRequestRow(db, {
+        id: `u-${i}`,
+        tenantId: "t",
+        provider: "openai",
+        model: "gpt-4o",
+        taskType: "coding",
+        complexity: "complex",
+      });
+      await makeFeedbackRow(db, `u-${i}`, 5, "user");
+    }
+
+    await runBankPopulationCycle(db, null);
+    const rows = await db.select().from(replayBank).all();
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.originalScoreSource === "judge")).toBe(true);
+    expect(rows.map((r) => r.sourceRequestId).sort()).toEqual(["j-0", "j-1", "j-2"]);
+  });
+
+  it("a cell with only user-rated prompts produces an empty bank", async () => {
+    await setRegressionOptIn(db, "t", true);
+    for (let i = 0; i < 5; i++) {
+      await makeRequestRow(db, {
+        id: `u-${i}`,
+        tenantId: "t",
+        provider: "openai",
+        model: "gpt-4o",
+        taskType: "coding",
+        complexity: "complex",
+      });
+      await makeFeedbackRow(db, `u-${i}`, 5, "user");
+    }
+
+    const results = await runBankPopulationCycle(db, null);
+    expect(results).toHaveLength(0);
+    const rows = await db.select().from(replayBank).all();
+    expect(rows).toHaveLength(0);
+  });
+});
+
+describe("regression event dedupe (#160)", () => {
+  let db: Db;
+
+  async function seedBankWithScores(tenantId: string, count: number, score = 5) {
+    for (let i = 0; i < count; i++) {
+      await db
+        .insert(replayBank)
+        .values({
+          id: `bank-${tenantId}-${i}`,
+          tenantId,
+          taskType: "coding",
+          complexity: "complex",
+          provider: "openai",
+          model: "gpt-4o",
+          prompt: JSON.stringify([{ role: "user", content: `prompt ${i}` }]),
+          response: `orig ${i}`,
+          originalScore: score,
+          originalScoreSource: "judge",
+          sourceRequestId: `req-${i}`,
+        })
+        .run();
+      await makeRequestRow(db, {
+        id: `req-${i}-${tenantId}`,
+        tenantId,
+        provider: "openai",
+        model: "gpt-4o",
+        taskType: "coding",
+        complexity: "complex",
+      });
+    }
+  }
+
+  beforeEach(async () => {
+    db = await makeTestDb();
+  });
+
+  it("second replay cycle updates the existing unresolved event instead of duplicating", async () => {
+    await setRegressionOptIn(db, "t", true);
+    await seedBankWithScores("t", 3, 5);
+
+    const buildRegistry = () => mockRegistry(new Map([
+      ["openai::gpt-4o", [
+        { content: "weak 1" }, { content: "weak 2" }, { content: "weak 3" },
+      ]],
+      ["openai::judge", [
+        { content: '{"score": 2}' }, { content: '{"score": 2}' }, { content: '{"score": 2}' },
+      ]],
+    ]));
+
+    await runReplayCycle(db, buildRegistry(), { provider: "openai", model: "judge" });
+    const afterFirst = await db.select().from(regressionEvents).all();
+    expect(afterFirst).toHaveLength(1);
+    const firstDetectedAt = afterFirst[0].detectedAt;
+    const firstCost = afterFirst[0].costUsd;
+
+    await runReplayCycle(db, buildRegistry(), { provider: "openai", model: "judge" });
+    const afterSecond = await db.select().from(regressionEvents).all();
+    expect(afterSecond).toHaveLength(1);
+    expect(afterSecond[0].id).toBe(afterFirst[0].id);
+    expect(afterSecond[0].detectedAt.getTime()).toBe(firstDetectedAt.getTime());
+    // Cost accumulates across cycles
+    expect(afterSecond[0].costUsd).toBeGreaterThanOrEqual(firstCost);
+  });
+
+  it("a resolved event does not block a new event on the next regression", async () => {
+    await setRegressionOptIn(db, "t", true);
+    await seedBankWithScores("t", 3, 5);
+
+    const buildRegistry = () => mockRegistry(new Map([
+      ["openai::gpt-4o", [
+        { content: "weak 1" }, { content: "weak 2" }, { content: "weak 3" },
+      ]],
+      ["openai::judge", [
+        { content: '{"score": 2}' }, { content: '{"score": 2}' }, { content: '{"score": 2}' },
+      ]],
+    ]));
+
+    await runReplayCycle(db, buildRegistry(), { provider: "openai", model: "judge" });
+    const first = (await db.select().from(regressionEvents).all())[0];
+
+    // Operator dismisses
+    const { resolveRegressionEvent } = await import("../src/routing/adaptive/regression.js");
+    await resolveRegressionEvent(db, first.id, "dismissed");
+
+    // Next cycle — should now produce a NEW event since the old one is resolved
+    await runReplayCycle(db, buildRegistry(), { provider: "openai", model: "judge" });
+    const all = await db.select().from(regressionEvents).all();
+    expect(all).toHaveLength(2);
+    expect(all.filter((e) => e.resolvedAt === null)).toHaveLength(1);
   });
 });
