@@ -235,6 +235,7 @@ export async function createRouter(ctx: RouterContext) {
     if (request.stream) {
       let usedProvider = routingResult.provider;
       let usedModel = routingResult.model;
+      let usedFallback = routingResult.usedFallback;
       let lastError: unknown;
 
       for (const attempt of attempts) {
@@ -259,6 +260,7 @@ export async function createRouter(ctx: RouterContext) {
 
           usedProvider = attempt.provider;
           usedModel = attempt.model;
+          if (attempt !== attempts[0]) usedFallback = true;
           const responseId = nanoid();
           const start = performance.now();
 
@@ -314,6 +316,7 @@ export async function createRouter(ctx: RouterContext) {
                     taskType: routingResult.taskType,
                     complexity: routingResult.complexity,
                     routedBy: routingResult.routedBy,
+                    usedFallback,
                     tenantId,
                     abTestId: routingResult.abTestId || null,
                   })
@@ -446,6 +449,7 @@ export async function createRouter(ctx: RouterContext) {
         taskType: routingResult.taskType,
         complexity: routingResult.complexity,
         routedBy: routingResult.routedBy,
+        usedFallback,
         tenantId,
         abTestId: routingResult.abTestId || null,
       })

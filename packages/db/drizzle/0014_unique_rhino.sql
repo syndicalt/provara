@@ -1,0 +1,1 @@
+ALTER TABLE `requests` ADD `used_fallback` integer DEFAULT false NOT NULL;

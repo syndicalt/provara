@@ -28,6 +28,7 @@ interface PipelineData {
   totalRequests: number;
   stages: {
     classifier: StageStats;
+    userOverride: StageStats;
     abTest: StageStats;
     adaptive: StageStats;
     fallback: StageStats;
@@ -174,12 +175,26 @@ function buildNodes(data: PipelineData | null, adaptivePulseTick = 0): Node[] {
       position: { x: 540, y: 300 },
       data: {
         label: "Cost Fallback",
-        subtitle: "Cheapest first",
+        subtitle: "Provider retry",
         icon: "\u{1F4B0}",
         count: s?.fallback.count || 0,
         avgLatency: s?.fallback.avgLatency,
         active: s?.fallback.active ?? true,
         color: "border-amber-500",
+      },
+    },
+    {
+      id: "user-override",
+      type: "pipeline",
+      position: { x: 540, y: 450 },
+      data: {
+        label: "User Override",
+        subtitle: "Caller-pinned model",
+        icon: "\u{1F3AF}",
+        count: s?.userOverride.count || 0,
+        avgLatency: s?.userOverride.avgLatency,
+        active: s?.userOverride.active ?? true,
+        color: "border-pink-500",
       },
     },
     {
@@ -201,12 +216,14 @@ function buildNodes(data: PipelineData | null, adaptivePulseTick = 0): Node[] {
 
 const edges: Edge[] = [
   { id: "e-req-cls", source: "request", target: "classifier", animated: true, style: { stroke: "#3b82f6", strokeWidth: 2 } },
+  { id: "e-req-uo", source: "request", target: "user-override", animated: true, style: { stroke: "#ec4899", strokeWidth: 1.5 } },
   { id: "e-cls-ab", source: "classifier", target: "abtest", animated: true, style: { stroke: "#8b5cf6", strokeWidth: 1.5 } },
   { id: "e-cls-adp", source: "classifier", target: "adaptive", animated: true, style: { stroke: "#10b981", strokeWidth: 1.5 } },
   { id: "e-cls-fb", source: "classifier", target: "fallback", animated: true, style: { stroke: "#f59e0b", strokeWidth: 1.5 } },
   { id: "e-ab-prv", source: "abtest", target: "provider", animated: true, style: { stroke: "#8b5cf6", strokeWidth: 1.5 } },
   { id: "e-adp-prv", source: "adaptive", target: "provider", animated: true, style: { stroke: "#10b981", strokeWidth: 1.5 } },
   { id: "e-fb-prv", source: "fallback", target: "provider", animated: true, style: { stroke: "#f59e0b", strokeWidth: 1.5 } },
+  { id: "e-uo-prv", source: "user-override", target: "provider", animated: true, style: { stroke: "#ec4899", strokeWidth: 1.5 } },
 ];
 
 interface PipelineVisualizationProps {
