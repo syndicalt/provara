@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    name: test + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (db)
+        run: cd packages/db && npx tsc --noEmit
+
+      - name: Typecheck (gateway)
+        run: cd packages/gateway && npx tsc --noEmit
+
+      - name: Typecheck (web)
+        run: cd apps/web && npx tsc --noEmit
+
+      - name: Test (gateway)
+        run: npm test -w packages/gateway
