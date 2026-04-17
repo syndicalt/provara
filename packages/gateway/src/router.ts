@@ -43,7 +43,7 @@ export async function createRouter(ctx: RouterContext) {
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Lang", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Package-Version", "X-Stainless-Retry-Count"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-Provara-Errors", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
   // Mount OAuth routes (public, only in multi_tenant mode)
@@ -402,6 +402,9 @@ export async function createRouter(ctx: RouterContext) {
           };
           if (guardrailViolations.size > 0) {
             streamHeaders["X-Provara-Guardrail"] = JSON.stringify([...guardrailViolations]);
+          }
+          if (usedFallback && attemptErrors.length > 0) {
+            streamHeaders["X-Provara-Errors"] = JSON.stringify(attemptErrors);
           }
           return new Response(sseStream, { headers: streamHeaders });
         } catch (err) {
