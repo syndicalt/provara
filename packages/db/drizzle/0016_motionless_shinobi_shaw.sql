@@ -1,0 +1,1 @@
+ALTER TABLE `requests` ADD `fallback_errors` text;

@@ -113,6 +113,13 @@
       "when": 1776392435304,
       "tag": "0015_opposite_queen_noir",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1776393483411,
+      "tag": "0016_motionless_shinobi_shaw",
+      "breakpoints": true
     }
   ]
 }
