@@ -8,6 +8,9 @@ Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and c
 
 - **Intelligent Routing** — Classifies queries by task type (coding, creative, summarization, Q&A, general) and complexity (simple, medium, complex), then routes to the optimal model
 - **Adaptive Quality Scoring** — Every user rating and LLM-judge score updates a live quality EMA per routing cell (task × complexity × model), persisted across restarts. Winning models earn more traffic automatically — no retraining step, no manual model selection to keep current as providers ship new versions
+- **Silent-Regression Detection** — Periodically replays your best historical prompts against the current model and alerts when quality drops. Catches upstream provider changes that would otherwise degrade your app invisibly
+- **Auto Cost Migration** — When a cheaper model reaches parity on a routing cell, the gateway migrates automatically and reports the projected monthly savings. Quality is gated, rollbacks are one click
+- **Auto A/B Generation** — When two models are tied on a routing cell, the gateway spawns its own 50/50 experiment and stops it when a decisive winner emerges
 - **A/B Testing** — Split traffic between models with weighted variants, scoped to routing cells
 - **8+ Providers** — OpenAI, Anthropic, Google, Mistral, xAI, Z.ai, Ollama, plus any OpenAI-compatible provider
 - **Dynamic Model Discovery** — Automatically detects available models from each provider's API at startup, with on-demand refresh
@@ -209,6 +212,204 @@ The adaptive winner isn't chosen on quality alone. Each candidate is scored agai
 - `quality` — highest EMA wins unless cost or latency are egregious (70/15/15).
 
 Profiles can be set per API token (via `/v1/admin/tokens`) so a production workload and a throwaway experiment can share the same adaptive scores but route differently.
+
+## Silent-Regression Detection
+
+**The problem.** You're using a hosted model — `gpt-4o-mini`, `claude-haiku`, `gemini-2.5-flash`, any of them. One Tuesday afternoon, the provider pushes a new version under the same name. Maybe they tuned for safety, or shortened context usage, or swapped the tokenizer. Your API calls keep returning 200s. Your users start emailing you that replies feel "off" — vaguer, shorter, occasionally wrong in ways they weren't before. By the time you notice, a week has passed. Nothing in your monitoring caught it, because nothing was broken. Quality just *drifted*.
+
+This isn't theoretical. It's happened at every major provider. Silent updates are normal, and the industry hasn't agreed on versioning conventions that would make them transparent. From the app developer's seat, a hosted model is a moving target — and you usually find out through customer pain.
+
+**The solution.** Every week (configurable), Provara automatically picks a handful of the best prompts you've already served, re-runs them against the current model, and has an independent LLM judge score the new answers. If today's answers grade materially lower than the ones that originally earned 4 or 5 stars, you get an alert on the Quality dashboard with the specific cell, the specific model, and the magnitude of the drop. You know *before* your users do.
+
+### How it works
+
+The gateway maintains a **replay bank** — per tenant, per routing cell, per model, a curated set of up to 25 historical prompts that scored ≥ 4 stars from the LLM judge. A nightly job (`replay-bank-populate`) keeps this bank fresh with the most recent high-quality, diverse examples, using embedding-based deduplication so the bank doesn't fill up with near-copies of the same question.
+
+A separate weekly job (`replay-execute`) does the actual regression check:
+
+1. For each opted-in tenant, pick a cell that has enough banked prompts (default ≥ 2)
+2. Sample `k` prompts from the bank (default `k = 5`), preferring ones that haven't been replayed recently
+3. For each prompt, send it back through the current winning model for that cell
+4. Ask the LLM judge (same judge you've configured for adaptive routing) to score the new response on the same 1–5 scale
+5. Compute the mean across replayed prompts and compare to the mean of the bank's baseline scores
+6. If the drop is ≥ `0.5` on the 1–5 scale, fire a regression event
+
+An event is one row in `regression_events` with the provider, model, cell, original mean, replay mean, delta, timestamp, and cost. The dashboard surfaces it as a red-bordered card on the Quality page. You can dismiss it (the row moves to resolved history) or investigate further.
+
+Running the job again on the same cell while a detection is still active *updates* the existing event rather than duplicating — so the card always reflects the latest measurement and the first-detected date holds steady.
+
+### Getting started
+
+Silent-regression detection is **off by default** because it costs real API tokens to run (replays + judge calls). Turn it on per tenant:
+
+1. Go to **Quality → Regression Watch → Enable** on the dashboard (or `POST /v1/regression/opt-in {"enabled": true}`)
+2. Make sure the **judge is configured** (Quality → Judge config). Silent regression requires the judge, both to populate the bank with judge-scored baselines and to grade the replays. A cheap judge like `openai/gpt-4.1-nano` works fine and costs fractions of a cent per replay
+3. Wait for traffic. The bank only captures prompts that have *already* been judge-scored at ≥ 4, so you need a small corpus of live traffic with judge sampling enabled before there's anything to replay
+4. Optionally trigger the populate job manually to seed the bank immediately: `POST /v1/admin/scheduler/jobs/replay-bank-populate/run`
+
+Once the bank has at least 2 entries per cell, the `replay-execute` job will start producing meaningful results. You can trigger it on demand the same way.
+
+### What the dashboard shows
+
+On the **Quality** page, the **Regression Watch** card displays:
+
+| Tile | Meaning |
+|---|---|
+| **Bank size** | Total prompts currently stored across all your cells. Growing over time is healthy. |
+| **Weekly budget** | USD spent on replays + judge calls this ISO week, against the cap. Auto-rolls at week boundary. |
+| **Live regressions** | Count of active (unresolved) regression events. `0` is the healthy state. |
+
+When a regression fires, you also get an **Active regressions** table with:
+
+- **Cell** — task type + complexity (e.g. `coding+simple`)
+- **Model** — the provider/model the regression was detected on
+- **Original** — mean score of the bank's baseline samples
+- **Replay** — mean judge score on the re-runs
+- **Δ** — the drop (negative is bad)
+- **Detected** — when it was first observed
+- **Dismiss** — resolve the event, moving it to the collapsed history
+
+A resolved history collapsible below the active table preserves the full record for audit.
+
+### Tuning
+
+All thresholds are environment variables, read once at gateway startup:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PROVARA_REPLAY_BANK_MAX` | `25` | Prompts per cell kept in the bank. Higher = more representative but bigger storage. |
+| `PROVARA_REPLAY_BANK_MIN_SCORE` | `4` | Minimum judge score for a prompt to enter the bank. Raising to `5` keeps only the cream; lowering risks noise. |
+| `PROVARA_REPLAY_SAMPLE_K` | `5` | Prompts replayed per cell per cycle. Balances cost against detection sensitivity. |
+| `PROVARA_REPLAY_DIVERSITY` | `0.1` | Minimum cosine distance (1 − similarity) a new prompt must have from existing bank entries. Higher = more forced diversity. |
+| `PROVARA_REGRESSION_DELTA` | `-0.5` | Score drop that triggers a regression event. A stricter `-0.3` alerts on smaller drifts; `-0.7` only catches dramatic failures. |
+| `PROVARA_REPLAY_BUDGET_USD` | `5` | Per-tenant weekly cap on replay + judge spend. The cycle skips cells once the cap is hit. |
+| `PROVARA_REPLAY_BANK_INTERVAL_MS` | `86400000` (1 day) | How often the populate job runs. |
+| `PROVARA_REPLAY_CYCLE_INTERVAL_MS` | `604800000` (7 days) | How often the replay job runs. Weekly is usually enough; daily is overkill unless you're in high-change territory. |
+
+### Interpreting results
+
+A fresh enable will often show zero regressions for days or weeks, which is correct — most models stay stable most of the time. A regression typically surfaces within hours of a real upstream change.
+
+Things to watch for:
+
+- **One cell, one model** — almost always an upstream provider change. Check the provider's changelog, consider rolling your code to a sibling model (e.g. `gpt-4o-mini` → `gpt-4.1-mini`), or let adaptive routing shift traffic naturally as the bad model's EMA decays.
+- **Multiple cells, same model** — stronger signal for an upstream change. Same response.
+- **Multiple cells, different models, same delta** — calibration issue, not a real regression. This used to be a known false-positive mode when the bank mixed user ratings with judge scores; the fix (#160) now requires judge-scored baselines for apples-to-apples comparison. If you see this pattern today, file an issue with the event details.
+- **Expected delta varies by cell** — smaller cells (less traffic, smaller bank) are noisier. Treat a single-event detection in a low-volume cell with more skepticism than one in a heavy cell.
+
+The feature is deliberately conservative: it won't auto-rollback or auto-switch models. Detection is the signal; what to do with it is an operator call.
+
+## Auto Cost Migrations
+
+**The problem.** Your adaptive routing matrix shows which models win on which cells. Over time, cheaper models reach parity on lots of cells — especially as providers ship new budget tiers (think `gpt-4.1-mini`, `claude-haiku-4-5`, `gemini-2.5-flash`). But *migrating* a cell is its own work: you have to notice the parity, trust the cheaper model, actually swap it in, and monitor. Most teams don't. They leave money on the table indefinitely, running `gpt-4o` for tasks `gpt-4o-mini` handles just as well.
+
+**The solution.** Every night, Provara scans your routing matrix and looks for cells where a **cheaper** model is holding quality within tolerance of the current winner. When it finds one, it records a migration and nudges the adaptive router to start actually routing through the cheaper model, with a **grace window** that gives the cheaper model time to prove itself on live traffic. If it performs, you save money automatically. If it doesn't, normal adaptive routing reverts once the grace window ends — you didn't break anything, you just ran a bounded experiment.
+
+The dashboard surfaces the projected monthly savings so the value is visible, not speculative.
+
+### How it works
+
+A nightly job (`cost-migration`) iterates the model-scores table and, for each `(taskType, complexity)` cell, evaluates the non-winning models against the current winner. A model qualifies as a migration candidate when **all** of these hold:
+
+- **At least 20% cheaper** — `candidate.costPer1M < winner.costPer1M * 0.8` (configurable)
+- **Quality within tolerance** — `winner.qualityScore − candidate.qualityScore ≤ 0.2` on the 1–5 scale (configurable)
+- **Enough samples** — `candidate.sampleCount ≥ 2 × MIN_SAMPLES` (stricter than adaptive routing, because a migration is meant to be semi-permanent)
+- **Fresh signal** — `candidate.updatedAt` within the last 30 days (no stale cells)
+
+If multiple candidates qualify for one cell, the **cheapest** wins. Each executed migration records a `cost_migrations` row with the before/after cost, quality scores, projected savings, grace window, and (if rolled back later) a rollback timestamp + reason.
+
+The executed migration does **not** mutate the underlying EMA. Instead, the adaptive router consults an in-memory "grace boost" table on every routing decision — migration targets get a small quality-score bonus (default `+0.3`) for the duration of the grace window (default 30 days). This is enough to flip the router's decision toward the cheaper model during the window, but lets normal EMA signal reassert if the migration turns out to be wrong. Once the window closes, the boost drops to zero and the router decides purely on live evidence.
+
+**Projected savings math:** the job takes the cell's last-30-day traffic volume, multiplies by the average input+output tokens per request, and prices the delta between `from.costPer1M` and `to.costPer1M`. If traffic is zero, projected savings is reported as `$0` (the migration still fires — the router preference shifts — but the savings claim stays honest).
+
+### Safety rails
+
+Because migrations affect live routing, the feature ships with multiple guardrails:
+
+- **Off by default** — opt-in per tenant via the dashboard or API
+- **Cap per cycle** — at most 3 migrations per nightly run (no mass reshuffle)
+- **Cooldown per cell** — once a cell is migrated, it can't be migrated again for 30 days, regardless of what the scores say
+- **Grace window instead of hard switch** — if the cheaper model misbehaves, it loses grace on day 31 and the router reverts based on real signal
+- **Manual rollback** — one-click on the dashboard, or `POST /v1/cost-migrations/:id/rollback`. Clears the grace boost immediately and stamps an audit reason
+- **Works with regression detection** — if silent-regression detection fires on a migration target during the grace window, that's strong signal the migration was wrong; operators can dismiss the event or roll back
+
+### Getting started
+
+1. Opt in: **Routing → Cost Migrations → Enable** (or `POST /v1/cost-migrations/opt-in {"enabled": true}`)
+2. Let adaptive routing accumulate scores for a few days first. The migration evaluator requires `2 × MIN_SAMPLES` (default 10) data points per candidate model per cell, so a fresh install won't qualify anything immediately
+3. The nightly job runs automatically. To see results faster, trigger on demand: `POST /v1/admin/scheduler/jobs/cost-migration/run`
+4. Check the **Routing → Cost Migrations** card for executed migrations and projected savings
+
+### What the dashboard shows
+
+On the **Routing** page, the **Cost Migrations** card displays:
+
+| Tile | Meaning |
+|---|---|
+| **Projected savings this month** | Sum of projected monthly savings across all active (not rolled-back) migrations executed in the current month |
+| **Active migrations** | Count of non-rolled-back migrations with their grace window still running |
+| **Rolled back** | Count of migrations operators reverted (kept for audit) |
+
+The **Active migrations** table shows, per row: the cell, the old model (with its quality score and $/1M), the new model (same), projected monthly savings, grace-end date, and a rollback button.
+
+Rolled-back history lives in a collapsed `<details>` below the active table.
+
+### Tuning
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `PROVARA_COST_MIGRATION_EPSILON` | `0.2` | Maximum quality gap (1–5 scale) between winner and candidate. Lower = stricter parity requirement. |
+| `PROVARA_COST_MIGRATION_RATIO` | `0.8` | Candidate's cost-per-1M must be below `winner.costPer1M × ratio`. `0.8` = at least 20% cheaper. `0.5` = only migrate when cheaper by half. |
+| `PROVARA_COST_MIGRATION_MIN_SAMPLES` | `2 × MIN_SAMPLES` | Sample floor for migration eligibility — stricter than adaptive routing because a migration is meant to be lasting. |
+| `PROVARA_COST_MIGRATION_GRACE_BOOST` | `0.3` | Quality-score bonus applied to the migration target during grace. Higher = more decisive shift. |
+| `PROVARA_COST_MIGRATION_GRACE_DAYS` | `30` | Length of grace window. Shorter = faster natural revert if migration was wrong; longer = more time to accumulate real signal. |
+| `PROVARA_COST_MIGRATION_COOLDOWN_DAYS` | `30` | Per-cell cooldown after any migration. Prevents thrash. |
+| `PROVARA_COST_MIGRATION_MAX_PER_CYCLE` | `3` | Upper bound on migrations per nightly run. Raise carefully. |
+| `PROVARA_COST_MIGRATION_INTERVAL_MS` | `86400000` (1 day) | Scheduler cadence. |
+
+### Interpreting results
+
+Healthy output: one or two migrations in the first week after opt-in (catching the low-hanging `gpt-4o → gpt-4o-mini` type swaps), then gradually fewer as the matrix optimizes. After a while, migrations should fire only when providers ship new budget tiers.
+
+Watch for:
+
+- **Zero migrations ever** — either your traffic is too low to hit the sample floor, or your matrix is genuinely already optimal, or your `EPSILON` is too strict. Check `/v1/analytics/adaptive/scores` to see sample counts per cell.
+- **Migrations firing back into the same cell after cooldown** — thrash. The scores for the two models are genuinely close enough that noise flips them. Consider lowering `EPSILON` (require a bigger quality margin before migrating) or raising `MIN_SAMPLES` (require more evidence).
+- **A migration's target starts firing regressions** — the cheaper model couldn't hold quality under real traffic. Roll back and let the original winner resume.
+
+## Background Jobs
+
+The three features above — auto A/B generation (routing matrix), silent-regression detection, and auto cost migration — all run on the same lightweight in-process scheduler. There's no external job queue, no Redis, no cron binary. Each job is just a function the gateway calls on an interval, with persistent run-state in `scheduled_jobs` so restarts don't lose the schedule.
+
+Job state is exposed to operators via two owner-only endpoints:
+
+- `GET /v1/admin/scheduler/jobs` — list all registered jobs with their interval, last run, status (`ok` / `error` / `skipped`), last error message (if any), and total run count
+- `POST /v1/admin/scheduler/jobs/:name/run` — trigger a job immediately, synchronous to the request
+
+Registered jobs today:
+
+| Name | Interval | Purpose |
+|---|---|---|
+| `auto-ab` | 24h | Scan for cells where the top two models are tied within `EPSILON_TIE` and spawn 50/50 experiments. Stop existing auto-experiments when a clear winner emerges. |
+| `replay-bank-populate` | 24h | Capture high-scoring historical prompts into the per-cell replay bank. |
+| `replay-execute` | 7d | Sample the bank, re-run prompts against current models, judge the outputs, emit regression events on drops. |
+| `cost-migration` | 24h | Evaluate cells for cheaper-with-parity candidates and execute qualifying migrations with a grace window. |
+
+### Multi-replica deployments
+
+The scheduler is **single-replica by default**. Each gateway instance runs its own timers — so if you deploy two replicas, both would try to run every job. That's fine for idempotent reads but could double-count spend on replay cycles.
+
+To run on exactly one replica, set `PROVARA_SCHEDULER_ROLE=leader` on that replica and omit it (or set it to any other value) on the rest. Non-leader replicas register their jobs in `scheduled_jobs` for observability but never actually start the timers. This is sufficient for Railway, Fly.io, and single-VPS self-hosts. A distributed leader-election protocol (Redis, etcd) is tracked in [#50](https://github.com/syndicalt/provara/issues/50) if and when horizontal scale-out becomes a priority.
+
+### On-demand invocation
+
+Manual runs are useful for:
+
+- **Demoing the feature** without waiting for the next cron tick
+- **Incident response** when you want to force a replay cycle after a suspected upstream change
+- **Testing** in development where 24h intervals are impractical
+
+Hit `POST /v1/admin/scheduler/jobs/<name>/run` (owner auth required) and the job fires immediately. The running-job guard ensures two overlapping invocations of the same job don't race — the second is recorded as a skipped run.
 
 ## How Provara saves tokens
 
