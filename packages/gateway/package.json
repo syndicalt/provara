@@ -18,7 +18,8 @@
     "dotenv": "^17.4.2",
     "hono": "^4.7.0",
     "nanoid": "^5.1.0",
-    "openai": "^4.85.0"
+    "openai": "^4.85.0",
+    "stripe": "^22.0.2"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

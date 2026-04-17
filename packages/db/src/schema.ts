@@ -447,6 +447,60 @@ export const costMigrations = sqliteTable("cost_migrations", {
 });
 
 /**
+ * Subscription state mirror for Stripe (#167). The `subscriptions` table
+ * is not a source of truth — Stripe is. This table caches enough state
+ * for the gateway's feature-gate middleware to answer "what tier is this
+ * tenant on?" without hitting the Stripe API on every request.
+ *
+ * Rows are upserted by the webhook handler when Stripe fires lifecycle
+ * events. `tier` and `includes_intelligence` are denormalized from the
+ * Stripe Product's metadata at write time so feature-gate reads are one
+ * row away from a decision.
+ */
+export const subscriptions = sqliteTable("subscriptions", {
+  stripeSubscriptionId: text("stripe_subscription_id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  stripeCustomerId: text("stripe_customer_id").notNull(),
+  stripePriceId: text("stripe_price_id").notNull(),
+  stripeProductId: text("stripe_product_id").notNull(),
+  /** Denormalized from product.metadata.tier for fast feature-gate reads. */
+  tier: text("tier").notNull(),
+  includesIntelligence: integer("includes_intelligence", { mode: "boolean" }).notNull().default(false),
+  status: text("status", {
+    enum: ["active", "past_due", "canceled", "trialing", "unpaid", "incomplete", "incomplete_expired", "paused"],
+  }).notNull(),
+  currentPeriodStart: integer("current_period_start", { mode: "timestamp" }).notNull(),
+  currentPeriodEnd: integer("current_period_end", { mode: "timestamp" }).notNull(),
+  cancelAtPeriodEnd: integer("cancel_at_period_end", { mode: "boolean" }).notNull().default(false),
+  trialEnd: integer("trial_end", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  uniqueIndex("subscriptions_tenant_idx").on(table.tenantId),
+  uniqueIndex("subscriptions_customer_idx").on(table.stripeCustomerId),
+]);
+
+/**
+ * Stripe webhook event dedupe table. Stripe can retry any event up to
+ * 3 days on 2xx-non-response; the handler needs to dedupe by event.id
+ * to avoid double-processing. Row is written with processedAt only
+ * after the handler succeeds; on retry we see the row and skip.
+ */
+export const stripeWebhookEvents = sqliteTable("stripe_webhook_events", {
+  eventId: text("event_id").primaryKey(),
+  eventType: text("event_type").notNull(),
+  processedAt: integer("processed_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  /** Raw JSON payload kept for debugging; dropped on a regular schedule. */
+  payload: text("payload"),
+});
+
+/**
  * Persistent state for the in-process scheduler. One row per named job.
  * Survives restart so re-scheduled jobs can resume their cadence and the
  * UI can surface last-run telemetry. The scheduler itself still lives
