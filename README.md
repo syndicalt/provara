@@ -282,6 +282,7 @@ All thresholds are environment variables, read once at gateway startup:
 | `PROVARA_REPLAY_SAMPLE_K` | `5` | Prompts replayed per cell per cycle. Balances cost against detection sensitivity. |
 | `PROVARA_REPLAY_DIVERSITY` | `0.1` | Minimum cosine distance (1 − similarity) a new prompt must have from existing bank entries. Higher = more forced diversity. |
 | `PROVARA_REGRESSION_DELTA` | `-0.5` | Score drop that triggers a regression event. A stricter `-0.3` alerts on smaller drifts; `-0.7` only catches dramatic failures. |
+| `PROVARA_REGRESSED_EXPLORATION_RATE` | `0.5` | ε-greedy rate applied to cells with an active regression. Higher = faster discovery of alternatives at the cost of more routing churn. |
 | `PROVARA_REPLAY_BUDGET_USD` | `5` | Per-tenant weekly cap on replay + judge spend. The cycle skips cells once the cap is hit. |
 | `PROVARA_REPLAY_BANK_INTERVAL_MS` | `86400000` (1 day) | How often the populate job runs. |
 | `PROVARA_REPLAY_CYCLE_INTERVAL_MS` | `604800000` (7 days) | How often the replay job runs. Weekly is usually enough; daily is overkill unless you're in high-change territory. |
@@ -297,7 +298,22 @@ Things to watch for:
 - **Multiple cells, different models, same delta** — calibration issue, not a real regression. This used to be a known false-positive mode when the bank mixed user ratings with judge scores; the fix (#160) now requires judge-scored baselines for apples-to-apples comparison. If you see this pattern today, file an issue with the event details.
 - **Expected delta varies by cell** — smaller cells (less traffic, smaller bank) are noisier. Treat a single-event detection in a low-volume cell with more skepticism than one in a heavy cell.
 
-The feature is deliberately conservative: it won't auto-rollback or auto-switch models. Detection is the signal; what to do with it is an operator call.
+### The closed loop — detection also fixes the route
+
+Everything above is the *detection* half. Detection without action would be a loud alarm nobody can silence. Provara closes the loop automatically in two ways:
+
+1. **Judge scores from replays feed back into the adaptive router's EMA.** Every score the judge produces during a replay cycle is the same kind of signal adaptive routing already consumes from live traffic. We treat them identically: `adaptive.updateScore(cell, provider, model, score, "judge")`. Net effect — the moment a regression is observable, the regressed model's quality EMA drops on the very next routing decision. You don't have to wait for organic judge sampling to catch up. The router stops preferring the degraded model immediately.
+
+2. **Cells with active regressions get a higher ε-greedy exploration rate.** Dropping the EMA moves the router off the bad model, but it only moves the router to whatever was *second-best* at the time. Maybe something even better has come along since. When a cell has an unresolved regression, the exploration rate rises (default `0.5`, configurable via `PROVARA_REGRESSED_EXPLORATION_RATE`) so the router uniformly samples *alternatives* more aggressively. Each of those samples generates fresh EMA signal, and a new winner emerges on real evidence rather than old snapshot data.
+
+The dismissal action flips both off for that cell — the regression event moves to resolved history, the in-memory regression-cell table refreshes, and the cell returns to the normal exploration rate on the next request.
+
+What you'll observe in practice:
+
+- Before the fix lands: the alert fires, you see it on the dashboard, but the router keeps routing to the regressed model for a day or two until live judge samples catch up
+- After the fix: alert fires, next chat completion to that cell sees a different model, dashboard keeps showing the regression so you know why the routing changed, exploration spikes the sample count on alternatives, a new winner stabilizes within hours
+
+The feature is still conservative about hard actions — it does not auto-rollback cost migrations, hard-disable providers, or silently delete the regressed model from your config. Detection produces a signal plus graceful re-routing; destructive actions remain operator decisions.
 
 ## Auto Cost Migrations
 

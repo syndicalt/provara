@@ -15,9 +15,15 @@ export type AdaptiveRouter = Awaited<ReturnType<typeof createAdaptiveRouter>>;
  * #153 cost migrations. When unset, no boost is applied. Kept as a
  * callback so the router doesn't need to know about migration state
  * directly — whoever constructs the router wires this in.
+ *
+ * `isCellRegressing` (#163) is the companion callback for the regression-
+ * event table. When true for a cell, the router uses the higher
+ * `REGRESSED_EXPLORATION_RATE` to accelerate discovery of alternatives
+ * after a regression has been detected.
  */
 export interface AdaptiveRouterOptions {
   getScoreBoost?: (taskType: string, complexity: string, provider: string, model: string) => number;
+  isCellRegressing?: (taskType: string, complexity: string) => boolean;
 }
 
 /**
@@ -29,6 +35,7 @@ export interface AdaptiveRouterOptions {
 export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOptions = {}) {
   const store: ScoreStore = createScoreStore();
   const getScoreBoost = options.getScoreBoost ?? (() => 0);
+  const isCellRegressing = options.isCellRegressing ?? (() => false);
 
   async function updateScore(
     taskType: string,
@@ -101,7 +108,8 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
   ): { target: RouteTarget; via: "adaptive" | "exploration" } | null {
     const cellMap = store.getCellMap(taskType, complexity);
     const stale = isCellStale(cellMap);
-    const exploration = pickExploration(allCandidates, availableProviders, { stale });
+    const regressed = isCellRegressing(taskType, complexity);
+    const exploration = pickExploration(allCandidates, availableProviders, { stale, regressed });
     if (exploration) {
       return { target: exploration, via: "exploration" };
     }
