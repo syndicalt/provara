@@ -265,7 +265,10 @@ export default function RoutingPage() {
 
       {/* Routing Matrix */}
       <section>
-        <h2 className="text-lg font-semibold mb-4">Routing Matrix (Top Model per Cell)</h2>
+        <h2 className="text-lg font-semibold mb-1">Most Frequently Called Model per Cell</h2>
+        <p className="text-sm text-zinc-400 mb-4">
+          Based on historical request count. See <a href="/dashboard/quality" className="text-blue-400 hover:text-blue-300 underline">Quality → Adaptive Routing</a> for quality-based routing decisions.
+        </p>
         <RoutingMatrix stats={stats} />
       </section>
 
