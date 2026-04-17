@@ -32,6 +32,8 @@ import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getMode } from "./config.js";
+import type { Scheduler } from "./scheduler/index.js";
+import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -39,6 +41,7 @@ interface RouterContext {
   /** DB-stored API keys for resolving the embedding provider. Same map
    *  the ProviderRegistry receives. Optional — null-safe. */
   dbKeys?: Record<string, string>;
+  scheduler?: Scheduler;
 }
 
 export async function createRouter(ctx: RouterContext) {
@@ -739,13 +742,37 @@ export async function createRouter(ctx: RouterContext) {
 
   // Adaptive routing scores (for dashboard). Annotates each cell with
   // staleness so the heatmap can render stale cells distinctly — see #148.
-  app.get("/v1/analytics/adaptive/scores", (c) => {
+  // Also annotates active auto-A/B experiments (see #151) so the UI can
+  // surface "experimenting" overlays without a second round-trip.
+  app.get("/v1/analytics/adaptive/scores", async (c) => {
+    const activeAuto = await getActiveAutoAbCells(ctx.db);
+    const autoMap = new Map(activeAuto.map((r) => [`${r.taskType}::${r.complexity}`, r.testId]));
     const cells = routingEngine.adaptive.getAllScores().map((cell) => ({
       ...cell,
       isStale: routingEngine.adaptive.isStale(cell.taskType, cell.complexity),
       lastUpdatedAt: routingEngine.adaptive.lastUpdated(cell.taskType, cell.complexity),
+      activeAutoAbTestId: autoMap.get(`${cell.taskType}::${cell.complexity}`) ?? null,
     }));
     return c.json({ cells });
+  });
+
+  // Scheduler observability (admin-only). Exposes per-job last-run state
+  // so the dashboard can surface a "background jobs" pane and operators
+  // can trigger a manual run during incident response.
+  app.get("/v1/admin/scheduler/jobs", requireRole("owner"), async (c) => {
+    if (!ctx.scheduler) return c.json({ jobs: [] });
+    return c.json({ jobs: await ctx.scheduler.getJobs() });
+  });
+  app.post("/v1/admin/scheduler/jobs/:name/run", requireRole("owner"), async (c) => {
+    if (!ctx.scheduler) return c.json({ error: { message: "scheduler not available" } }, 503);
+    const { name } = c.req.param();
+    try {
+      await ctx.scheduler.runNow(name);
+      return c.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return c.json({ error: { message: msg } }, 404);
+    }
   });
 
   // Cache stats

@@ -23,6 +23,10 @@ export interface AdaptiveCell {
   isStale?: boolean;
   /** ISO string — most recent updatedAt across the cell's models. */
   lastUpdatedAt?: string | null;
+  /** When non-null, the cell has an active auto-generated A/B experiment
+   *  (#151). The heatmap surfaces a small badge so users can see which
+   *  cells the system is currently testing. */
+  activeAutoAbTestId?: string | null;
 }
 
 export interface SparklinePoint {
@@ -161,18 +165,26 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
               const scores = [...(cell?.scores ?? [])].sort((a, b) => b.qualityScore - a.qualityScore);
               const maxSamples = scores.reduce((m, s) => Math.max(m, s.sampleCount), 0);
               const isStale = cell?.isStale === true;
+              const hasAutoAb = Boolean(cell?.activeAutoAbTestId);
               const staleTitle = isStale && cell?.lastUpdatedAt
                 ? `Stale since ${new Date(cell.lastUpdatedAt).toLocaleDateString()} — routing explores more aggressively until fresh signal arrives.`
                 : undefined;
+              const autoAbTitle = hasAutoAb ? "Auto-generated A/B experiment active for this cell." : undefined;
+              const cellTitle = [staleTitle, autoAbTitle].filter(Boolean).join(" ") || undefined;
 
               return (
                 <div
                   key={`${tt}-${cx}`}
-                  title={staleTitle}
-                  className={`border-b border-l p-1 min-h-[64px] ${
+                  title={cellTitle}
+                  className={`border-b border-l p-1 min-h-[64px] relative ${
                     isStale ? "border-amber-800/60 bg-amber-950/10" : "border-zinc-800"
                   }`}
                 >
+                  {hasAutoAb && (
+                    <span className="absolute top-1 right-1 z-20 text-[10px] px-1 py-0.5 rounded bg-indigo-900/70 text-indigo-200 font-medium pointer-events-none">
+                      A/B
+                    </span>
+                  )}
                   {scores.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-xs text-zinc-600">
                       No data
@@ -224,6 +236,10 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-4 h-3 rounded-sm border border-amber-800/60 bg-amber-950/10" />
             <span>Stale</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block px-1 rounded bg-indigo-900/70 text-indigo-200 text-[9px] font-medium">A/B</span>
+            <span>Auto experiment</span>
           </span>
           <span>Opacity = confidence</span>
         </div>
