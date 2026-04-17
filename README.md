@@ -142,9 +142,38 @@ Provara's adaptive router learns from live traffic. Every user rating submitted 
 Two signal sources land in the same `feedback` table:
 
 - **User ratings** (`source: "user"`) — explicit 1–5 scores submitted via `POST /v1/feedback` or the dashboard's Quality view.
-- **LLM-as-judge** (`source: "judge"`) — the gateway automatically samples a configurable fraction of responses (default ~10%, tunable via `/v1/feedback/judge/config`) and asks a cheap model to score relevance, accuracy, and coherence. The average lands as a `feedback` row with `source: "judge"`.
+- **LLM-as-judge** (`source: "judge"`) — the gateway automatically samples a configurable fraction of responses (default ~10%, tunable via `/v1/feedback/judge/config`) and asks another model to score relevance, accuracy, and coherence. The average lands as a `feedback` row with `source: "judge"`.
 
 Both sources feed the same learning loop but with different weights — see [Live learning](#live-learning) below.
+
+### Configuring the judge
+
+The judge has four knobs, all persisted in the `app_config` table and settable from the **Quality** dashboard page or the `/v1/feedback/judge/config` endpoint:
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `enabled` | boolean | Master switch. When `false`, no judge scoring runs regardless of sample rate. |
+| `sampleRate` | number `0.0 – 1.0` | Probability that any completed request gets scored. `0.2` ≈ 20% of responses judged. |
+| `provider` | string \| null | Pin the judge to a specific provider (e.g. `"openai"`). `null` = auto. |
+| `model` | string \| null | Pin the judge to a specific model (e.g. `"gpt-4.1-nano"`). Must pair with `provider`. `null` = auto. |
+
+**Model resolution order:**
+
+1. If both `provider` and `model` are set AND the model exists in the registry, the judge uses that pair.
+2. If the pin is set but the model has left the registry (provider disabled, model deprecated), the judge logs `[judge] pinned model X/Y not in registry; falling back to cheapest` and picks the cheapest available model instead.
+3. If no pin is set, the judge uses the cheapest registered model by input+output token cost.
+
+**When to pin:** the "cheapest model" heuristic backfires in two common situations worth knowing about —
+
+- **Grade inflation.** Very cheap models tend to hand out 4s and 5s uniformly, which gives the adaptive router almost no discriminating signal. Pinning to a slightly beefier judge (e.g. `openai/gpt-4.1-nano`) produces more variation in scores and faster adaptive convergence.
+- **Rate-limited cheapest provider.** If your current cheapest model happens to be on a provider with tight rate limits, judge calls will fail on every invocation until the limit clears. Pinning sidesteps this entirely by picking a stable model.
+
+**Judge-target threshold:** adaptive routing ignores a `(cell, provider, model)` until it has at least `PROVARA_MIN_SAMPLES` scored samples (default `5`, settable as a gateway env var). Lower it to `2` during bootstrapping; raise it back once the matrix has coverage.
+
+**Observability:** judge failures are intentionally non-fatal for the main request, but they now log to stderr so operators can catch systematic breakage:
+
+- `[judge] parse failed — X/Y returned unparseable response: ...` — the judge model didn't return valid JSON. Usually means the pinned model is too weak to follow the prompt; pin to a stronger one.
+- `[judge] X/Y scoring failed: ...` — the judge's LLM call itself errored (rate limit, timeout, auth).
 
 A **routing cell** is the `(taskType, complexity)` tuple the classifier assigns to each request — e.g. `coding/medium` or `creative/simple`. The router tracks a running quality score per `(cell, provider, model)` independently: GPT-4o on `coding/complex` has its own score, separate from GPT-4o on `qa/simple`. This matters because a model that wins on one cell can lose on another, and a blended global score would hide that.
 
@@ -341,7 +370,7 @@ curl -X POST http://localhost:4000/v1/chat/completions \
 | **Quality** | |
 | `GET /v1/feedback/quality/trend` | Quality score trend over time |
 | `GET /v1/feedback/quality/by-model` | Quality scores by model |
-| `GET/PUT /v1/feedback/judge/config` | Configure LLM judge (sample rate, enable/disable) |
+| `GET/PUT /v1/feedback/judge/config` | Configure LLM judge: `enabled`, `sampleRate`, `provider`, `model`. Pin `provider`+`model` to bypass cheapest-first selection (see [Configuring the judge](#configuring-the-judge)). |
 | **Alerts** | |
 | `GET/POST /v1/admin/alerts/rules` | Manage alert rules |
 | `PATCH/DELETE /v1/admin/alerts/rules/:id` | Update or delete a rule |
