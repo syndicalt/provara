@@ -11,6 +11,10 @@ export interface GuardrailRule {
   target: "input" | "output" | "both";
   action: "block" | "redact" | "flag";
   pattern: string | null;
+  /** Pre-compiled regex from `pattern`, attached once by `loadRules` so
+   *  `checkContent` avoids recompiling per request. Null when the pattern
+   *  is missing or invalid. */
+  compiledPattern?: RegExp | null;
   enabled: boolean;
   builtIn: boolean;
 }
@@ -58,7 +62,10 @@ export async function ensureBuiltInRules(db: Db, tenantId: string | null) {
   }
 }
 
-// Load active rules for a tenant
+// Load active rules for a tenant. Regex patterns are compiled here rather
+// than inside checkContent's hot loop — one compilation per rule per load
+// instead of once per rule per request. Invalid patterns are logged
+// loudly (not silent skip) so operators can find and fix them.
 export async function loadRules(db: Db, tenantId: string | null): Promise<GuardrailRule[]> {
   const rows = await db
     .select()
@@ -71,7 +78,24 @@ export async function loadRules(db: Db, tenantId: string | null): Promise<Guardr
     )
     .all();
 
-  return rows as GuardrailRule[];
+  const rules: GuardrailRule[] = [];
+  for (const row of rows) {
+    const rule = row as GuardrailRule;
+    if (rule.pattern) {
+      try {
+        rule.compiledPattern = new RegExp(rule.pattern, "gi");
+      } catch (err) {
+        console.warn(
+          `[guardrails] rule "${rule.name}" (id=${rule.id}) has an invalid regex and was skipped: ${err instanceof Error ? err.message : err}`,
+        );
+        rule.compiledPattern = null;
+      }
+    } else {
+      rule.compiledPattern = null;
+    }
+    rules.push(rule);
+  }
+  return rules;
 }
 
 // Check content against rules
@@ -87,31 +111,31 @@ export function checkContent(
   for (const rule of rules) {
     // Skip rules that don't apply to this target
     if (rule.target !== "both" && rule.target !== target) continue;
-    if (!rule.pattern) continue;
+    const regex = rule.compiledPattern;
+    if (!regex) continue;
 
-    try {
-      const regex = new RegExp(rule.pattern, "gi");
-      const matches = content.match(regex);
+    // Reset lastIndex: global regexes retain state across .match / .replace
+    // calls, which can cause spurious misses on reuse.
+    regex.lastIndex = 0;
+    const matches = content.match(regex);
 
-      if (matches && matches.length > 0) {
-        const snippet = matches[0].slice(0, 50);
+    if (matches && matches.length > 0) {
+      const snippet = matches[0].slice(0, 50);
 
-        violations.push({
-          ruleId: rule.id,
-          ruleName: rule.name,
-          action: rule.action,
-          matchedSnippet: snippet,
-        });
+      violations.push({
+        ruleId: rule.id,
+        ruleName: rule.name,
+        action: rule.action,
+        matchedSnippet: snippet,
+      });
 
-        if (rule.action === "block") {
-          shouldBlock = true;
-        } else if (rule.action === "redact") {
-          processedContent = processedContent.replace(regex, "[REDACTED]");
-        }
-        // "flag" action: just log, don't modify content
+      if (rule.action === "block") {
+        shouldBlock = true;
+      } else if (rule.action === "redact") {
+        regex.lastIndex = 0;
+        processedContent = processedContent.replace(regex, "[REDACTED]");
       }
-    } catch {
-      // Invalid regex — skip this rule
+      // "flag" action: just log, don't modify content
     }
   }
 
