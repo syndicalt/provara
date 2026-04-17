@@ -37,6 +37,7 @@ import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
 import { createRegressionRoutes } from "./routes/regression.js";
 import { createMigrationRoutes } from "./routes/migrations.js";
 import { createWebhookRoutes } from "./routes/webhooks.js";
+import { requireIntelligenceTier } from "./auth/tier.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -137,6 +138,15 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
+
+  // Intelligence-tier routes (#168): gate behind PROVARA_CLOUD + subscription
+  // tier check. Self-host deployments get a 402 with an explanation. Cloud
+  // tenants without a Pro+ subscription get the same 402 with an upgrade CTA
+  // payload the dashboard can use to render an Upgrade card in place of the
+  // feature UI.
+  const tierGate = requireIntelligenceTier(ctx.db);
+  app.use("/v1/regression/*", tierGate);
+  app.use("/v1/cost-migrations/*", tierGate);
   app.route("/v1/regression", createRegressionRoutes(ctx.db, routingEngine.regressionCellTable));
   app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
 

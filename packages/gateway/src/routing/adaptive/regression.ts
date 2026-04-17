@@ -12,6 +12,7 @@ import type { ProviderRegistry } from "../../providers/index.js";
 import type { EmbeddingProvider } from "../../embeddings/index.js";
 import { cosineSimilarity, encodeEmbedding, decodeEmbedding } from "../../embeddings/index.js";
 import { calculateCost } from "../../cost/pricing.js";
+import { tenantHasIntelligenceAccess } from "../../auth/tier.js";
 
 function numEnv(v: string | undefined, fallback: number): number {
   if (v === undefined || v === "") return fallback;
@@ -299,6 +300,11 @@ export async function runBankPopulationCycle(
   const cells = await distinctEligibleCells(db);
   const results: BankPopulateResult[] = [];
   for (const cell of cells) {
+    // Tier gate (#168): even if the tenant has opted in, skip cells owned
+    // by tenants without Intelligence access. Prevents cross-tier leakage
+    // if a tenant downgrades from Pro → Free with opt-in still flagged.
+    const hasTier = await tenantHasIntelligenceAccess(db, cell.tenantId);
+    if (!hasTier) continue;
     const optedIn = await isRegressionDetectionEnabled(db, cell.tenantId);
     if (!optedIn) continue;
     const result = await populateBankForCell(db, embeddings, cell);
@@ -392,6 +398,9 @@ export async function runReplayCycle(
   };
 
   for (const cell of cells) {
+    // Same two-gate pattern as populate: tier check first, opt-in second.
+    const hasTier = await tenantHasIntelligenceAccess(db, cell.tenantId);
+    if (!hasTier) continue;
     const optedIn = await isRegressionDetectionEnabled(db, cell.tenantId);
     if (!optedIn) continue;
 

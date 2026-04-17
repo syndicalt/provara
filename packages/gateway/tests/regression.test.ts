@@ -8,6 +8,7 @@ import {
 } from "@provara/db";
 import type { Db } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
+import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 import {
   REPLAY_BANK_MAX_PER_CELL,
   REPLAY_BANK_MIN_SCORE,
@@ -20,6 +21,10 @@ import {
   resolveRegressionEvent,
 } from "../src/routing/adaptive/regression.js";
 import type { ProviderRegistry, Provider } from "../src/providers/index.js";
+
+beforeEach(() => {
+  resetTierEnv();
+});
 
 function makeRequestRow(
   db: Db,
@@ -118,6 +123,8 @@ describe("runBankPopulationCycle", () => {
       await makeFeedbackRow(db, `r-skip-${i}`, 5);
     }
 
+    await grantIntelligenceAccess(db, "opted-in");
+    await grantIntelligenceAccess(db, "opted-out");
     await setRegressionOptIn(db, "opted-in", true);
 
     const results = await runBankPopulationCycle(db, null);
@@ -151,6 +158,7 @@ describe("runBankPopulationCycle", () => {
     });
     await makeFeedbackRow(db, "hi", REPLAY_BANK_MIN_SCORE);
 
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     await runBankPopulationCycle(db, null);
 
@@ -159,6 +167,7 @@ describe("runBankPopulationCycle", () => {
   });
 
   it("respects REPLAY_BANK_MAX_PER_CELL cap", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     const over = REPLAY_BANK_MAX_PER_CELL + 5;
     for (let i = 0; i < over; i++) {
@@ -180,6 +189,7 @@ describe("runBankPopulationCycle", () => {
   });
 
   it("is idempotent — running twice doesn't duplicate existing entries", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     for (let i = 0; i < 3; i++) {
       await makeRequestRow(db, {
@@ -284,6 +294,7 @@ describe("runReplayCycle", () => {
   }
 
   it("records a regression_events row when replay scores drop below threshold", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     await seedBank("t", 3, 5);
 
@@ -312,6 +323,7 @@ describe("runReplayCycle", () => {
   });
 
   it("does not record an event when replay scores hold steady", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     await seedBank("t", 3, 5);
 
@@ -337,6 +349,10 @@ describe("runReplayCycle", () => {
   });
 
   it("skips tenants that have not opted in", async () => {
+    // Grant Intelligence access so the ONLY remaining gate is the opt-in
+    // check — otherwise this test could pass for the wrong reason (tier
+    // gate skipping it first).
+    await grantIntelligenceAccess(db, "not-opted-in");
     await seedBank("not-opted-in", 3);
 
     const registry = mockRegistry(new Map([
@@ -349,6 +365,7 @@ describe("runReplayCycle", () => {
   });
 
   it("returns early when no judge target is provided", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     await seedBank("t", 3);
 
@@ -404,6 +421,7 @@ describe("bank calibration: user-rated entries excluded (#160)", () => {
   });
 
   it("user-rated prompts are NOT ingested into the bank", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
 
     // Three judge-scored (should be banked), three user-rated (should NOT be)
@@ -438,6 +456,7 @@ describe("bank calibration: user-rated entries excluded (#160)", () => {
   });
 
   it("a cell with only user-rated prompts produces an empty bank", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     for (let i = 0; i < 5; i++) {
       await makeRequestRow(db, {
@@ -495,6 +514,7 @@ describe("regression event dedupe (#160)", () => {
   });
 
   it("second replay cycle updates the existing unresolved event instead of duplicating", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     await seedBankWithScores("t", 3, 5);
 
@@ -523,6 +543,7 @@ describe("regression event dedupe (#160)", () => {
   });
 
   it("a resolved event does not block a new event on the next regression", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     await seedBankWithScores("t", 3, 5);
 
@@ -557,6 +578,7 @@ describe("closed feedback loop (#163)", () => {
   });
 
   it("runReplayCycle feeds judge scores into adaptive.updateScore when writer is provided", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     // Seed bank with judge-scored baselines (post-#160 requirement)
     for (let i = 0; i < 3; i++) {
@@ -615,6 +637,7 @@ describe("closed feedback loop (#163)", () => {
   });
 
   it("does not fail when adaptive writer is omitted (back-compat)", async () => {
+    await grantIntelligenceAccess(db, "t");
     await setRegressionOptIn(db, "t", true);
     for (let i = 0; i < 3; i++) {
       await db.insert(replayBank).values({
