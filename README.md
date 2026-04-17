@@ -429,6 +429,20 @@ curl -X POST http://localhost:4000/v1/chat/completions \
 | `GET/POST/PATCH/DELETE /v1/admin/providers` | Manage custom providers |
 | `GET/PATCH/DELETE /v1/admin/team` | Team member management |
 | `POST /v1/providers/reload` | Hot-reload providers after key changes |
+| **Regression Detection** (#152) | |
+| `GET /v1/regression/status` | Opt-in state, replay-bank size, weekly spend |
+| `POST /v1/regression/opt-in` | Toggle silent-regression detection |
+| `GET /v1/regression/events` | Tenant-scoped regression history (`?unresolvedOnly=true`) |
+| `POST /v1/regression/events/:id/resolve` | Dismiss or mark resolved with a note |
+| **Cost Migrations** (#153) | |
+| `GET /v1/cost-migrations/status` | Opt-in state, monthly projected savings |
+| `POST /v1/cost-migrations/opt-in` | Toggle auto cost migration |
+| `GET /v1/cost-migrations` | List executed migrations (active + rolled back) |
+| `POST /v1/cost-migrations/run` | Trigger a migration cycle manually |
+| `POST /v1/cost-migrations/:id/rollback` | Roll back a migration + clear grace boost |
+| **Scheduler** (owner only) | |
+| `GET /v1/admin/scheduler/jobs` | List registered jobs with last-run state |
+| `POST /v1/admin/scheduler/jobs/:name/run` | Trigger a job immediately |
 | **Auth** (multi-tenant only) | |
 | `GET /auth/login/google` | Google OAuth login |
 | `GET /auth/login/github` | GitHub OAuth login |

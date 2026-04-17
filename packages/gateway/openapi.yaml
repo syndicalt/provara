@@ -1147,6 +1147,266 @@ paths:
                         tokensSavedOutput: { type: integer }
                         hits: { type: integer }
 
+  /v1/regression/status:
+    get:
+      tags: [Regression Detection]
+      summary: Opt-in state, bank size, and weekly budget usage
+      description: |
+        Returns whether silent-regression detection is enabled for the caller's
+        tenant (#152), the number of prompts currently stored in the replay bank,
+        and the USD spent this ISO week against the replay budget.
+      operationId: regressionStatus
+      responses:
+        "200":
+          description: Status payload
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, budget, bankSize, defaultWeeklyBudgetUsd]
+                properties:
+                  enabled: { type: boolean }
+                  bankSize: { type: integer }
+                  defaultWeeklyBudgetUsd: { type: number }
+                  budget:
+                    type: object
+                    properties:
+                      used: { type: number }
+                      limit: { type: number }
+                      remaining: { type: number }
+
+  /v1/regression/opt-in:
+    post:
+      tags: [Regression Detection]
+      summary: Toggle regression detection for the caller's tenant
+      operationId: regressionOptIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+
+  /v1/regression/events:
+    get:
+      tags: [Regression Detection]
+      summary: List regression events
+      description: |
+        Tenant-scoped detection history. Each event captures the cell, the
+        baseline mean vs replay mean, the delta, and the judge-spend cost.
+      operationId: listRegressionEvents
+      parameters:
+        - name: unresolvedOnly
+          in: query
+          schema: { type: boolean }
+          description: When true, only return events with `resolvedAt` null.
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RegressionEvent"
+
+  /v1/regression/events/{id}/resolve:
+    post:
+      tags: [Regression Detection]
+      summary: Mark a regression event resolved
+      operationId: resolveRegressionEvent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        "200":
+          description: Resolved
+        "404":
+          description: Event not found
+
+  /v1/cost-migrations/status:
+    get:
+      tags: [Cost Migrations]
+      summary: Opt-in state and monthly projected savings
+      description: |
+        Reports whether auto cost migration (#153) is enabled for the caller's
+        tenant plus the sum of projected-monthly savings from executed, non-
+        rolled-back migrations this month.
+      operationId: costMigrationStatus
+      responses:
+        "200":
+          description: Status payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+                  savingsThisMonth: { type: number }
+
+  /v1/cost-migrations/opt-in:
+    post:
+      tags: [Cost Migrations]
+      summary: Toggle auto cost migration
+      operationId: costMigrationOptIn
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: Updated state
+
+  /v1/cost-migrations:
+    get:
+      tags: [Cost Migrations]
+      summary: List executed migrations
+      description: |
+        Tenant-scoped. Includes active (within grace window or past grace but
+        not rolled back) and rolled-back entries; distinguish via `rolledBackAt`.
+      operationId: listCostMigrations
+      responses:
+        "200":
+          description: Migrations
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  migrations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CostMigration"
+
+  /v1/cost-migrations/run:
+    post:
+      tags: [Cost Migrations]
+      summary: Trigger a migration cycle manually
+      description: |
+        Runs the same logic the nightly scheduler runs (candidate detection,
+        per-cycle cap, cooldown checks, grace-boost refresh) on demand. Useful
+        in demos and during incident response.
+      operationId: runCostMigrationCycle
+      responses:
+        "200":
+          description: Cycle stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  evaluated: { type: integer }
+                  skippedCooldown: { type: integer }
+                  executed:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        taskType: { type: string }
+                        complexity: { type: string }
+                        projectedMonthlySavingsUsd: { type: number }
+
+  /v1/cost-migrations/{id}/rollback:
+    post:
+      tags: [Cost Migrations]
+      summary: Roll back a migration
+      description: Clears the grace boost for the migration target and stamps a rollback reason for audit.
+      operationId: rollbackCostMigration
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Rolled back
+        "404":
+          description: Migration not found or already rolled back
+
+  /v1/admin/scheduler/jobs:
+    get:
+      tags: [Scheduler]
+      summary: List scheduler jobs and their last-run state
+      description: |
+        Owner-only. Returns every job registered on the in-process scheduler
+        (auto-ab, replay-bank-populate, replay-execute, cost-migration, …)
+        with its interval, enabled flag, run count, and the outcome of its
+        most recent execution.
+      operationId: listSchedulerJobs
+      responses:
+        "200":
+          description: Jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SchedulerJob"
+        "401":
+          description: Not authenticated
+        "403":
+          description: Not authorized (owner role required)
+
+  /v1/admin/scheduler/jobs/{name}/run:
+    post:
+      tags: [Scheduler]
+      summary: Trigger a scheduled job immediately
+      description: Owner-only. Runs the named job synchronously, respecting the in-progress guard.
+      operationId: runSchedulerJob
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+          description: Job name, e.g. `auto-ab`, `replay-execute`, `cost-migration`.
+      responses:
+        "200":
+          description: Ran (or recorded as skipped if already running)
+        "404":
+          description: Unknown job
+        "503":
+          description: Scheduler not wired into this deployment
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1482,6 +1742,63 @@ components:
           type: number
           description: ε-greedy exploration rate (only present on the `exploration` stage)
 
+    RegressionEvent:
+      type: object
+      required: [id, taskType, complexity, provider, model, replayCount, originalMean, replayMean, delta, costUsd, detectedAt]
+      properties:
+        id: { type: string }
+        tenantId: { type: string, nullable: true }
+        taskType: { type: string }
+        complexity: { type: string }
+        provider: { type: string }
+        model: { type: string }
+        replayCount: { type: integer }
+        originalMean: { type: number, description: "Mean baseline score at capture time (1–5)" }
+        replayMean: { type: number, description: "Mean judge score on re-runs (1–5)" }
+        delta: { type: number, description: "replayMean − originalMean. Negative = regression." }
+        costUsd: { type: number, description: "Total judge + replay API spend this detection cycle." }
+        detectedAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time, nullable: true }
+        resolutionNote: { type: string, nullable: true }
+
+    CostMigration:
+      type: object
+      required: [id, taskType, complexity, fromProvider, fromModel, toProvider, toModel, projectedMonthlySavingsUsd, graceEndsAt, executedAt]
+      properties:
+        id: { type: string }
+        tenantId: { type: string, nullable: true }
+        taskType: { type: string }
+        complexity: { type: string }
+        fromProvider: { type: string }
+        fromModel: { type: string }
+        fromCostPer1M: { type: number }
+        fromQualityScore: { type: number }
+        toProvider: { type: string }
+        toModel: { type: string }
+        toCostPer1M: { type: number }
+        toQualityScore: { type: number }
+        projectedMonthlySavingsUsd: { type: number }
+        graceEndsAt: { type: string, format: date-time }
+        executedAt: { type: string, format: date-time }
+        rolledBackAt: { type: string, format: date-time, nullable: true }
+        rollbackReason: { type: string, nullable: true }
+
+    SchedulerJob:
+      type: object
+      required: [name, enabled, intervalMs, runCount]
+      properties:
+        name: { type: string }
+        enabled: { type: boolean }
+        intervalMs: { type: integer }
+        runCount: { type: integer }
+        lastRunAt: { type: string, format: date-time, nullable: true }
+        lastStatus:
+          type: string
+          enum: [ok, error, skipped]
+          nullable: true
+        lastError: { type: string, nullable: true }
+        lastDurationMs: { type: integer, nullable: true }
+
     PipelineStats:
       type: object
       required: [totalRequests, stages]
@@ -1531,5 +1848,11 @@ tags:
     description: Registering additional OpenAI-compatible providers.
   - name: Cache
     description: Completion cache inspection.
+  - name: Regression Detection
+    description: Prompt replay bank, regression events, and weekly replay-budget status (#152).
+  - name: Cost Migrations
+    description: Quality-gated automated cost migrations and rollback (#153).
+  - name: Scheduler
+    description: In-process background job runner — list state and trigger jobs on demand (#151–#153).
   - name: System
     description: Health and meta endpoints.
