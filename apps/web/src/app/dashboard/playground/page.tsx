@@ -3,6 +3,39 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { gatewayClientFetch, gatewayUrl, adminHeaders } from "../../../lib/gateway-client";
 
+function StarRating({
+  value,
+  onChange,
+}: {
+  value?: number;
+  onChange: (v: number) => void;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const displayed = hover ?? value ?? 0;
+  return (
+    <div className="flex items-center gap-0.5" onMouseLeave={() => setHover(null)}>
+      {[1, 2, 3, 4, 5].map((star) => {
+        const filled = star <= displayed;
+        return (
+          <button
+            key={star}
+            type="button"
+            onClick={() => onChange(star)}
+            onMouseEnter={() => setHover(star)}
+            title={`Rate ${star} of 5`}
+            aria-label={`Rate ${star} of 5`}
+            className={`w-6 h-6 flex items-center justify-center text-base leading-none transition-colors ${
+              filled ? "text-amber-400 hover:text-amber-300" : "text-zinc-700 hover:text-zinc-500"
+            }`}
+          >
+            ★
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface ProviderInfo {
   name: string;
   models: string[];
@@ -13,7 +46,8 @@ interface Message {
   content: string;
   model?: string;
   requestId?: string;
-  feedback?: "up" | "down";
+  /** 1-5 star rating; undefined = not rated yet */
+  feedbackScore?: number;
 }
 
 interface ProvaraMetadata {
@@ -229,10 +263,17 @@ export default function PlaygroundPage() {
     sessionStorage.removeItem("pg:messages");
   }
 
-  async function handleFeedback(messageIndex: number, verdict: "up" | "down") {
+  async function handleRate(messageIndex: number, score: number) {
     const msg = messages[messageIndex];
-    if (!msg?.requestId || msg.feedback) return;
-    const score = verdict === "up" ? 5 : 1;
+    if (!msg?.requestId || score < 1 || score > 5) return;
+    if (msg.feedbackScore === score) return; // no-op on re-click of same star
+
+    // Optimistic update — flip the UI immediately, roll back if the POST fails
+    const previousScore = msg.feedbackScore;
+    const optimistic = messages.map((m, i) => (i === messageIndex ? { ...m, feedbackScore: score } : m));
+    setMessages(optimistic);
+    sessionStorage.setItem("pg:messages", JSON.stringify(optimistic));
+
     try {
       const hdrs: Record<string, string> = { "Content-Type": "application/json", ...adminHeaders() };
       if (apiToken) hdrs["Authorization"] = `Bearer ${apiToken}`;
@@ -242,12 +283,16 @@ export default function PlaygroundPage() {
         headers: hdrs,
         body: JSON.stringify({ requestId: msg.requestId, score }),
       });
-      if (!res.ok) return;
-      const updated = messages.map((m, i) => (i === messageIndex ? { ...m, feedback: verdict } : m));
-      setMessages(updated);
-      sessionStorage.setItem("pg:messages", JSON.stringify(updated));
+      if (!res.ok) {
+        // Roll back
+        const rolled = messages.map((m, i) => (i === messageIndex ? { ...m, feedbackScore: previousScore } : m));
+        setMessages(rolled);
+        sessionStorage.setItem("pg:messages", JSON.stringify(rolled));
+      }
     } catch {
-      // Swallow — UI stays unmarked, user can retry
+      const rolled = messages.map((m, i) => (i === messageIndex ? { ...m, feedbackScore: previousScore } : m));
+      setMessages(rolled);
+      sessionStorage.setItem("pg:messages", JSON.stringify(rolled));
     }
   }
 
@@ -350,35 +395,11 @@ export default function PlaygroundPage() {
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 </div>
                 {msg.role === "assistant" && !isGuardrail && msg.requestId && (
-                  <div className="flex gap-1 mt-1.5 ml-1">
-                    <button
-                      onClick={() => handleFeedback(i, "up")}
-                      disabled={!!msg.feedback}
-                      title={msg.feedback === "up" ? "Thanks — feedback recorded" : "Good response"}
-                      className={`px-2 py-1 text-xs rounded-md border transition-colors ${
-                        msg.feedback === "up"
-                          ? "bg-emerald-900/40 border-emerald-700 text-emerald-300"
-                          : msg.feedback
-                          ? "border-zinc-800 text-zinc-600 cursor-not-allowed"
-                          : "border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-700"
-                      }`}
-                    >
-                      👍
-                    </button>
-                    <button
-                      onClick={() => handleFeedback(i, "down")}
-                      disabled={!!msg.feedback}
-                      title={msg.feedback === "down" ? "Thanks — feedback recorded" : "Poor response"}
-                      className={`px-2 py-1 text-xs rounded-md border transition-colors ${
-                        msg.feedback === "down"
-                          ? "bg-rose-900/40 border-rose-700 text-rose-300"
-                          : msg.feedback
-                          ? "border-zinc-800 text-zinc-600 cursor-not-allowed"
-                          : "border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-700"
-                      }`}
-                    >
-                      👎
-                    </button>
+                  <div className="mt-1.5 ml-1">
+                    <StarRating
+                      value={msg.feedbackScore}
+                      onChange={(v) => handleRate(i, v)}
+                    />
                   </div>
                 )}
               </div>
