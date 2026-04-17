@@ -8,6 +8,7 @@ import { SettingsPanel } from "../../../components/chat/SettingsPanel";
 import { StarRating } from "../../../components/chat/StarRating";
 import { CopyButton } from "../../../components/chat/CopyButton";
 import { MarkdownMessage } from "../../../components/chat/MarkdownMessage";
+import { ModelInfoPopover } from "../../../components/chat/ModelInfoPopover";
 import { useChatSession } from "../../../components/chat/use-chat-session";
 import { useSessionPersist } from "../../../components/chat/use-session-persist";
 import type { ChatMessage, MessageAction } from "../../../components/chat/types";
@@ -109,6 +110,7 @@ export default function PlaygroundPage() {
               </optgroup>
             ))}
           </select>
+          <ModelInfoPopover selectedProvider={selectedProvider} selectedModel={selectedModel} />
 
           <div className="ml-auto flex gap-2">
             <button
