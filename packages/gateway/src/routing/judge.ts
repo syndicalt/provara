@@ -11,9 +11,16 @@ const JUDGE_CONFIG_KEY = "judge_config";
 
 let judgeSampleRate = parseFloat(process.env.PROVARA_JUDGE_SAMPLE_RATE || "0.1");
 let judgeEnabled = true;
+let judgeProvider: string | null = null;
+let judgeModel: string | null = null;
 
 export function getJudgeConfig() {
-  return { sampleRate: judgeSampleRate, enabled: judgeEnabled };
+  return {
+    sampleRate: judgeSampleRate,
+    enabled: judgeEnabled,
+    provider: judgeProvider,
+    model: judgeModel,
+  };
 }
 
 export async function hydrateJudgeConfig(db: Db) {
@@ -24,13 +31,20 @@ export async function hydrateJudgeConfig(db: Db) {
     .get();
   if (!row) return;
   try {
-    const parsed = JSON.parse(row.value) as { sampleRate?: number; enabled?: boolean };
+    const parsed = JSON.parse(row.value) as {
+      sampleRate?: number;
+      enabled?: boolean;
+      provider?: string | null;
+      model?: string | null;
+    };
     if (typeof parsed.sampleRate === "number") {
       judgeSampleRate = Math.max(0, Math.min(1, parsed.sampleRate));
     }
     if (typeof parsed.enabled === "boolean") {
       judgeEnabled = parsed.enabled;
     }
+    if (parsed.provider !== undefined) judgeProvider = parsed.provider || null;
+    if (parsed.model !== undefined) judgeModel = parsed.model || null;
   } catch {
     // Malformed row — leave defaults in place
   }
@@ -38,7 +52,12 @@ export async function hydrateJudgeConfig(db: Db) {
 
 export async function setJudgeConfig(
   db: Db,
-  config: { sampleRate?: number; enabled?: boolean }
+  config: {
+    sampleRate?: number;
+    enabled?: boolean;
+    provider?: string | null;
+    model?: string | null;
+  }
 ) {
   if (config.sampleRate !== undefined) {
     judgeSampleRate = Math.max(0, Math.min(1, config.sampleRate));
@@ -46,7 +65,15 @@ export async function setJudgeConfig(
   if (config.enabled !== undefined) {
     judgeEnabled = config.enabled;
   }
-  const value = JSON.stringify({ sampleRate: judgeSampleRate, enabled: judgeEnabled });
+  if (config.provider !== undefined) judgeProvider = config.provider || null;
+  if (config.model !== undefined) judgeModel = config.model || null;
+
+  const value = JSON.stringify({
+    sampleRate: judgeSampleRate,
+    enabled: judgeEnabled,
+    provider: judgeProvider,
+    model: judgeModel,
+  });
   const now = new Date();
   await db
     .insert(appConfig)
@@ -128,11 +155,24 @@ export interface JudgeContext {
   model: string;
 }
 
+function resolveJudgeTarget(registry: ProviderRegistry): { provider: string; model: string } | null {
+  if (judgeProvider && judgeModel) {
+    const pinned = registry.get(judgeProvider);
+    if (pinned && pinned.models.includes(judgeModel)) {
+      return { provider: judgeProvider, model: judgeModel };
+    }
+    console.warn(
+      `[judge] pinned model ${judgeProvider}/${judgeModel} not in registry; falling back to cheapest`
+    );
+  }
+  return findCheapestModel(registry);
+}
+
 export function createJudge(registry: ProviderRegistry, db: Db, adaptive: AdaptiveRouter) {
   async function maybeJudge(ctx: JudgeContext): Promise<void> {
     if (!shouldJudge()) return;
 
-    const target = findCheapestModel(registry);
+    const target = resolveJudgeTarget(registry);
     if (!target) return;
 
     const provider = registry.get(target.provider);
