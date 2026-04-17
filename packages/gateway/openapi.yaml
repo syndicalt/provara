@@ -809,6 +809,18 @@ paths:
           in: query
           schema:
             type: string
+        - name: orderBy
+          in: query
+          description: Column to sort by. Values outside the server whitelist are ignored (falls back to `createdAt`).
+          schema:
+            type: string
+            enum: [createdAt, latencyMs, inputTokens, outputTokens, provider, model, taskType, complexity, routedBy, cost]
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         "200":
           description: Paginated request list including `cached`, `usedFallback`, and `fallbackErrors` per row.
