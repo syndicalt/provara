@@ -26,17 +26,30 @@ import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
 import { getTenantId } from "./auth/tenant.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
+import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
+import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getMode } from "./config.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
   db: Db;
+  /** DB-stored API keys for resolving the embedding provider. Same map
+   *  the ProviderRegistry receives. Optional — null-safe. */
+  dbKeys?: Record<string, string>;
 }
 
 export async function createRouter(ctx: RouterContext) {
   const app = new Hono();
   const routingEngine = await createRoutingEngine({ registry: ctx.registry, db: ctx.db });
   const judge = createJudge(ctx.registry, ctx.db, routingEngine.adaptive);
+
+  // Semantic cache — null when no embedding provider is available (no
+  // API key, disabled via env var, or unknown model). Treat as "off":
+  // exact-match cache still works and the LLM path is unaffected.
+  const embeddings = createEmbeddingProvider({ dbKeys: ctx.dbKeys });
+  const semanticCache: SemanticCache | null = embeddings
+    ? await createSemanticCache(ctx.db, embeddings)
+    : null;
 
   // Enable CORS for web dashboard and browser-based API clients
   app.use("/*", cors({
@@ -187,64 +200,116 @@ export async function createRouter(ctx: RouterContext) {
 
     const tenantId = tokenInfo?.tenant || getTenantId(c.req.raw) || null;
 
-    // Check cache before calling any provider
+    // Check cache before calling any provider.
+    // Cache lookup order: exact-match (in-memory) → semantic-match (embedding
+    // cosine). A hit on either returns immediately without billing the
+    // provider and logs tokensSaved* so the dashboard can advertise savings.
     const skipCache = !isCacheable || routingResult.routedBy === "ab-test";
-    if (!skipCache) {
-      const cached = getCached(request.messages, routingResult.provider, routingResult.model);
-      if (cached) {
-        const cacheHitId = nanoid();
-        await ctx.db
-          .insert(requests)
-          .values({
-            id: cacheHitId,
-            provider: cached.provider,
-            model: cached.model,
-            prompt: JSON.stringify(request.messages),
-            response: cached.content,
-            inputTokens: cached.usage.inputTokens,
-            outputTokens: cached.usage.outputTokens,
-            latencyMs: 0,
+    const returnCachedHit = async (
+      content: string,
+      providerForResp: string,
+      modelForResp: string,
+      cacheSource: "exact" | "semantic",
+      inputTokens: number,
+      outputTokens: number,
+      hitId: string,
+    ) => {
+      await ctx.db
+        .insert(requests)
+        .values({
+          id: hitId,
+          provider: providerForResp,
+          model: modelForResp,
+          prompt: JSON.stringify(request.messages),
+          response: content,
+          inputTokens,
+          outputTokens,
+          latencyMs: 0,
+          taskType: routingResult.taskType,
+          complexity: routingResult.complexity,
+          routedBy: routingResult.routedBy,
+          usedFallback: false,
+          cached: true,
+          cacheSource,
+          tokensSavedInput: inputTokens,
+          tokensSavedOutput: outputTokens,
+          tenantId,
+          abTestId: routingResult.abTestId || null,
+        })
+        .run();
+      c.header("X-Provara-Request-Id", hitId);
+      c.header("X-Provara-Cache", cacheSource);
+      return c.json({
+        id: `chatcmpl-${hitId}`,
+        object: "chat.completion",
+        created: Math.floor(Date.now() / 1000),
+        model: modelForResp,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content },
+            finish_reason: "stop",
+          },
+        ],
+        usage: {
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+          total_tokens: inputTokens + outputTokens,
+        },
+        _provara: {
+          provider: providerForResp,
+          latencyMs: 0,
+          cached: true,
+          cacheSource,
+          routing: {
             taskType: routingResult.taskType,
             complexity: routingResult.complexity,
             routedBy: routingResult.routedBy,
             usedFallback: false,
-            cached: true,
-            tenantId,
-            abTestId: routingResult.abTestId || null,
-          })
-          .run();
+            usedLlmFallback: routingResult.usedLlmFallback,
+          },
+        },
+      });
+    };
 
-        c.header("X-Provara-Request-Id", cacheHitId);
-        return c.json({
-          id: `chatcmpl-${cached.id}`,
-          object: "chat.completion",
-          created: Math.floor(Date.now() / 1000),
-          model: routingResult.model,
-          choices: [
-            {
-              index: 0,
-              message: { role: "assistant", content: cached.content },
-              finish_reason: "stop",
-            },
-          ],
-          usage: {
-            prompt_tokens: cached.usage.inputTokens,
-            completion_tokens: cached.usage.outputTokens,
-            total_tokens: cached.usage.inputTokens + cached.usage.outputTokens,
-          },
-          _provara: {
-            provider: cached.provider,
-            latencyMs: 0,
-            cached: true,
-            routing: {
-              taskType: routingResult.taskType,
-              complexity: routingResult.complexity,
-              routedBy: routingResult.routedBy,
-              usedFallback: false,
-              usedLlmFallback: routingResult.usedLlmFallback,
-            },
-          },
-        });
+    if (!skipCache) {
+      const cached = getCached(request.messages, routingResult.provider, routingResult.model);
+      if (cached) {
+        return returnCachedHit(
+          cached.content,
+          cached.provider,
+          cached.model,
+          "exact",
+          cached.usage.inputTokens,
+          cached.usage.outputTokens,
+          nanoid(),
+        );
+      }
+
+      // Semantic cache is best-effort: any error (embedding API down, quota,
+      // timeout) falls through to the LLM path silently.
+      if (semanticCache) {
+        try {
+          const match = await semanticCache.get(
+            request.messages,
+            tenantId,
+            routingResult.provider,
+            routingResult.model,
+          );
+          if (match) {
+            return returnCachedHit(
+              match.row.response,
+              match.row.provider,
+              match.row.model,
+              "semantic",
+              match.row.inputTokens,
+              match.row.outputTokens,
+              nanoid(),
+            );
+          }
+        } catch (err) {
+          console.warn("[semantic-cache] lookup failed:", err instanceof Error ? err.message : err);
+        }
       }
     }
 
@@ -370,14 +435,25 @@ export async function createRouter(ctx: RouterContext) {
                 }).catch(() => {});
 
                 if (!skipCache) {
-                  putCache(request.messages, usedProvider, usedModel, {
+                  const completedResponse: CompletionResponse = {
                     id: requestId,
                     provider: usedProvider,
                     model: usedModel,
                     content: fullContent,
                     usage,
                     latencyMs,
-                  });
+                  };
+                  putCache(request.messages, usedProvider, usedModel, completedResponse);
+                  if (semanticCache) {
+                    void semanticCache
+                      .put(request.messages, tenantId, usedProvider, usedModel, completedResponse)
+                      .catch((err) => {
+                        console.warn(
+                          "[semantic-cache] writeback failed:",
+                          err instanceof Error ? err.message : err,
+                        );
+                      });
+                  }
                 }
 
                 judge.maybeJudge({
@@ -514,6 +590,16 @@ export async function createRouter(ctx: RouterContext) {
     // Cache the response for future identical requests
     if (!skipCache) {
       putCache(request.messages, usedProvider, usedModel, response);
+      if (semanticCache) {
+        void semanticCache
+          .put(request.messages, tenantId, usedProvider, usedModel, response)
+          .catch((err) => {
+            console.warn(
+              "[semantic-cache] writeback failed:",
+              err instanceof Error ? err.message : err,
+            );
+          });
+      }
     }
 
     // Fire-and-forget: LLM-as-judge quality scoring on a sample of responses

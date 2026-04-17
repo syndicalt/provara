@@ -120,6 +120,13 @@
       "when": 1776393483411,
       "tag": "0016_motionless_shinobi_shaw",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1776431053750,
+      "tag": "0017_chilly_tana_nile",
+      "breakpoints": true
     }
   ]
 }

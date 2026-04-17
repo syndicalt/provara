@@ -46,6 +46,20 @@ function StatCard({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SavingsCard({ savings }: { savings: { tokensSavedTotal: number; hits: { exact: number; semantic: number; total: number }; hitRate: number } | null }) {
+  const saved = savings?.tokensSavedTotal || 0;
+  const pct = ((savings?.hitRate || 0) * 100).toFixed(1);
+  return (
+    <div className="bg-gradient-to-br from-emerald-950/40 via-zinc-900 to-zinc-900 border border-emerald-900/40 rounded-lg p-5">
+      <p className="text-sm text-emerald-300 mb-1">Tokens Saved</p>
+      <p className="text-2xl font-semibold">{formatTokens(saved)}</p>
+      <p className="text-xs text-zinc-500 mt-1">
+        {pct}% hit rate · {savings?.hits.semantic || 0} semantic / {savings?.hits.exact || 0} exact
+      </p>
+    </div>
+  );
+}
+
 function OnboardingCard() {
   return (
     <section className="bg-gradient-to-br from-blue-950/40 via-zinc-900 to-zinc-900 border border-blue-900/40 rounded-xl p-8">
@@ -114,10 +128,19 @@ const requestColumns: Column<RequestRow>[] = [
   }},
 ];
 
+interface CacheSavings {
+  tokensSavedInput: number;
+  tokensSavedOutput: number;
+  tokensSavedTotal: number;
+  hits: { exact: number; semantic: number; total: number };
+  hitRate: number;
+}
+
 export default function Dashboard() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [costsByModel, setCostsByModel] = useState<CostByModel[]>([]);
   const [recentRequests, setRecentRequests] = useState<RequestRow[]>([]);
+  const [cacheSavings, setCacheSavings] = useState<CacheSavings | null>(null);
   const [totalRequests, setTotalRequests] = useState(0);
   const [reqPage, setReqPage] = useState(0);
   const [reqPageSize, setReqPageSize] = useState(10);
@@ -142,12 +165,14 @@ export default function Dashboard() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const [overviewData, costsData] = await Promise.all([
+      const [overviewData, costsData, savingsData] = await Promise.all([
         gatewayClientFetch<Overview>(`/v1/analytics/overview`),
         gatewayClientFetch<{ costs: CostByModel[] }>(`/v1/analytics/costs/by-model`),
+        gatewayClientFetch<CacheSavings>(`/v1/analytics/cache/savings`).catch(() => null),
       ]);
       setOverview(overviewData);
       setCostsByModel(costsData.costs || []);
+      setCacheSavings(savingsData);
     } catch (err) {
       console.error("Failed to fetch dashboard data:", err);
     } finally {
@@ -202,11 +227,12 @@ export default function Dashboard() {
       ) : (
         <>
           {/* Overview Stats */}
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-5 gap-4">
             <StatCard label="Total Requests" value={formatNumber(overview?.totalRequests || 0)} />
             <StatCard label="Total Cost" value={formatCost(overview?.totalCost || 0)} />
             <StatCard label="Avg Latency" value={formatLatency(overview?.avgLatency || 0)} />
             <StatCard label="Active Providers" value={String(overview?.providerCount || 0)} />
+            <SavingsCard savings={cacheSavings} />
           </div>
 
           {/* Cost by Model */}

@@ -210,6 +210,35 @@ The adaptive winner isn't chosen on quality alone. Each candidate is scored agai
 
 Profiles can be set per API token (via `/v1/admin/tokens`) so a production workload and a throwaway experiment can share the same adaptive scores but route differently.
 
+## How Provara saves tokens
+
+Token cost is a per-token charge from the upstream provider. Wire-level compression (gzip, brotli) doesn't reduce it — tokens are already a compressed representation. The only honest paths to savings are **semantic**: don't bill tokens you've already paid for.
+
+Provara runs two cache layers before any provider call:
+
+1. **Exact-match cache** — in-memory, 5-minute TTL. A byte-for-byte identical prompt hits this in microseconds. No tokens billed. Default-on for deterministic requests (`temperature = 0`).
+2. **Semantic cache** — embeddings + cosine similarity. A prompt that's *semantically equivalent* to one you've seen recently — even if the wording differs — returns the cached response. Also zero tokens billed. Default-on when an OpenAI API key is available.
+
+On a hit from either layer, the `requests` row records `cached = true`, `cache_source = "exact" | "semantic"`, and the `tokens_saved_input` / `tokens_saved_output` columns capture what would have been billed. The dashboard and `/v1/analytics/cache/savings` endpoint aggregate these into the advertisable "Tokens Saved" number.
+
+### Semantic cache mechanics
+
+- **Eligibility:** single-turn user requests with an optional system prompt. Multi-turn conversations miss (history-matching semantics are unresolved — better to miss cleanly than guess).
+- **Match criteria:** same `(tenant, provider, model)`, same system-prompt hash, cosine similarity ≥ `PROVARA_SEMANTIC_CACHE_THRESHOLD` (default `0.97`).
+- **Safety net:** prompts that look personalized ("my ...", "our ...", emails, phone numbers) skip the semantic match. They still hit the exact cache. This is a soft heuristic, not a security boundary.
+- **Model:** `text-embedding-3-small` by default (`PROVARA_EMBEDDING_MODEL`). Cached vectors are tagged with their embedding model, so switching models invalidates the semantic cache without returning stale cross-space matches.
+- **Storage:** DB-backed (`semantic_cache` table) with an in-memory mirror rehydrated on boot. LRU eviction at 10,000 entries per tenant.
+- **Opt-out:** per-request (`{"cache": false}`), per-deployment (`PROVARA_SEMANTIC_CACHE_ENABLED=false`).
+
+### Tuning
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `PROVARA_SEMANTIC_CACHE_ENABLED` | `true` | Hard off-switch. When `false`, the semantic layer is skipped entirely; exact-match cache is unaffected. |
+| `PROVARA_SEMANTIC_CACHE_THRESHOLD` | `0.97` | Cosine similarity required for a match. Raise to err on the side of correctness (fewer hits, zero false positives); lower for aggressive deduplication. |
+| `PROVARA_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model. Must be one of `text-embedding-3-small`, `text-embedding-3-large`, `text-embedding-ada-002`. |
+| `PROVARA_EMBEDDING_PROVIDER` | `openai` | Only `openai` is supported in the MVP. Unknown values disable semantic cache. |
+
 ## A/B Testing Guide
 
 ![A/B Tests](public/abtests.png)

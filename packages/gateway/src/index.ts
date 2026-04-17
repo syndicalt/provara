@@ -21,11 +21,12 @@ await runMigrations(db, resolve(process.cwd(), "packages/db/drizzle"));
 await hydrateJudgeConfig(db);
 await hydrateRoutingConfig(db);
 
+const dbKeys = await getDecryptedKeys(db);
 const registry = await createProviderRegistry({
-  getKeys: () => getDecryptedKeys(db),
+  getKeys: () => dbKeys,
   getCustomProviders: () => loadCustomProviders(db),
 });
-const app = await createRouter({ registry, db });
+const app = await createRouter({ registry, db, dbKeys });
 
 // Discover available models from each provider's API at startup
 registry.refreshModels().then((results) => {

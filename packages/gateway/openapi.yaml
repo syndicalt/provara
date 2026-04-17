@@ -924,6 +924,50 @@ paths:
         "200":
           description: Cache stats
 
+  /v1/analytics/cache/savings:
+    get:
+      tags: [Cache, Analytics]
+      summary: Tokens saved by cache hits (exact + semantic)
+      description: |
+        Sum of input and output tokens that were served from cache and therefore
+        not billed to the upstream provider. Broken down by cache source (exact
+        vs semantic) and by model.
+      operationId: cacheSavings
+      responses:
+        "200":
+          description: Savings stats
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokensSavedInput, tokensSavedOutput, tokensSavedTotal, hits, hitRate, byModel]
+                properties:
+                  tokensSavedInput:
+                    type: integer
+                  tokensSavedOutput:
+                    type: integer
+                  tokensSavedTotal:
+                    type: integer
+                  hits:
+                    type: object
+                    properties:
+                      exact: { type: integer }
+                      semantic: { type: integer }
+                      total: { type: integer }
+                  hitRate:
+                    type: number
+                    description: Cache hits / total requests (0–1)
+                  byModel:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        provider: { type: string }
+                        model: { type: string }
+                        tokensSavedInput: { type: integer }
+                        tokensSavedOutput: { type: integer }
+                        hits: { type: integer }
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1013,6 +1057,10 @@ components:
         cached:
           type: boolean
           description: True if this response was served from the local completion cache.
+        cacheSource:
+          type: string
+          enum: [exact, semantic]
+          description: Which cache layer served the response. Only present when `cached = true`.
         routing:
           $ref: "#/components/schemas/RoutingMetadata"
         errors:
@@ -1151,6 +1199,19 @@ components:
         cached:
           type: boolean
           description: True if this row was written by a cache hit (no provider call was made).
+        cacheSource:
+          type: string
+          nullable: true
+          enum: [exact, semantic]
+          description: Which cache layer served this row. Null when `cached = false`.
+        tokensSavedInput:
+          type: integer
+          nullable: true
+          description: Input tokens that would have been billed but weren't. Non-null only on cache hits.
+        tokensSavedOutput:
+          type: integer
+          nullable: true
+          description: Output tokens that would have been billed but weren't. Non-null only on cache hits.
         fallbackErrors:
           type: string
           nullable: true
