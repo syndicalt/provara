@@ -44,6 +44,13 @@ interface TrendPoint {
 interface JudgeConfig {
   sampleRate: number;
   enabled: boolean;
+  provider: string | null;
+  model: string | null;
+}
+
+interface ProviderInfo {
+  name: string;
+  models: string[];
 }
 
 const RANGES = [
@@ -126,6 +133,7 @@ export default function QualityPage() {
   const [trend, setTrend] = useState<TrendPoint[]>([]);
   const [trendRange, setTrendRange] = useState("7d");
   const [judgeConfig, setJudgeConfigState] = useState<JudgeConfig | null>(null);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
   const { getSparkline, pulsedKeys } = useAdaptiveScoreBuffer(adaptiveCells);
@@ -141,20 +149,23 @@ export default function QualityPage() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [modelRes, adaptiveRes, feedbackRes, configRes] = await Promise.all([
+        const [modelRes, adaptiveRes, feedbackRes, configRes, providersRes] = await Promise.all([
           gatewayFetchRaw("/v1/feedback/quality/by-model"),
           gatewayFetchRaw("/v1/analytics/adaptive/scores"),
           gatewayFetchRaw("/v1/feedback?limit=20"),
           gatewayFetchRaw("/v1/feedback/judge/config"),
+          gatewayFetchRaw("/v1/providers"),
         ]);
         const modelData = await modelRes.json();
         const adaptiveData = await adaptiveRes.json();
         const feedbackData = await feedbackRes.json();
         const configData = await configRes.json();
+        const providersData = await providersRes.json();
         setByModel(modelData.quality || []);
         setAdaptiveCells(adaptiveData.cells || []);
         setRecentFeedback(feedbackData.feedback || []);
         setJudgeConfigState(configData);
+        setProviders(providersData.providers || []);
       } catch (err) {
         console.error("Failed to fetch quality data:", err);
       } finally {
@@ -249,7 +260,7 @@ export default function QualityPage() {
         <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
           <h2 className="text-sm font-semibold text-zinc-300 mb-4">LLM Judge Configuration</h2>
           <p className="text-xs text-zinc-500 mb-4">
-            The judge automatically scores a sample of responses using the cheapest available model.
+            The judge automatically scores a sample of responses. Pin a specific model below, or let it pick the cheapest available.
           </p>
           <div className="flex items-end gap-6">
             <div>
@@ -282,6 +293,31 @@ export default function QualityPage() {
                 <span>50%</span>
                 <span>100%</span>
               </div>
+            </div>
+            <div className="flex-1 max-w-xs">
+              <label className="block text-xs text-zinc-400 mb-1">Judge Model</label>
+              <select
+                value={judgeConfig.provider && judgeConfig.model ? `${judgeConfig.provider}:${judgeConfig.model}` : ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (!v) {
+                    setJudgeConfigState({ ...judgeConfig, provider: null, model: null });
+                  } else {
+                    const [provider, ...rest] = v.split(":");
+                    setJudgeConfigState({ ...judgeConfig, provider, model: rest.join(":") });
+                  }
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded text-xs px-2 py-1.5 text-zinc-200"
+              >
+                <option value="">Auto (cheapest)</option>
+                {providers.flatMap((p) =>
+                  p.models.map((m) => (
+                    <option key={`${p.name}:${m}`} value={`${p.name}:${m}`}>
+                      {p.name} / {m}
+                    </option>
+                  ))
+                )}
+              </select>
             </div>
             <button
               onClick={handleSaveConfig}
