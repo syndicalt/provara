@@ -154,7 +154,7 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
 
     const rows = await db
       .select({
-        bucket: sql<string>`strftime(${fmt}, datetime(${feedback.createdAt} / 1000, 'unixepoch'))`,
+        bucket: sql<string>`strftime(${fmt}, datetime(${feedback.createdAt}, 'unixepoch'))`,
         avgScore: sql<number>`avg(${feedback.score})`,
         count: sql<number>`count(*)`,
         userCount: sql<number>`sum(case when ${feedback.source} = 'user' then 1 else 0 end)`,
