@@ -3,7 +3,7 @@ import type { TaskType, Complexity } from "../../classifier/types.js";
 import type { RouteTarget } from "../types.js";
 import { EMA_ALPHA, ema, getQualityAlpha } from "./ema.js";
 import { MIN_SAMPLES, computeRouteScore, getModelCost, resolveWeights } from "./scoring.js";
-import { pickExploration } from "./exploration.js";
+import { isStaleTimestamp, pickExploration } from "./exploration.js";
 import { createScoreStore, type ScoreStore } from "./score-store.js";
 import { loadScoresFromDb, persistScore } from "./persistence.js";
 import type { FeedbackSource, ModelScore, RoutingProfile, RoutingWeights } from "./types.js";
@@ -29,12 +29,14 @@ export async function createAdaptiveRouter(db: Db) {
   ): Promise<void> {
     const alpha = getQualityAlpha(source);
     const existing = store.get(taskType, complexity, provider, model);
+    const now = new Date();
 
     let qualityScore: number;
     let sampleCount: number;
     if (existing) {
       existing.qualityScore = ema(existing.qualityScore, newScore, alpha);
       existing.sampleCount++;
+      existing.updatedAt = now;
       qualityScore = existing.qualityScore;
       sampleCount = existing.sampleCount;
     } else {
@@ -47,6 +49,7 @@ export async function createAdaptiveRouter(db: Db) {
         sampleCount,
         costPer1M: getModelCost(model),
         avgLatencyMs: 0,
+        updatedAt: now,
       });
     }
 
@@ -72,6 +75,10 @@ export async function createAdaptiveRouter(db: Db) {
    * and `via: "adaptive"` when the EMA-scoring branch picked the winner.
    * Returns null when no adaptive candidate qualifies and exploration
    * didn't fire — caller falls through to cheapest-first.
+   *
+   * Cells whose most-recent update is older than the stale threshold get
+   * a boosted exploration rate so their stored EMA doesn't drift further
+   * from current truth. See #148.
    */
   function getBestModel(
     taskType: TaskType,
@@ -81,12 +88,13 @@ export async function createAdaptiveRouter(db: Db) {
     allCandidates: RouteTarget[],
     customWeights?: RoutingWeights,
   ): { target: RouteTarget; via: "adaptive" | "exploration" } | null {
-    const exploration = pickExploration(allCandidates, availableProviders);
+    const cellMap = store.getCellMap(taskType, complexity);
+    const stale = isCellStale(cellMap);
+    const exploration = pickExploration(allCandidates, availableProviders, { stale });
     if (exploration) {
       return { target: exploration, via: "exploration" };
     }
 
-    const cellMap = store.getCellMap(taskType, complexity);
     if (!cellMap || cellMap.size === 0) return null;
 
     const candidates = Array.from(cellMap.values()).filter(
@@ -120,6 +128,37 @@ export async function createAdaptiveRouter(db: Db) {
     return store.getAllScores();
   }
 
+  /**
+   * Most-recent `updatedAt` across all models in a cell, or null if the
+   * cell has no timestamps (e.g. feedback-seeded, never updated through
+   * `updateScore`). `isCellStale` builds on this.
+   */
+  function cellLastUpdated(cellMap: Map<string, ModelScore> | undefined): Date | null {
+    if (!cellMap || cellMap.size === 0) return null;
+    let mostRecent: Date | null = null;
+    for (const s of cellMap.values()) {
+      if (!s.updatedAt) continue;
+      if (!mostRecent || s.updatedAt.getTime() > mostRecent.getTime()) {
+        mostRecent = s.updatedAt;
+      }
+    }
+    return mostRecent;
+  }
+
+  function isCellStale(cellMap: Map<string, ModelScore> | undefined): boolean {
+    return isStaleTimestamp(cellLastUpdated(cellMap));
+  }
+
+  /** Public read for analytics/UI: is this cell past the stale threshold? */
+  function isStale(taskType: string, complexity: string): boolean {
+    return isCellStale(store.getCellMap(taskType, complexity));
+  }
+
+  /** Public read for analytics/UI: the cell's most-recent updatedAt. */
+  function lastUpdated(taskType: string, complexity: string): Date | null {
+    return cellLastUpdated(store.getCellMap(taskType, complexity));
+  }
+
   await loadScoresFromDb(db, store);
 
   return {
@@ -128,6 +167,8 @@ export async function createAdaptiveRouter(db: Db) {
     getBestModel,
     getCellScores,
     getAllScores,
+    isStale,
+    lastUpdated,
     loadScoresFromDb: () => loadScoresFromDb(db, store),
   };
 }

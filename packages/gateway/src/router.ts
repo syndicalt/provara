@@ -737,9 +737,15 @@ export async function createRouter(ctx: RouterContext) {
     return c.json({ providers });
   });
 
-  // Adaptive routing scores (for dashboard)
+  // Adaptive routing scores (for dashboard). Annotates each cell with
+  // staleness so the heatmap can render stale cells distinctly — see #148.
   app.get("/v1/analytics/adaptive/scores", (c) => {
-    return c.json({ cells: routingEngine.adaptive.getAllScores() });
+    const cells = routingEngine.adaptive.getAllScores().map((cell) => ({
+      ...cell,
+      isStale: routingEngine.adaptive.isStale(cell.taskType, cell.complexity),
+      lastUpdatedAt: routingEngine.adaptive.lastUpdated(cell.taskType, cell.complexity),
+    }));
+    return c.json({ cells });
   });
 
   // Cache stats

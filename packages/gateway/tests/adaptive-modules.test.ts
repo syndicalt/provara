@@ -5,7 +5,7 @@ import {
   computeRouteScore,
   resolveWeights,
 } from "../src/routing/adaptive/scoring.js";
-import { pickExploration } from "../src/routing/adaptive/exploration.js";
+import { pickExploration, isStaleTimestamp, STALE_AFTER_MS } from "../src/routing/adaptive/exploration.js";
 import type { RouteTarget } from "../src/routing/types.js";
 
 describe("ema math", () => {
@@ -148,5 +148,36 @@ describe("pickExploration", () => {
     const onlyOpenAI = new Set(["openai"]);
     // 3 candidates but only 1 available → not eligible for exploration
     expect(pickExploration(candidates, onlyOpenAI)).toBeNull();
+  });
+
+  it("stale cells use the boosted exploration rate (default 0.5)", () => {
+    // Draw 0.3 — above the normal 0.1 (would miss) but under the stale 0.5
+    // (should hit). Second draw picks the index.
+    vi.spyOn(Math, "random").mockReturnValueOnce(0.3).mockReturnValueOnce(0.0);
+    const normal = pickExploration(candidates, available, { stale: false });
+    expect(normal).toBeNull();
+
+    vi.spyOn(Math, "random").mockReturnValueOnce(0.3).mockReturnValueOnce(0.0);
+    const stale = pickExploration(candidates, available, { stale: true });
+    expect(stale).not.toBeNull();
+  });
+});
+
+describe("isStaleTimestamp", () => {
+  it("returns false for null/undefined", () => {
+    expect(isStaleTimestamp(null)).toBe(false);
+    expect(isStaleTimestamp(undefined)).toBe(false);
+  });
+
+  it("returns false for a recent timestamp", () => {
+    expect(isStaleTimestamp(new Date(Date.now() - 60_000))).toBe(false);
+  });
+
+  it("returns true for a timestamp older than the threshold", () => {
+    expect(isStaleTimestamp(new Date(Date.now() - STALE_AFTER_MS - 1000))).toBe(true);
+  });
+
+  it("returns false right at the boundary", () => {
+    expect(isStaleTimestamp(new Date(Date.now() - STALE_AFTER_MS + 1000))).toBe(false);
   });
 });

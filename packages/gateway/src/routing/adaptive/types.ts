@@ -18,4 +18,8 @@ export interface ModelScore {
   costPer1M: number;
   /** EMA of observed latency in ms. */
   avgLatencyMs: number;
+  /** Last time this score was updated. Null for rows seeded purely from
+   *  pre-EMA feedback aggregation. Used to detect stale cells and force
+   *  exploration on them. */
+  updatedAt?: Date | null;
 }
