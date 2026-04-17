@@ -8,6 +8,13 @@ export interface ChatMessage {
   requestId?: string;
   /** 1-5 star rating; undefined = not rated yet */
   feedbackScore?: number;
+  /** Per-turn metrics captured from response headers / trailing SSE event. */
+  cost?: number;
+  latencyMs?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  /** "exact" | "semantic" when the response came from cache. */
+  cacheSource?: "exact" | "semantic";
 }
 
 export interface ProvaraMetadata {

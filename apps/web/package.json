@@ -17,10 +17,14 @@
     "@provara/db": "*",
     "@scalar/api-reference-react": "^0.9.23",
     "@xyflow/react": "^12.10.2",
+    "highlight.js": "^11.11.1",
     "next": "^15.3.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "recharts": "^3.8.1"
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.8.1",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

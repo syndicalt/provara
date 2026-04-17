@@ -6,9 +6,11 @@ import { ChatInput, type ChatInputHandle } from "../../../components/chat/ChatIn
 import { MessageList } from "../../../components/chat/MessageList";
 import { SettingsPanel } from "../../../components/chat/SettingsPanel";
 import { StarRating } from "../../../components/chat/StarRating";
+import { CopyButton } from "../../../components/chat/CopyButton";
+import { MarkdownMessage } from "../../../components/chat/MarkdownMessage";
 import { useChatSession } from "../../../components/chat/use-chat-session";
 import { useSessionPersist } from "../../../components/chat/use-session-persist";
-import type { MessageAction } from "../../../components/chat/types";
+import type { ChatMessage, MessageAction } from "../../../components/chat/types";
 
 interface ProviderInfo {
   name: string;
@@ -70,6 +72,22 @@ export default function PlaygroundPage() {
     ),
   };
 
+  const copyAction: MessageAction = {
+    id: "copy",
+    // Show on every message, user and assistant alike — "copy what I said" is useful too.
+    showFor: () => true,
+    render: (msg) => <CopyButton text={msg.content} />,
+  };
+
+  // Render assistant messages as markdown; user prompts stay as plain text so
+  // their exact input is preserved visually (no surprise auto-formatting).
+  function renderContent(msg: ChatMessage) {
+    if (msg.role === "assistant") {
+      return <MarkdownMessage content={msg.content} />;
+    }
+    return <p className="text-sm whitespace-pre-wrap">{msg.content}</p>;
+  }
+
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
       <div className="flex-1 flex flex-col min-w-0">
@@ -121,7 +139,8 @@ export default function PlaygroundPage() {
           streaming={session.streaming}
           streamingContent={session.streamingContent}
           topicStartIndex={session.topicStartIndex}
-          actions={[ratingAction]}
+          actions={[copyAction, ratingAction]}
+          renderContent={renderContent}
           emptyState={
             <div className="flex items-center justify-center h-full">
               <div className="text-center max-w-md">
@@ -140,6 +159,17 @@ export default function PlaygroundPage() {
           onChange={setInput}
           onSend={handleSend}
           disabled={session.streaming}
+          rightAddon={
+            session.streaming ? (
+              <button
+                type="button"
+                onClick={session.stop}
+                className="px-3 h-[44px] bg-red-600 hover:bg-red-500 rounded-xl text-sm font-medium text-white transition-colors shrink-0"
+              >
+                Stop
+              </button>
+            ) : undefined
+          }
         />
       </div>
 
