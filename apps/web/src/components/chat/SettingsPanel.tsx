@@ -14,7 +14,7 @@ interface Props {
 export function SettingsPanel({ open, title = "Settings", children }: Props) {
   if (!open) return null;
   return (
-    <div className="w-72 border-l border-zinc-800 bg-zinc-900/50 p-4 space-y-5 overflow-y-auto">
+    <div className="w-72 bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-5 overflow-y-auto">
       <h3 className="text-sm font-semibold text-zinc-300">{title}</h3>
       {children}
     </div>

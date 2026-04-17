@@ -30,7 +30,7 @@ export function MessageList({
   }, [messages, streamingContent]);
 
   return (
-    <div className="flex-1 overflow-y-auto scrollbar-thin px-4 py-6">
+    <div className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg overflow-y-auto scrollbar-thin px-4 py-6">
       <div className="max-w-4xl mx-auto space-y-6">
         {messages.length === 0 && !streamingContent && emptyState}
 

@@ -55,7 +55,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
   }
 
   return (
-    <div className="border-t border-zinc-800 px-4 py-3">
+    <div className="bg-zinc-900 border border-zinc-800 rounded-lg px-4 py-3">
       <div className="flex gap-3 items-end max-w-4xl mx-auto">
         {leftAddon}
         <textarea
@@ -66,7 +66,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput(
           placeholder={placeholder}
           disabled={disabled}
           rows={1}
-          className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50 overflow-hidden"
+          className="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-blue-500 resize-none disabled:opacity-50 overflow-hidden"
           style={{ minHeight: "44px", maxHeight: "200px" }}
           onInput={(e) => {
             const t = e.target as HTMLTextAreaElement;
