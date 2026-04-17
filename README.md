@@ -302,7 +302,19 @@ curl -X PATCH http://localhost:4000/v1/ab-tests/YOUR_TEST_ID \
 
 Or pause it with `"status": "paused"` to stop traffic splitting without losing data.
 
+## Playground
+
+The dashboard ships with an interactive chat UI at **[`/dashboard/playground`](http://localhost:3001/dashboard/playground)** for exercising the gateway end-to-end without touching `curl`.
+
+- **Model selection** — pick a specific `provider/model`, or leave it blank to let the adaptive router choose. The response panel shows which route won (`explicit`, `adaptive`, `ab-test`, `classification`, etc.) and the `X-Provara-Request-Id` header so you can cross-reference the logs view.
+- **Inline 5-star rating** — every assistant turn has a rating row. Clicking a star posts to `POST /v1/feedback` with `source: "user"` and the request ID. Scores feed the same EMA used by the adaptive router, so playground ratings train production routing directly — see [Live learning](#live-learning).
+- **Comparison / replay** — any request from the playground (or anywhere else) can be opened in `/dashboard/logs/:id` and replayed against a different model with a side-by-side diff.
+
+The playground is the easiest way to bootstrap quality data: 20–30 rated turns per `(taskType, complexity)` cell is usually enough to start biasing traffic measurably.
+
 ## API
+
+**Full reference:** an OpenAPI 3 spec lives at [`packages/gateway/openapi.yaml`](packages/gateway/openapi.yaml) and is rendered as an interactive reference at **[`/docs/api`](http://localhost:3001/docs/api)** on the dashboard (powered by [Scalar](https://scalar.com)). When you change the spec, the web app's `predev`/`prebuild` script syncs it to `apps/web/public/openapi.yaml` automatically.
 
 ### Chat Completions (OpenAI-compatible)
 
