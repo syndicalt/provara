@@ -159,7 +159,13 @@ export function createJudge(registry: ProviderRegistry, db: Db, adaptive: Adapti
       });
 
       const result = parseJudgeResponse(response.content);
-      if (!result) return;
+      if (!result) {
+        console.warn(
+          `[judge] parse failed — ${target.provider}/${target.model} returned unparseable response:`,
+          response.content.slice(0, 200)
+        );
+        return;
+      }
 
       // Store as feedback with source "judge"
       await db.insert(feedback)
@@ -183,8 +189,11 @@ export function createJudge(registry: ProviderRegistry, db: Db, adaptive: Adapti
           "judge"
         );
       }
-    } catch {
-      // Judge failure is silent — don't affect the main request
+    } catch (err) {
+      console.warn(
+        `[judge] ${target.provider}/${target.model} scoring failed:`,
+        err instanceof Error ? err.message : err
+      );
     }
   }
 

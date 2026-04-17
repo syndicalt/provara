@@ -43,7 +43,7 @@ export async function createRouter(ctx: RouterContext) {
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Lang", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Package-Version", "X-Stainless-Retry-Count"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
   // Mount OAuth routes (public, only in multi_tenant mode)
@@ -261,7 +261,7 @@ export async function createRouter(ctx: RouterContext) {
           usedProvider = attempt.provider;
           usedModel = attempt.model;
           if (attempt !== attempts[0]) usedFallback = true;
-          const responseId = nanoid();
+          const requestId = nanoid();
           const start = performance.now();
 
           const sseStream = new ReadableStream({
@@ -274,7 +274,7 @@ export async function createRouter(ctx: RouterContext) {
                 fullContent += chunk.content;
                 if (chunk.usage) usage = chunk.usage;
                 const sseData = JSON.stringify({
-                  id: `chatcmpl-${responseId}`,
+                  id: `chatcmpl-${requestId}`,
                   object: "chat.completion.chunk",
                   created: Math.floor(Date.now() / 1000),
                   model: usedModel,
@@ -301,7 +301,6 @@ export async function createRouter(ctx: RouterContext) {
 
                 // Log after stream completes
                 const latencyMs = Math.round(performance.now() - start);
-                const requestId = nanoid();
                 await ctx.db
                   .insert(requests)
                   .values({
@@ -343,7 +342,7 @@ export async function createRouter(ctx: RouterContext) {
 
                 if (!skipCache) {
                   putCache(request.messages, {
-                    id: responseId,
+                    id: requestId,
                     provider: usedProvider,
                     model: usedModel,
                     content: fullContent,
@@ -374,6 +373,7 @@ export async function createRouter(ctx: RouterContext) {
             "Connection": "keep-alive",
             "X-Provara-Model": usedModel,
             "X-Provara-Provider": usedProvider,
+            "X-Provara-Request-Id": requestId,
           };
           if (guardrailViolations.size > 0) {
             streamHeaders["X-Provara-Guardrail"] = JSON.stringify([...guardrailViolations]);
@@ -510,6 +510,7 @@ export async function createRouter(ctx: RouterContext) {
     }
 
     // Return OpenAI-compatible response format
+    c.header("X-Provara-Request-Id", requestId);
     return c.json({
       id: `chatcmpl-${response.id}`,
       object: "chat.completion",

@@ -12,6 +12,8 @@ interface Message {
   role: "system" | "user" | "assistant";
   content: string;
   model?: string;
+  requestId?: string;
+  feedback?: "up" | "down";
 }
 
 interface ProvaraMetadata {
@@ -142,6 +144,7 @@ export default function PlaygroundPage() {
 
       // Read model info from response headers
       const headerModel = res.headers.get("X-Provara-Model") || "";
+      const requestId = res.headers.get("X-Provara-Request-Id") || undefined;
 
       // Check for guardrail violations
       const guardrailHeader = res.headers.get("X-Provara-Guardrail");
@@ -192,7 +195,7 @@ export default function PlaygroundPage() {
         }
       }
 
-      const finalMessages = [...newMessages, { role: "assistant" as const, content: fullContent, model: headerModel || responseModel || undefined }];
+      const finalMessages = [...newMessages, { role: "assistant" as const, content: fullContent, model: headerModel || responseModel || undefined, requestId }];
       setMessages(finalMessages);
       setStreamingContent("");
       // Persist completed messages so they survive navigation
@@ -224,6 +227,28 @@ export default function PlaygroundPage() {
     setLastMeta(null);
     setTopicStartIndex(0);
     sessionStorage.removeItem("pg:messages");
+  }
+
+  async function handleFeedback(messageIndex: number, verdict: "up" | "down") {
+    const msg = messages[messageIndex];
+    if (!msg?.requestId || msg.feedback) return;
+    const score = verdict === "up" ? 5 : 1;
+    try {
+      const hdrs: Record<string, string> = { "Content-Type": "application/json", ...adminHeaders() };
+      if (apiToken) hdrs["Authorization"] = `Bearer ${apiToken}`;
+      const res = await fetch(gatewayUrl("/v1/feedback"), {
+        method: "POST",
+        credentials: "include",
+        headers: hdrs,
+        body: JSON.stringify({ requestId: msg.requestId, score }),
+      });
+      if (!res.ok) return;
+      const updated = messages.map((m, i) => (i === messageIndex ? { ...m, feedback: verdict } : m));
+      setMessages(updated);
+      sessionStorage.setItem("pg:messages", JSON.stringify(updated));
+    } catch {
+      // Swallow — UI stays unmarked, user can retry
+    }
   }
 
   function handleModelChange(value: string) {
@@ -309,7 +334,7 @@ export default function PlaygroundPage() {
                   <div className="flex-1 h-px bg-zinc-800" />
                 </div>
               )}
-              <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div key={i} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
                 <div
                   className={`max-w-2xl rounded-xl px-4 py-3 ${
                     isGuardrail
@@ -324,6 +349,38 @@ export default function PlaygroundPage() {
                   )}
                   <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
                 </div>
+                {msg.role === "assistant" && !isGuardrail && msg.requestId && (
+                  <div className="flex gap-1 mt-1.5 ml-1">
+                    <button
+                      onClick={() => handleFeedback(i, "up")}
+                      disabled={!!msg.feedback}
+                      title={msg.feedback === "up" ? "Thanks — feedback recorded" : "Good response"}
+                      className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                        msg.feedback === "up"
+                          ? "bg-emerald-900/40 border-emerald-700 text-emerald-300"
+                          : msg.feedback
+                          ? "border-zinc-800 text-zinc-600 cursor-not-allowed"
+                          : "border-zinc-700 text-zinc-400 hover:text-emerald-300 hover:border-emerald-700"
+                      }`}
+                    >
+                      👍
+                    </button>
+                    <button
+                      onClick={() => handleFeedback(i, "down")}
+                      disabled={!!msg.feedback}
+                      title={msg.feedback === "down" ? "Thanks — feedback recorded" : "Poor response"}
+                      className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                        msg.feedback === "down"
+                          ? "bg-rose-900/40 border-rose-700 text-rose-300"
+                          : msg.feedback
+                          ? "border-zinc-800 text-zinc-600 cursor-not-allowed"
+                          : "border-zinc-700 text-zinc-400 hover:text-rose-300 hover:border-rose-700"
+                      }`}
+                    >
+                      👎
+                    </button>
+                  </div>
+                )}
               </div>
               </>
             );
