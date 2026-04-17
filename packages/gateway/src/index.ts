@@ -19,6 +19,7 @@ import { runBankPopulationCycle, runReplayCycle } from "./routing/adaptive/regre
 import { runCostMigrationCycle } from "./routing/adaptive/migrations.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getJudgeConfig } from "./routing/judge.js";
+import { isCloudDeployment } from "./config.js";
 
 const port = parseInt(process.env.PORT || "4000", 10);
 
@@ -33,21 +34,30 @@ const registry = await createProviderRegistry({
   getCustomProviders: () => loadCustomProviders(db),
 });
 const scheduler = createScheduler(db);
+
+// Intelligence-tier scheduler jobs only register on Cloud deployments (#168).
+// Self-host installs load the scheduler primitive for future/core jobs but
+// don't fire the paid-tier cycles. Cloud deployments register all three +
+// cost-migration below.
+const cloudDeployment = isCloudDeployment();
+
 const AUTO_AB_INTERVAL_MS = parseInt(
   process.env.PROVARA_AUTO_AB_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
   10,
 );
-await scheduler.schedule({
-  name: "auto-ab",
-  intervalMs: AUTO_AB_INTERVAL_MS,
-  initialDelayMs: 30_000,
-  handler: async () => {
-    const { created, resolved } = await runAutoAbCycle(db);
-    if (created.length || resolved.length) {
-      console.log(`[auto-ab] cycle complete: ${created.length} created, ${resolved.length} resolved`);
-    }
-  },
-});
+if (cloudDeployment) {
+  await scheduler.schedule({
+    name: "auto-ab",
+    intervalMs: AUTO_AB_INTERVAL_MS,
+    initialDelayMs: 30_000,
+    handler: async () => {
+      const { created, resolved } = await runAutoAbCycle(db);
+      if (created.length || resolved.length) {
+        console.log(`[auto-ab] cycle complete: ${created.length} created, ${resolved.length} resolved`);
+      }
+    },
+  });
+}
 
 const BANK_POPULATE_INTERVAL_MS = parseInt(
   process.env.PROVARA_REPLAY_BANK_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
@@ -57,65 +67,71 @@ const REPLAY_CYCLE_INTERVAL_MS = parseInt(
   process.env.PROVARA_REPLAY_CYCLE_INTERVAL_MS || `${7 * 24 * 60 * 60 * 1000}`,
   10,
 );
-await scheduler.schedule({
-  name: "replay-bank-populate",
-  intervalMs: BANK_POPULATE_INTERVAL_MS,
-  initialDelayMs: 60_000,
-  handler: async () => {
-    const embeddings = createEmbeddingProvider({ dbKeys });
-    const results = await runBankPopulationCycle(db, embeddings);
-    if (results.length > 0) {
-      console.log(`[regression] bank populate: ${results.length} cell(s) updated`);
-    }
-  },
-});
+if (cloudDeployment) {
+  await scheduler.schedule({
+    name: "replay-bank-populate",
+    intervalMs: BANK_POPULATE_INTERVAL_MS,
+    initialDelayMs: 60_000,
+    handler: async () => {
+      const embeddings = createEmbeddingProvider({ dbKeys });
+      const results = await runBankPopulationCycle(db, embeddings);
+      if (results.length > 0) {
+        console.log(`[regression] bank populate: ${results.length} cell(s) updated`);
+      }
+    },
+  });
+}
 const app = await createRouter({ registry, db, dbKeys, scheduler });
 
 // Replay cycle registered after the router because it needs access to the
 // adaptive EMA writer (#163): replay judge scores feed back into
 // `model_scores`, and if a regression fires we refresh the regression-cell
 // table so the next routing decision boosts exploration on that cell.
-await scheduler.schedule({
-  name: "replay-execute",
-  intervalMs: REPLAY_CYCLE_INTERVAL_MS,
-  initialDelayMs: 120_000,
-  handler: async () => {
-    const config = getJudgeConfig();
-    const target = config.provider && config.model
-      ? { provider: config.provider, model: config.model }
-      : null;
-    const stats = await runReplayCycle(db, registry, target, app.routingEngine.adaptive);
-    if (stats.regressionsDetected > 0) {
-      await app.routingEngine.regressionCellTable.refresh();
-    }
-    if (stats.replaysExecuted > 0 || stats.regressionsDetected > 0) {
-      console.log(
-        `[regression] replay cycle: evaluated=${stats.cellsEvaluated} replays=${stats.replaysExecuted} regressions=${stats.regressionsDetected} cost=$${stats.totalCostUsd.toFixed(4)}`,
-      );
-    }
-  },
-});
+if (cloudDeployment) {
+  await scheduler.schedule({
+    name: "replay-execute",
+    intervalMs: REPLAY_CYCLE_INTERVAL_MS,
+    initialDelayMs: 120_000,
+    handler: async () => {
+      const config = getJudgeConfig();
+      const target = config.provider && config.model
+        ? { provider: config.provider, model: config.model }
+        : null;
+      const stats = await runReplayCycle(db, registry, target, app.routingEngine.adaptive);
+      if (stats.regressionsDetected > 0) {
+        await app.routingEngine.regressionCellTable.refresh();
+      }
+      if (stats.replaysExecuted > 0 || stats.regressionsDetected > 0) {
+        console.log(
+          `[regression] replay cycle: evaluated=${stats.cellsEvaluated} replays=${stats.replaysExecuted} regressions=${stats.regressionsDetected} cost=$${stats.totalCostUsd.toFixed(4)}`,
+        );
+      }
+    },
+  });
+}
 
 const COST_MIGRATION_INTERVAL_MS = parseInt(
   process.env.PROVARA_COST_MIGRATION_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
   10,
 );
-await scheduler.schedule({
-  name: "cost-migration",
-  intervalMs: COST_MIGRATION_INTERVAL_MS,
-  initialDelayMs: 90_000,
-  handler: async () => {
-    const stats = await runCostMigrationCycle(db);
-    if (stats.executed.length > 0) {
-      console.log(
-        `[cost-migration] executed ${stats.executed.length} migration(s), projected $${stats.executed.reduce((s, m) => s + m.projectedMonthlySavingsUsd, 0).toFixed(2)}/mo saved`,
-      );
-      // Refresh the boost table so the router picks up the new migration
-      // without a restart — boost applies on the very next routing decision.
-      await app.routingEngine.boostTable.refresh();
-    }
-  },
-});
+if (cloudDeployment) {
+  await scheduler.schedule({
+    name: "cost-migration",
+    intervalMs: COST_MIGRATION_INTERVAL_MS,
+    initialDelayMs: 90_000,
+    handler: async () => {
+      const stats = await runCostMigrationCycle(db);
+      if (stats.executed.length > 0) {
+        console.log(
+          `[cost-migration] executed ${stats.executed.length} migration(s), projected $${stats.executed.reduce((s, m) => s + m.projectedMonthlySavingsUsd, 0).toFixed(2)}/mo saved`,
+        );
+        // Refresh the boost table so the router picks up the new migration
+        // without a restart — boost applies on the very next routing decision.
+        await app.routingEngine.boostTable.refresh();
+      }
+    },
+  });
+}
 
 scheduler.start();
 
