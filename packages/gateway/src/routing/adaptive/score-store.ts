@@ -16,6 +16,16 @@ export function modelKey(provider: string, model: string): string {
  * replica-2 until the next restart. The `model_scores` table is the durable
  * source of truth so a single process recovers cleanly on boot. Horizontal
  * scaling is tracked in #50; overall state strategy in #121.
+ *
+ * Concurrency: these Maps are mutated in-place from async contexts
+ * (persistence hydrate, updateScore, updateLatency). Node.js is
+ * single-threaded for JS execution so reads won't see torn *memory*,
+ * but a read can still observe a half-updated logical state if a
+ * reader is scheduled between two awaits inside a writer. This is
+ * acceptable today because (a) there's only one event loop, (b) the
+ * writes are idempotent, and (c) any observed stale read converges on
+ * the next update. Do NOT introduce worker threads here without
+ * switching to an immutable-snapshot pattern first. Tracked in #137.
  */
 export function createScoreStore() {
   const scores = new Map<string, Map<string, ModelScore>>();
