@@ -127,6 +127,13 @@
       "when": 1776431053750,
       "tag": "0017_chilly_tana_nile",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1776434800227,
+      "tag": "0018_magenta_ezekiel",
+      "breakpoints": true
     }
   ]
 }
