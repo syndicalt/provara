@@ -37,25 +37,44 @@ interface RequestRow {
   createdAt: string;
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
-      <p className="text-sm text-zinc-400 mb-1">{label}</p>
-      <p className="text-2xl font-semibold">{value}</p>
-    </div>
-  );
-}
+type StatAccent = "default" | "blue" | "amber" | "purple" | "cyan" | "emerald";
 
-function SavingsCard({ savings }: { savings: { tokensSavedTotal: number; hits: { exact: number; semantic: number; total: number }; hitRate: number } | null }) {
-  const saved = savings?.tokensSavedTotal || 0;
-  const pct = ((savings?.hitRate || 0) * 100).toFixed(1);
+// Full class names (not string-composed) so Tailwind's build-time
+// extractor sees every variant. Changing a color here flows to the card
+// background gradient, border tint, and label color in one place.
+const STAT_ACCENT_BG: Record<StatAccent, string> = {
+  default: "bg-zinc-900 border-zinc-800",
+  blue: "bg-gradient-to-br from-blue-950/40 via-zinc-900 to-zinc-900 border-blue-900/40",
+  amber: "bg-gradient-to-br from-amber-950/40 via-zinc-900 to-zinc-900 border-amber-900/40",
+  purple: "bg-gradient-to-br from-purple-950/40 via-zinc-900 to-zinc-900 border-purple-900/40",
+  cyan: "bg-gradient-to-br from-cyan-950/40 via-zinc-900 to-zinc-900 border-cyan-900/40",
+  emerald: "bg-gradient-to-br from-emerald-950/40 via-zinc-900 to-zinc-900 border-emerald-900/40",
+};
+const STAT_ACCENT_LABEL: Record<StatAccent, string> = {
+  default: "text-zinc-400",
+  blue: "text-blue-300",
+  amber: "text-amber-300",
+  purple: "text-purple-300",
+  cyan: "text-cyan-300",
+  emerald: "text-emerald-300",
+};
+
+function StatCard({
+  label,
+  value,
+  subtitle,
+  accent = "default",
+}: {
+  label: string;
+  value: string;
+  subtitle?: string;
+  accent?: StatAccent;
+}) {
   return (
-    <div className="bg-gradient-to-br from-emerald-950/40 via-zinc-900 to-zinc-900 border border-emerald-900/40 rounded-lg p-5">
-      <p className="text-sm text-emerald-300 mb-1">Tokens Saved</p>
-      <p className="text-2xl font-semibold">{formatTokens(saved)}</p>
-      <p className="text-xs text-zinc-500 mt-1">
-        {pct}% hit rate · {savings?.hits.semantic || 0} semantic / {savings?.hits.exact || 0} exact
-      </p>
+    <div className={`border rounded-lg p-5 ${STAT_ACCENT_BG[accent]}`}>
+      <p className={`text-sm mb-1 ${STAT_ACCENT_LABEL[accent]}`}>{label}</p>
+      <p className="text-2xl font-semibold">{value}</p>
+      {subtitle && <p className="text-xs text-zinc-500 mt-1">{subtitle}</p>}
     </div>
   );
 }
@@ -228,11 +247,36 @@ export default function Dashboard() {
         <>
           {/* Overview Stats */}
           <div className="grid grid-cols-5 gap-4">
-            <StatCard label="Total Requests" value={formatNumber(overview?.totalRequests || 0)} />
-            <StatCard label="Total Cost" value={formatCost(overview?.totalCost || 0)} />
-            <StatCard label="Avg Latency" value={formatLatency(overview?.avgLatency || 0)} />
-            <StatCard label="Active Providers" value={String(overview?.providerCount || 0)} />
-            <SavingsCard savings={cacheSavings} />
+            <StatCard
+              label="Total Requests"
+              value={formatNumber(overview?.totalRequests || 0)}
+              accent="blue"
+            />
+            <StatCard
+              label="Total Cost"
+              value={formatCost(overview?.totalCost || 0)}
+              accent="amber"
+            />
+            <StatCard
+              label="Avg Latency"
+              value={formatLatency(overview?.avgLatency || 0)}
+              accent="purple"
+            />
+            <StatCard
+              label="Active Providers"
+              value={String(overview?.providerCount || 0)}
+              accent="cyan"
+            />
+            <StatCard
+              label="Tokens Saved"
+              value={formatTokens(cacheSavings?.tokensSavedTotal || 0)}
+              subtitle={
+                cacheSavings
+                  ? `${(cacheSavings.hitRate * 100).toFixed(1)}% hit rate · ${cacheSavings.hits.semantic} semantic / ${cacheSavings.hits.exact} exact`
+                  : undefined
+              }
+              accent="emerald"
+            />
           </div>
 
           {/* Cost by Model */}
