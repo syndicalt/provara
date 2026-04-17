@@ -6,13 +6,16 @@ export default function PrivacyPage() {
       <PublicNav />
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
-        <p className="text-sm text-zinc-500 mb-12">Last updated: April 15, 2026</p>
+        <p className="text-sm text-zinc-500 mb-12">Last updated: April 17, 2026</p>
 
         <div className="prose prose-invert prose-sm prose-zinc max-w-none space-y-8">
           <section>
             <h2 className="text-lg font-semibold mb-3">Overview</h2>
             <p className="text-zinc-400 leading-relaxed">
               Provara is an LLM gateway that routes requests to AI providers on your behalf. We take your privacy seriously. This policy explains what data we collect, how we use it, and your rights regarding that data.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              The Provara managed service is operated by <strong>CoreLumen, LLC</strong> ("CoreLumen," "we," "us," "our"), which is the data controller for information collected through provara.xyz.
             </p>
             <p className="text-zinc-400 leading-relaxed mt-3">
               <strong className="text-zinc-300">Self-hosted users:</strong> If you deploy Provara on your own infrastructure, your data never touches our servers. This policy applies only to users of the managed service at provara.xyz.
@@ -89,7 +92,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-lg font-semibold mb-3">Your Rights</h2>
             <p className="text-zinc-400 leading-relaxed">
-              You can access, export, or delete your data at any time. To request data deletion or if you have questions about this policy, contact us at{" "}
+              You can access, export, or delete your data at any time. To request data deletion or if you have questions about this policy, contact CoreLumen, LLC at{" "}
               <a href="mailto:privacy@provara.xyz" className="text-blue-400 hover:text-blue-300">privacy@provara.xyz</a>.
             </p>
           </section>
