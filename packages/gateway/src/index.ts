@@ -13,6 +13,8 @@ import { getDecryptedKeys } from "./routes/api-keys.js";
 import { loadCustomProviders } from "./providers/custom-loader.js";
 import { hydrateJudgeConfig } from "./routing/judge.js";
 import { hydrateRoutingConfig } from "./routing/config.js";
+import { createScheduler } from "./scheduler/index.js";
+import { runAutoAbCycle } from "./routing/adaptive/auto-ab.js";
 
 const port = parseInt(process.env.PORT || "4000", 10);
 
@@ -26,7 +28,25 @@ const registry = await createProviderRegistry({
   getKeys: () => dbKeys,
   getCustomProviders: () => loadCustomProviders(db),
 });
-const app = await createRouter({ registry, db, dbKeys });
+const scheduler = createScheduler(db);
+const AUTO_AB_INTERVAL_MS = parseInt(
+  process.env.PROVARA_AUTO_AB_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
+  10,
+);
+await scheduler.schedule({
+  name: "auto-ab",
+  intervalMs: AUTO_AB_INTERVAL_MS,
+  initialDelayMs: 30_000,
+  handler: async () => {
+    const { created, resolved } = await runAutoAbCycle(db);
+    if (created.length || resolved.length) {
+      console.log(`[auto-ab] cycle complete: ${created.length} created, ${resolved.length} resolved`);
+    }
+  },
+});
+scheduler.start();
+
+const app = await createRouter({ registry, db, dbKeys, scheduler });
 
 // Discover available models from each provider's API at startup
 registry.refreshModels().then((results) => {
