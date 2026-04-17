@@ -444,6 +444,73 @@ paths:
         "200":
           description: Deleted
 
+  /v1/conversations/{id}/share:
+    post:
+      tags: [Conversations]
+      summary: Create or return an active share token for a conversation
+      description: |
+        If a non-revoked share already exists for this conversation, its
+        token is returned (200). Otherwise a new token is minted (201).
+      operationId: shareConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Existing share returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareToken"
+        "201":
+          description: New share created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareToken"
+        "404":
+          description: Conversation not found
+
+  /v1/shares/{token}:
+    delete:
+      tags: [Conversations]
+      summary: Revoke a share token
+      operationId: revokeShare
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Revoked
+
+  /v1/shared/{token}:
+    get:
+      tags: [Conversations]
+      summary: Public read of a shared conversation (no auth required)
+      operationId: readSharedConversation
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Shared conversation contents
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SharedConversation"
+        "404":
+          description: Share not found or revoked
+
   /v1/admin/tokens:
     get:
       tags: [Tokens]
@@ -1101,6 +1168,36 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    ShareToken:
+      type: object
+      required: [token, createdAt]
+      properties:
+        token:
+          type: string
+          description: Opaque public share token; prefixed `sh_`.
+        createdAt:
+          type: string
+          format: date-time
+
+    SharedConversation:
+      type: object
+      required: [token, title, messages, createdAt, conversationCreatedAt]
+      properties:
+        token:
+          type: string
+        title:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+        createdAt:
+          type: string
+          format: date-time
+        conversationCreatedAt:
+          type: string
+          format: date-time
+
     ConversationSummary:
       type: object
       required: [id, title, createdAt, updatedAt]
