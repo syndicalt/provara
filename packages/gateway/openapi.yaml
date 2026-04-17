@@ -969,7 +969,7 @@ components:
           enum: [simple, medium, complex]
         routedBy:
           type: string
-          enum: [classification, routing-hint, ab-test, adaptive, user-override]
+          enum: [classification, routing-hint, ab-test, adaptive, exploration, user-override]
           description: Which branch of the routing engine picked the target.
         usedFallback:
           type: boolean
@@ -1169,6 +1169,9 @@ components:
           type: integer
         providerCount:
           type: integer
+        rate:
+          type: number
+          description: ε-greedy exploration rate (only present on the `exploration` stage)
 
     PipelineStats:
       type: object
@@ -1186,6 +1189,8 @@ components:
             abTest:
               $ref: "#/components/schemas/PipelineStageStats"
             adaptive:
+              $ref: "#/components/schemas/PipelineStageStats"
+            exploration:
               $ref: "#/components/schemas/PipelineStageStats"
             fallback:
               $ref: "#/components/schemas/PipelineStageStats"

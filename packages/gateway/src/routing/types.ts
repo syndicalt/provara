@@ -10,7 +10,7 @@ export interface RoutingResult {
   model: string;
   taskType: TaskType;
   complexity: Complexity;
-  routedBy: "classification" | "user-override" | "routing-hint" | "ab-test" | "adaptive";
+  routedBy: "classification" | "user-override" | "routing-hint" | "ab-test" | "adaptive" | "exploration";
   abTestId?: string;
   usedFallback: boolean;
   usedLlmFallback: boolean;
