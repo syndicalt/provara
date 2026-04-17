@@ -16,6 +16,13 @@ export interface AdaptiveCell {
   taskType: string;
   complexity: string;
   scores: AdaptiveScore[];
+  /** Set by the gateway when the cell's most-recent update is older than
+   *  PROVARA_STALE_AFTER_DAYS. The heatmap renders stale cells with a
+   *  distinct border to flag that routing is running with boosted
+   *  exploration until fresh signal arrives. See #148. */
+  isStale?: boolean;
+  /** ISO string — most recent updatedAt across the cell's models. */
+  lastUpdatedAt?: string | null;
 }
 
 export interface SparklinePoint {
@@ -153,11 +160,18 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
               const cell = cellMap.get(`${tt}:${cx}`);
               const scores = [...(cell?.scores ?? [])].sort((a, b) => b.qualityScore - a.qualityScore);
               const maxSamples = scores.reduce((m, s) => Math.max(m, s.sampleCount), 0);
+              const isStale = cell?.isStale === true;
+              const staleTitle = isStale && cell?.lastUpdatedAt
+                ? `Stale since ${new Date(cell.lastUpdatedAt).toLocaleDateString()} — routing explores more aggressively until fresh signal arrives.`
+                : undefined;
 
               return (
                 <div
                   key={`${tt}-${cx}`}
-                  className="border-b border-l border-zinc-800 p-1 min-h-[64px]"
+                  title={staleTitle}
+                  className={`border-b border-l p-1 min-h-[64px] ${
+                    isStale ? "border-amber-800/60 bg-amber-950/10" : "border-zinc-800"
+                  }`}
                 >
                   {scores.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-xs text-zinc-600">
@@ -206,6 +220,10 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-4 h-3 rounded-sm border border-dashed border-zinc-500" />
             <span>Below {minSamples} samples</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-4 h-3 rounded-sm border border-amber-800/60 bg-amber-950/10" />
+            <span>Stale</span>
           </span>
           <span>Opacity = confidence</span>
         </div>

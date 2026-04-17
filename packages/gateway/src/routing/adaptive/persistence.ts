@@ -25,6 +25,7 @@ export async function loadScoresFromDb(db: Db, store: ScoreStore): Promise<void>
       model: modelScores.model,
       qualityScore: modelScores.qualityScore,
       sampleCount: modelScores.sampleCount,
+      updatedAt: modelScores.updatedAt,
     })
     .from(modelScores)
     .all();
@@ -38,6 +39,7 @@ export async function loadScoresFromDb(db: Db, store: ScoreStore): Promise<void>
       sampleCount: row.sampleCount,
       costPer1M: getModelCost(row.model),
       avgLatencyMs: 0,
+      updatedAt: row.updatedAt,
     });
   }
 
