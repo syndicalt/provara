@@ -14,6 +14,39 @@ export function getTokenInfo(req: Request): TokenInfo | undefined {
   return tokenInfoMap.get(req);
 }
 
+/**
+ * "Any enabled tokens exist?" is checked on every /v1/chat/completions call
+ * to decide open-mode vs locked-mode. In practice this rarely flips —
+ * operators add a token once and leave it. Cache the boolean with a short
+ * TTL so we skip the COUNT(*) on the hot path. Staleness window: worst
+ * case, a newly-added first token isn't enforced for `TOKEN_CHECK_TTL_MS`.
+ * That's benign — the caller's token will still validate once the cache
+ * refreshes; there's no auth bypass.
+ */
+const TOKEN_CHECK_TTL_MS = 30_000;
+let hasEnabledTokensCache: { value: boolean; expiresAt: number } | null = null;
+
+async function hasEnabledTokens(db: Db): Promise<boolean> {
+  if (hasEnabledTokensCache && hasEnabledTokensCache.expiresAt > Date.now()) {
+    return hasEnabledTokensCache.value;
+  }
+  const row = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(apiTokens)
+    .where(eq(apiTokens.enabled, true))
+    .get();
+  const value = (row?.count ?? 0) > 0;
+  hasEnabledTokensCache = { value, expiresAt: Date.now() + TOKEN_CHECK_TTL_MS };
+  return value;
+}
+
+/** Invalidate the cache after token create/delete/update so the next
+ *  request sees the change without waiting for TTL. Exported for the
+ *  token-management routes to call. */
+export function invalidateAuthCache(): void {
+  hasEnabledTokensCache = null;
+}
+
 export function createAuthMiddleware(db: Db) {
   return async (c: Context, next: Next) => {
     // Skip auth for health check
@@ -26,14 +59,7 @@ export function createAuthMiddleware(db: Db) {
       return next();
     }
 
-    // Check if any enabled tokens exist — if not, run in open mode
-    const tokenCount = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(apiTokens)
-      .where(eq(apiTokens.enabled, true))
-      .get();
-
-    if (!tokenCount || tokenCount.count === 0) {
+    if (!(await hasEnabledTokens(db))) {
       return next();
     }
 
