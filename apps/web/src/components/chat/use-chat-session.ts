@@ -230,6 +230,18 @@ export function useChatSession() {
     if (typeof window !== "undefined") sessionStorage.removeItem(STORAGE_KEY);
   }, []);
 
+  /**
+   * Replace the active session's messages wholesale — used when loading a
+   * saved conversation from the sidebar. Resets the topic boundary so the
+   * whole loaded transcript is one topic.
+   */
+  const loadMessages = useCallback((next: ChatMessage[]) => {
+    setMessages(next);
+    setStreamingContent("");
+    setTopicStartIndex(0);
+    persistMessages(next);
+  }, [persistMessages]);
+
   const startNewTopic = useCallback(() => {
     setTopicStartIndex(messages.length);
   }, [messages.length]);
@@ -290,6 +302,7 @@ export function useChatSession() {
     send,
     stop,
     clear,
+    loadMessages,
     startNewTopic,
     rate,
   };

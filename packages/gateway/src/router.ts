@@ -15,6 +15,7 @@ import { createAdminMiddleware, requireRole } from "./auth/admin.js";
 import { createTenantMiddleware } from "./auth/tenant.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
+import { createConversationRoutes } from "./routes/conversations.js";
 import { createRoutingConfigRoutes } from "./routes/routing-config.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
@@ -75,6 +76,8 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/analytics/*", adminAuth);
   app.use("/v1/api-keys/*", adminAuth);
   app.use("/v1/feedback/*", adminAuth);
+  app.use("/v1/conversations", adminAuth);
+  app.use("/v1/conversations/*", adminAuth);
   app.use("/v1/admin/*", adminAuth);
   app.use("/v1/providers", adminAuth);
   app.use("/v1/providers/*", adminAuth);
@@ -99,6 +102,7 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount feedback routes
   app.route("/v1/feedback", createFeedbackRoutes(ctx.db, routingEngine.adaptive));
+  app.route("/v1/conversations", createConversationRoutes(ctx.db));
   app.route("/v1/routing/config", createRoutingConfigRoutes(ctx.db));
 
   // Mount token management routes (owner only)

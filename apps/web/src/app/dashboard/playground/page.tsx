@@ -9,8 +9,10 @@ import { StarRating } from "../../../components/chat/StarRating";
 import { CopyButton } from "../../../components/chat/CopyButton";
 import { MarkdownMessage } from "../../../components/chat/MarkdownMessage";
 import { ModelInfoPopover } from "../../../components/chat/ModelInfoPopover";
+import { ConversationSidebar } from "../../../components/chat/ConversationSidebar";
 import { useChatSession } from "../../../components/chat/use-chat-session";
 import { useSessionPersist } from "../../../components/chat/use-session-persist";
+import { useSavedConversations } from "../../../components/chat/use-saved-conversations";
 import type { ChatMessage, MessageAction } from "../../../components/chat/types";
 
 interface ProviderInfo {
@@ -28,15 +30,60 @@ export default function PlaygroundPage() {
   const [apiToken, setApiToken] = useState("");
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showConversations, setShowConversations] = useState(true);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const inputRef = useRef<ChatInputHandle>(null);
 
   const session = useChatSession();
+  const saved = useSavedConversations();
 
   useEffect(() => {
     gatewayClientFetch<{ providers: ProviderInfo[] }>("/v1/providers")
       .then((data) => setProviders(data.providers || []))
       .catch(console.error);
   }, []);
+
+  // Auto-save when messages change and streaming has completed. Creates on the
+  // first assistant turn of an unsaved session; otherwise PATCHes the active
+  // conversation. Small debounce to avoid a write per keystroke during
+  // streaming (we already skip via `session.streaming`, but defensive).
+  useEffect(() => {
+    if (session.streaming) return;
+    if (session.messages.length === 0) return;
+    const hasAssistant = session.messages.some((m) => m.role === "assistant");
+    if (!hasAssistant) return; // don't save conversations with only a user prompt typed but no reply
+
+    const handle = setTimeout(async () => {
+      if (activeConversationId) {
+        await saved.update(activeConversationId, { messages: session.messages });
+      } else {
+        const id = await saved.create(session.messages);
+        if (id) setActiveConversationId(id);
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session.messages, session.streaming]);
+
+  async function handleSelectConversation(id: string) {
+    const detail = await saved.load(id);
+    if (!detail) return;
+    session.loadMessages(detail.messages);
+    setActiveConversationId(id);
+  }
+
+  function handleNewConversation() {
+    session.clear();
+    setActiveConversationId(null);
+  }
+
+  async function handleDeleteConversation(id: string) {
+    await saved.remove(id);
+    if (id === activeConversationId) {
+      session.clear();
+      setActiveConversationId(null);
+    }
+  }
 
   async function handleSend() {
     const text = input;
@@ -91,9 +138,26 @@ export default function PlaygroundPage() {
 
   return (
     <div className="flex h-[calc(100vh-3.5rem)]">
+      <ConversationSidebar
+        open={showConversations}
+        list={saved.list}
+        activeId={activeConversationId}
+        onSelect={handleSelectConversation}
+        onNew={handleNewConversation}
+        onDelete={handleDeleteConversation}
+        loading={saved.loading}
+      />
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800">
+          <button
+            onClick={() => setShowConversations((v) => !v)}
+            title={showConversations ? "Hide conversations" : "Show conversations"}
+            aria-label={showConversations ? "Hide conversations" : "Show conversations"}
+            className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+          >
+            ☰
+          </button>
           <select
             value={selectedModel ? `${selectedProvider}/${selectedModel}` : ""}
             onChange={(e) => handleModelChange(e.target.value)}
@@ -128,7 +192,7 @@ export default function PlaygroundPage() {
               </button>
             )}
             <button
-              onClick={session.clear}
+              onClick={handleNewConversation}
               className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
             >
               Clear

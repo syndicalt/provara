@@ -270,6 +270,25 @@ export const modelScores = sqliteTable("model_scores", {
   primaryKey({ columns: [table.taskType, table.complexity, table.provider, table.model] }),
 ]);
 
+/**
+ * Persistent playground conversations. Sessions are tenant-scoped; the
+ * `messages` column stores the full transcript as JSON (serialized
+ * `ChatMessage[]`) because turns are a UI grouping, not an analytics
+ * primitive — per-turn data already lives in `requests` + `feedback`.
+ */
+export const conversations = sqliteTable("conversations", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  title: text("title").notNull(),
+  messages: text("messages").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const semanticCache = sqliteTable("semantic_cache", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),

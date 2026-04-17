@@ -332,6 +332,118 @@ paths:
         "200":
           description: Deleted
 
+  /v1/conversations:
+    get:
+      tags: [Conversations]
+      summary: List saved playground conversations for current tenant
+      operationId: listConversations
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Conversation list (summary only — messages not included)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [conversations]
+                properties:
+                  conversations:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ConversationSummary"
+    post:
+      tags: [Conversations]
+      summary: Create a saved conversation
+      operationId: createConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                title:
+                  type: string
+                  description: Optional title. Auto-generated from first user message if omitted.
+                messages:
+                  type: array
+                  description: Serialized ChatMessage[] array.
+                  items:
+                    type: object
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationSummary"
+
+  /v1/conversations/{id}:
+    get:
+      tags: [Conversations]
+      summary: Get one conversation with full messages
+      operationId: getConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Conversation detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationDetail"
+        "404":
+          description: Not found
+    patch:
+      tags: [Conversations]
+      summary: Update title and/or messages
+      operationId: updateConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                messages:
+                  type: array
+                  items:
+                    type: object
+      responses:
+        "200":
+          description: Updated
+    delete:
+      tags: [Conversations]
+      summary: Delete a conversation
+      operationId: deleteConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+
   /v1/admin/tokens:
     get:
       tags: [Tokens]
@@ -989,6 +1101,33 @@ components:
             $ref: "#/components/schemas/Error"
 
   schemas:
+    ConversationSummary:
+      type: object
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ConversationDetail:
+      allOf:
+        - $ref: "#/components/schemas/ConversationSummary"
+        - type: object
+          required: [messages]
+          properties:
+            messages:
+              type: array
+              description: Full ChatMessage[] for this conversation.
+              items:
+                type: object
+
     Error:
       type: object
       required: [error]
