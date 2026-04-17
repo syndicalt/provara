@@ -206,6 +206,8 @@ export function createAnalyticsRoutes(db: Db) {
   // Pipeline stage stats — per-stage request counts and latency
   app.get("/pipeline", async (c) => {
     const tenantId = getTenantId(c.req.raw);
+    const tenantFilter = tenantId ? eq(requests.tenantId, tenantId) : undefined;
+
     // Requests by routing method
     const byRoutedBy = await db
       .select({
@@ -214,9 +216,23 @@ export function createAnalyticsRoutes(db: Db) {
         avgLatency: sql<number>`avg(${requests.latencyMs})`,
       })
       .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(tenantFilter)
       .groupBy(requests.routedBy)
       .all();
+
+    // Real fallback events — provider A errored, we retried on B
+    const fallbackStats = await db
+      .select({
+        count: sql<number>`count(*)`,
+        avgLatency: sql<number>`avg(${requests.latencyMs})`,
+      })
+      .from(requests)
+      .where(
+        tenantFilter
+          ? and(tenantFilter, eq(requests.usedFallback, true))
+          : eq(requests.usedFallback, true)
+      )
+      .get();
 
     // Active A/B tests
     const activeAbTests = await db
@@ -236,14 +252,14 @@ export function createAnalyticsRoutes(db: Db) {
     const providerCount = await db
       .select({ count: sql<number>`count(distinct ${requests.provider})` })
       .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(tenantFilter)
       .get();
 
     // Total requests
     const totalRequests = await db
       .select({ count: sql<number>`count(*)` })
       .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(tenantFilter)
       .get();
 
     const routedByMap: Record<string, { count: number; avgLatency: number }> = {};
@@ -253,12 +269,24 @@ export function createAnalyticsRoutes(db: Db) {
       }
     }
 
+    const classifierCount =
+      (routedByMap["classification"]?.count || 0) + (routedByMap["routing-hint"]?.count || 0);
+    const classifierLatencyWeighted =
+      (routedByMap["classification"]?.count || 0) * (routedByMap["classification"]?.avgLatency || 0) +
+      (routedByMap["routing-hint"]?.count || 0) * (routedByMap["routing-hint"]?.avgLatency || 0);
+    const classifierAvgLatency = classifierCount > 0 ? Math.round(classifierLatencyWeighted / classifierCount) : 0;
+
     return c.json({
       totalRequests: totalRequests?.count || 0,
       stages: {
         classifier: {
-          count: (routedByMap["classification"]?.count || 0) + (routedByMap["routing-hint"]?.count || 0),
-          avgLatency: routedByMap["classification"]?.avgLatency || 0,
+          count: classifierCount,
+          avgLatency: classifierAvgLatency,
+          active: true,
+        },
+        userOverride: {
+          count: routedByMap["user-override"]?.count || 0,
+          avgLatency: routedByMap["user-override"]?.avgLatency || 0,
           active: true,
         },
         abTest: {
@@ -274,8 +302,8 @@ export function createAnalyticsRoutes(db: Db) {
           feedbackCount: feedbackCount?.count || 0,
         },
         fallback: {
-          count: (routedByMap["classification"]?.count || 0),
-          avgLatency: routedByMap["classification"]?.avgLatency || 0,
+          count: fallbackStats?.count || 0,
+          avgLatency: Math.round(fallbackStats?.avgLatency || 0),
           active: true,
         },
         providers: {
