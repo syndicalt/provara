@@ -5,6 +5,7 @@ import type { Db } from "@provara/db";
 import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
 import { logCost } from "./cost/index.js";
+import { calculateCost } from "./cost/pricing.js";
 import { createRoutingEngine, type RoutingProfile } from "./routing/index.js";
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
@@ -57,7 +58,7 @@ export async function createRouter(ctx: RouterContext) {
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Lang", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Package-Version", "X-Stainless-Retry-Count"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-Provara-Errors", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-Provara-Errors", "X-Provara-Cost", "X-Provara-Latency", "X-Provara-Cache", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
   // Mount OAuth routes (public, only in multi_tenant mode)
@@ -389,11 +390,27 @@ export async function createRouter(ctx: RouterContext) {
                   emitChunk(chunk);
                 }
 
+                // Emit a final Provara meta event before [DONE] so the client
+                // can show cost/latency/tokens inline with the response. We
+                // can't set response headers after the stream started, so we
+                // piggyback on the SSE channel with a custom event shape.
+                const streamLatencyMs = Math.round(performance.now() - start);
+                const streamCost = calculateCost(usedModel, usage.inputTokens, usage.outputTokens);
+                const metaEvent = JSON.stringify({
+                  _provara: {
+                    model: usedModel,
+                    provider: usedProvider,
+                    latencyMs: streamLatencyMs,
+                    cost: streamCost,
+                    usage,
+                  },
+                });
+                controller.enqueue(encoder.encode(`data: ${metaEvent}\n\n`));
                 controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 controller.close();
 
                 // Log after stream completes
-                const latencyMs = Math.round(performance.now() - start);
+                const latencyMs = streamLatencyMs;
                 await ctx.db
                   .insert(requests)
                   .values({
@@ -633,7 +650,10 @@ export async function createRouter(ctx: RouterContext) {
     }
 
     // Return OpenAI-compatible response format
+    const nonStreamCost = calculateCost(usedModel, response.usage.inputTokens, response.usage.outputTokens);
     c.header("X-Provara-Request-Id", requestId);
+    c.header("X-Provara-Latency", String(response.latencyMs));
+    c.header("X-Provara-Cost", nonStreamCost.toFixed(6));
     return c.json({
       id: `chatcmpl-${response.id}`,
       object: "chat.completion",

@@ -42,6 +42,10 @@ export function useChatSession() {
   const [streamingContent, setStreamingContent] = useState("");
   const [topicStartIndex, setTopicStartIndex] = useState(0);
 
+  // AbortController for the active stream. Populated in `send`, cleared in
+  // the finally block. Exposed via `stop()` so the caller can abort mid-stream.
+  const abortRef = useRef<AbortController | null>(null);
+
   const persistMessages = useCallback((next: ChatMessage[]) => {
     if (typeof window !== "undefined") {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
@@ -75,6 +79,9 @@ export function useChatSession() {
         sessionStorage.setItem(STREAMING_FLAG_KEY, "true");
       }
 
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
         const hdrs: Record<string, string> = { ...adminHeaders() };
         if (config.apiToken) hdrs["Authorization"] = `Bearer ${config.apiToken}`;
@@ -82,6 +89,7 @@ export function useChatSession() {
         const res = await fetch(gatewayUrl("/v1/chat/completions"), {
           method: "POST",
           credentials: "include",
+          signal: controller.signal,
           headers: hdrs,
           body: JSON.stringify({
             model: config.selectedModel,
@@ -109,6 +117,12 @@ export function useChatSession() {
 
         const headerModel = res.headers.get("X-Provara-Model") || "";
         const requestId = res.headers.get("X-Provara-Request-Id") || undefined;
+        const cacheSource = (res.headers.get("X-Provara-Cache") as "exact" | "semantic" | null) || undefined;
+        // Non-streaming cache hits set cost/latency headers directly. Streaming
+        // hits can't (headers are already sent by the time we know token
+        // counts), so they arrive via the trailing `_provara` SSE event.
+        const headerLatency = Number(res.headers.get("X-Provara-Latency")) || undefined;
+        const headerCost = Number(res.headers.get("X-Provara-Cost")) || undefined;
 
         // Guardrails surface as a pre-response message; they abort the stream.
         const guardrailHeader = res.headers.get("X-Provara-Guardrail");
@@ -135,6 +149,7 @@ export function useChatSession() {
         const decoder = new TextDecoder();
         let fullContent = "";
         let responseModel = "";
+        let streamMeta: { latencyMs?: number; cost?: number; usage?: { inputTokens: number; outputTokens: number } } = {};
 
         while (true) {
           const { done, value } = await reader.read();
@@ -147,6 +162,13 @@ export function useChatSession() {
             if (data === "[DONE]") continue;
             try {
               const parsed = JSON.parse(data);
+              // The gateway emits a final `{_provara: {...}}` event right
+              // before [DONE] with cost/latency/usage so we can attach them
+              // to the message without a second round-trip.
+              if (parsed._provara) {
+                streamMeta = parsed._provara;
+                continue;
+              }
               if (!responseModel && parsed.model) responseModel = parsed.model;
               const delta = parsed.choices?.[0]?.delta?.content || "";
               fullContent += delta;
@@ -164,28 +186,42 @@ export function useChatSession() {
             content: fullContent,
             model: headerModel || responseModel || undefined,
             requestId,
+            cacheSource,
+            cost: streamMeta.cost ?? headerCost,
+            latencyMs: streamMeta.latencyMs ?? headerLatency,
+            inputTokens: streamMeta.usage?.inputTokens,
+            outputTokens: streamMeta.usage?.outputTokens,
           },
         ];
         setMessages(finalMessages);
         setStreamingContent("");
         persistMessages(finalMessages);
       } catch (err) {
-        const final: ChatMessage[] = [
-          ...workingMessages,
-          {
-            role: "assistant",
-            content: `Error: ${err instanceof Error ? err.message : "Request failed"}`,
-          },
-        ];
-        setMessages(final);
-        persistMessages(final);
+        // AbortError is a user-initiated stop; don't surface it as an error.
+        const aborted = err instanceof DOMException && err.name === "AbortError";
+        if (!aborted) {
+          const final: ChatMessage[] = [
+            ...workingMessages,
+            {
+              role: "assistant",
+              content: `Error: ${err instanceof Error ? err.message : "Request failed"}`,
+            },
+          ];
+          setMessages(final);
+          persistMessages(final);
+        }
       } finally {
+        abortRef.current = null;
         setStreaming(false);
         if (typeof window !== "undefined") sessionStorage.removeItem(STREAMING_FLAG_KEY);
       }
     },
     [messages, streaming, topicStartIndex, persistMessages],
   );
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const clear = useCallback(() => {
     setMessages([]);
@@ -252,6 +288,7 @@ export function useChatSession() {
     streamingContent,
     topicStartIndex,
     send,
+    stop,
     clear,
     startNewTopic,
     rate,
