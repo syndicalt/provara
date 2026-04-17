@@ -1,8 +1,25 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { requests, costLogs, abTests, feedback } from "@provara/db";
-import { desc, sql, eq, and, gte } from "drizzle-orm";
+import { desc, asc, sql, eq, and, gte } from "drizzle-orm";
+import type { SQLWrapper } from "drizzle-orm";
 import { getTenantId } from "../auth/tenant.js";
+
+// Whitelist of columns exposed to client-driven sort on /requests. Never map
+// raw user input into a SQL expression — anything not in this table silently
+// falls back to the default (createdAt desc).
+const REQUESTS_SORT_COLUMNS: Record<string, SQLWrapper> = {
+  createdAt: requests.createdAt,
+  latencyMs: requests.latencyMs,
+  inputTokens: requests.inputTokens,
+  outputTokens: requests.outputTokens,
+  provider: requests.provider,
+  model: requests.model,
+  taskType: requests.taskType,
+  complexity: requests.complexity,
+  routedBy: requests.routedBy,
+  cost: costLogs.cost,
+};
 
 export function createAnalyticsRoutes(db: Db) {
   const app = new Hono();
@@ -15,6 +32,13 @@ export function createAnalyticsRoutes(db: Db) {
     const provider = c.req.query("provider");
     const model = c.req.query("model");
     const taskType = c.req.query("taskType");
+    const orderByParam = c.req.query("orderBy");
+    const orderParam = c.req.query("order") === "asc" ? "asc" : "desc";
+
+    const sortCol = orderByParam ? REQUESTS_SORT_COLUMNS[orderByParam] : undefined;
+    const orderExpr = sortCol
+      ? (orderParam === "asc" ? asc(sortCol) : desc(sortCol))
+      : desc(requests.createdAt);
 
     const rows = (await db
       .select({
@@ -39,7 +63,7 @@ export function createAnalyticsRoutes(db: Db) {
       .from(requests)
       .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
       .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
-      .orderBy(desc(requests.createdAt))
+      .orderBy(orderExpr)
       .limit(limit)
       .offset(offset)
       .all())

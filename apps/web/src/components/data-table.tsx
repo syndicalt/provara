@@ -12,6 +12,8 @@ export interface Column<T> {
   getValue?: (row: T) => string | number | null;
 }
 
+type SortDir = "asc" | "desc" | null;
+
 interface DataTableProps<T> {
   columns: Column<T>[];
   data: T[];
@@ -26,9 +28,16 @@ interface DataTableProps<T> {
     pageSize: number;
     onPageSizeChange: (size: number) => void;
   };
+  // Server-side sort. Pair with serverPagination so the parent can refetch
+  // with orderBy/order query params when the user clicks a sortable header.
+  // Without this, server-paginated tables silently no-op on sort clicks
+  // (can't client-sort across pages you don't have).
+  serverSort?: {
+    sortKey: string | null;
+    sortDir: SortDir;
+    onSortChange: (sortKey: string | null, sortDir: SortDir) => void;
+  };
 }
-
-type SortDir = "asc" | "desc" | null;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function DataTable<T extends Record<string, any>>({
@@ -38,14 +47,18 @@ export function DataTable<T extends Record<string, any>>({
   pageSizeOptions = [10, 25, 50, 100],
   emptyMessage = "No data available.",
   serverPagination,
+  serverSort,
 }: DataTableProps<T>) {
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>(null);
+  const [localSortKey, setLocalSortKey] = useState<string | null>(null);
+  const [localSortDir, setLocalSortDir] = useState<SortDir>(null);
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(defaultPageSize);
 
   const isServerPaginated = !!serverPagination;
+  const isServerSorted = !!serverSort;
+  const sortKey = isServerSorted ? serverSort.sortKey : localSortKey;
+  const sortDir: SortDir = isServerSorted ? serverSort.sortDir : localSortDir;
 
   // Client-side filtering (applies even with server pagination — filters the current page)
   const filtered = useMemo(() => {
@@ -62,9 +75,14 @@ export function DataTable<T extends Record<string, any>>({
     );
   }, [data, filters, columns]);
 
-  // Client-side sorting
+  // Client-side sorting.
+  // If serverSort is controlling the state, the parent already asked the server
+  // for sorted data — render it as-is. If the table is server-paginated but no
+  // serverSort handler was provided, we can't sort across pages we don't have,
+  // so we render unsorted and the click still flips the arrow (degraded but
+  // not worse than before).
   const sorted = useMemo(() => {
-    if (isServerPaginated) return filtered;
+    if (isServerSorted || isServerPaginated) return filtered;
     if (!sortKey || !sortDir) return filtered;
 
     const col = columns.find((c) => c.key === sortKey);
@@ -84,7 +102,7 @@ export function DataTable<T extends Record<string, any>>({
       }
       return sortDir === "desc" ? -cmp : cmp;
     });
-  }, [filtered, sortKey, sortDir, columns, isServerPaginated]);
+  }, [filtered, sortKey, sortDir, columns, isServerPaginated, isServerSorted]);
 
   // Pagination
   const currentPageSize = isServerPaginated ? serverPagination.pageSize : pageSize;
@@ -96,12 +114,20 @@ export function DataTable<T extends Record<string, any>>({
     : sorted.slice(currentPage * currentPageSize, (currentPage + 1) * currentPageSize);
 
   function handleSort(key: string) {
+    let nextKey: string | null = sortKey;
+    let nextDir: SortDir = sortDir;
     if (sortKey === key) {
-      if (sortDir === "asc") setSortDir("desc");
-      else if (sortDir === "desc") { setSortKey(null); setSortDir(null); }
+      if (sortDir === "asc") nextDir = "desc";
+      else if (sortDir === "desc") { nextKey = null; nextDir = null; }
     } else {
-      setSortKey(key);
-      setSortDir("asc");
+      nextKey = key;
+      nextDir = "asc";
+    }
+    if (isServerSorted) {
+      serverSort.onSortChange(nextKey, nextDir);
+    } else {
+      setLocalSortKey(nextKey);
+      setLocalSortDir(nextDir);
     }
   }
 

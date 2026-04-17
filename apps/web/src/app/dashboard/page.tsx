@@ -121,11 +121,18 @@ export default function Dashboard() {
   const [totalRequests, setTotalRequests] = useState(0);
   const [reqPage, setReqPage] = useState(0);
   const [reqPageSize, setReqPageSize] = useState(10);
+  const [reqSortKey, setReqSortKey] = useState<string | null>(null);
+  const [reqSortDir, setReqSortDir] = useState<"asc" | "desc" | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchRequests = useCallback(async (page: number, pageSize: number) => {
+  const fetchRequests = useCallback(async (page: number, pageSize: number, sortKey: string | null, sortDir: "asc" | "desc" | null) => {
     try {
-      const data = await gatewayClientFetch<{ requests: RequestRow[]; total: number }>(`/v1/analytics/requests?limit=${pageSize}&offset=${page * pageSize}`);
+      const params = new URLSearchParams({ limit: String(pageSize), offset: String(page * pageSize) });
+      if (sortKey && sortDir) {
+        params.set("orderBy", sortKey);
+        params.set("order", sortDir);
+      }
+      const data = await gatewayClientFetch<{ requests: RequestRow[]; total: number }>(`/v1/analytics/requests?${params}`);
       setRecentRequests(data.requests || []);
       setTotalRequests(data.total || 0);
     } catch (err) {
@@ -150,20 +157,20 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchDashboard();
-    fetchRequests(0, reqPageSize);
+    fetchRequests(0, reqPageSize, reqSortKey, reqSortDir);
 
     // Auto-refresh every 10 seconds
     const interval = setInterval(() => {
       fetchDashboard();
-      fetchRequests(reqPage, reqPageSize);
+      fetchRequests(reqPage, reqPageSize, reqSortKey, reqSortDir);
     }, 10_000);
     return () => clearInterval(interval);
-  }, [fetchDashboard, fetchRequests, reqPage, reqPageSize]);
+  }, [fetchDashboard, fetchRequests, reqPage, reqPageSize, reqSortKey, reqSortDir]);
 
-  // Also fetch immediately on page/size change
+  // Also fetch immediately on page/size/sort change
   useEffect(() => {
-    fetchRequests(reqPage, reqPageSize);
-  }, [reqPage, reqPageSize, fetchRequests]);
+    fetchRequests(reqPage, reqPageSize, reqSortKey, reqSortDir);
+  }, [reqPage, reqPageSize, reqSortKey, reqSortDir, fetchRequests]);
 
   // Add a subtle live indicator
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -226,6 +233,15 @@ export default function Dashboard() {
                 onPageChange: setReqPage,
                 pageSize: reqPageSize,
                 onPageSizeChange: (size) => { setReqPageSize(size); setReqPage(0); },
+              }}
+              serverSort={{
+                sortKey: reqSortKey,
+                sortDir: reqSortDir,
+                onSortChange: (key, dir) => {
+                  setReqSortKey(key);
+                  setReqSortDir(dir);
+                  setReqPage(0);
+                },
               }}
             />
           </section>
