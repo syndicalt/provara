@@ -189,7 +189,7 @@ export default function Home() {
                 Self-hostable · OpenAI-compatible · Open source
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-[1.05]">
-                <span className="block">One Gateway. Every LLM</span>
+                <span className="block">One Gateway, Every LLM</span>
                 <span className="block mt-6 text-blue-400">Smarter with every request</span>
               </h1>
               <p className="mt-6 text-lg text-zinc-400 leading-relaxed">
