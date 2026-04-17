@@ -11,13 +11,24 @@ import type { FeedbackSource, ModelScore, RoutingProfile, RoutingWeights } from 
 export type AdaptiveRouter = Awaited<ReturnType<typeof createAdaptiveRouter>>;
 
 /**
+ * Optional quality-score boost lookup, e.g. the grace boost added by
+ * #153 cost migrations. When unset, no boost is applied. Kept as a
+ * callback so the router doesn't need to know about migration state
+ * directly — whoever constructs the router wires this in.
+ */
+export interface AdaptiveRouterOptions {
+  getScoreBoost?: (taskType: string, complexity: string, provider: string, model: string) => number;
+}
+
+/**
  * Build an adaptive router wired to `db` as the durable source of truth.
  * The in-memory score store is hydrated at construction time and stays in
  * sync via `updateScore` / `updateLatency`. Single-process constraints
  * apply — see `score-store.ts` for the horizontal-scaling note.
  */
-export async function createAdaptiveRouter(db: Db) {
+export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOptions = {}) {
   const store: ScoreStore = createScoreStore();
+  const getScoreBoost = options.getScoreBoost ?? (() => 0);
 
   async function updateScore(
     taskType: string,
@@ -106,8 +117,12 @@ export async function createAdaptiveRouter(db: Db) {
     let best: { target: RouteTarget; score: number } | null = null;
 
     for (const candidate of candidates) {
+      // Grace boost (#153) nudges migration targets up during their window
+      // without mutating the underlying EMA — normal routing wins back if
+      // the migration picked wrong once the boost expires.
+      const boost = getScoreBoost(taskType, complexity, candidate.provider, candidate.model);
       const score = computeRouteScore(
-        candidate.qualityScore,
+        candidate.qualityScore + boost,
         candidate.costPer1M,
         candidate.avgLatencyMs,
         weights,

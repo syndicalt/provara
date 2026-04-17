@@ -414,6 +414,39 @@ export const regressionEvents = sqliteTable("regression_events", {
 });
 
 /**
+ * Automated cell-level cost migrations (#153). One row per executed
+ * migration — the adaptive router consults this table for a
+ * `graceBoost` during the grace window so the newly-selected cheaper
+ * model gets time to prove itself under live traffic. `rolledBackAt`
+ * stays null unless regression detection (#152) or an operator flips
+ * it — we preserve history regardless of outcome so savings claims are
+ * auditable.
+ */
+export const costMigrations = sqliteTable("cost_migrations", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  taskType: text("task_type").notNull(),
+  complexity: text("complexity").notNull(),
+  fromProvider: text("from_provider").notNull(),
+  fromModel: text("from_model").notNull(),
+  fromCostPer1M: real("from_cost_per_1m").notNull(),
+  fromQualityScore: real("from_quality_score").notNull(),
+  toProvider: text("to_provider").notNull(),
+  toModel: text("to_model").notNull(),
+  toCostPer1M: real("to_cost_per_1m").notNull(),
+  toQualityScore: real("to_quality_score").notNull(),
+  /** Savings floor — projected monthly USD based on traffic pattern at execute time. */
+  projectedMonthlySavingsUsd: real("projected_monthly_savings_usd").notNull().default(0),
+  /** Grace-period end. Router ends the boost at this timestamp. */
+  graceEndsAt: integer("grace_ends_at", { mode: "timestamp" }).notNull(),
+  executedAt: integer("executed_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  rolledBackAt: integer("rolled_back_at", { mode: "timestamp" }),
+  rollbackReason: text("rollback_reason"),
+});
+
+/**
  * Persistent state for the in-process scheduler. One row per named job.
  * Survives restart so re-scheduled jobs can resume their cadence and the
  * UI can surface last-run telemetry. The scheduler itself still lives

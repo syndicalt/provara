@@ -8,6 +8,7 @@ import type { RoutingResult, RouteTarget } from "./types.js";
 import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
 import { createAdaptiveRouter, type RoutingProfile, type RoutingWeights } from "./adaptive/index.js";
+import { createBoostTable } from "./adaptive/migrations.js";
 import { getPricing } from "../cost/index.js";
 import { getRoutingConfig } from "./config.js";
 
@@ -30,7 +31,11 @@ export interface RoutingRequest {
 }
 
 export async function createRoutingEngine(config: RoutingEngineConfig) {
-  const adaptive = await createAdaptiveRouter(config.db);
+  const boostTable = createBoostTable(config.db);
+  await boostTable.refresh();
+  const adaptive = await createAdaptiveRouter(config.db, {
+    getScoreBoost: boostTable.getBoost,
+  });
 
   // Build dynamic fallback chain from all registered providers, sorted by cost (cheapest first)
   function buildDynamicFallbacks(registry: ProviderRegistry): RouteTarget[] {
@@ -242,5 +247,5 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
   }
 
   // Expose adaptive router for feedback updates and dashboard queries
-  return { route, adaptive };
+  return { route, adaptive, boostTable };
 }
