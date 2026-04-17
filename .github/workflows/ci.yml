@@ -31,3 +31,36 @@ jobs:
 
       - name: Test (gateway)
         run: npm test -w packages/gateway
+
+      - name: Test (web — unit)
+        run: npm test -w apps/web
+
+  e2e:
+    name: e2e (Playwright)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+
+      - name: Run Playwright tests
+        run: npm run test:e2e -w apps/web
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 14
