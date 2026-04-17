@@ -9,6 +9,7 @@ import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
 import { createAdaptiveRouter, type RoutingProfile, type RoutingWeights } from "./adaptive.js";
 import { getPricing } from "../cost/index.js";
+import { getRoutingConfig } from "./config.js";
 
 export type { RoutingResult, RouteTarget } from "./types.js";
 export { type RoutingProfile } from "./adaptive.js";
@@ -23,6 +24,7 @@ export interface RoutingRequest {
   provider?: string;
   model?: string;
   routingHint?: TaskType;
+  complexityHint?: Complexity;
   routingProfile?: RoutingProfile;
   routingWeights?: RoutingWeights;
 }
@@ -96,13 +98,18 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
   async function route(request: RoutingRequest): Promise<RoutingResult> {
     const allFallbacks = buildDynamicFallbacks(config.registry);
 
-    // User override: explicit provider + model bypasses routing entirely
+    // User override: explicit provider + model bypasses routing entirely.
+    // routingHint + complexityHint let callers place the sample in a meaningful
+    // cell for adaptive learning (defaults: general/medium).
+    const overrideTaskType: TaskType = request.routingHint || "general";
+    const overrideComplexity: Complexity = request.complexityHint || "medium";
+
     if (request.provider && request.model) {
       return {
         provider: request.provider,
         model: request.model,
-        taskType: "general",
-        complexity: "medium",
+        taskType: overrideTaskType,
+        complexity: overrideComplexity,
         routedBy: "user-override",
         usedFallback: false,
         usedLlmFallback: false,
@@ -119,8 +126,8 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
         return {
           provider: provider.name,
           model: request.model,
-          taskType: "general",
-          complexity: "medium",
+          taskType: overrideTaskType,
+          complexity: overrideComplexity,
           routedBy: "user-override",
           usedFallback: false,
           usedLlmFallback: false,
@@ -136,9 +143,20 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     const taskType: TaskType = request.routingHint || classification.taskType;
     const complexity: Complexity = classification.complexity;
 
-    // Check for active A/B test on this routing cell
+    const { abTestPreempts } = getRoutingConfig();
+    const profile = request.routingProfile || "balanced";
+    const availableProviders = new Set(config.registry.list().map((p) => p.name));
+
+    // A/B test candidate (may or may not run before adaptive based on config)
     const abResult = await findActiveAbTest(taskType, complexity);
-    if (abResult) {
+    const adaptiveTarget = adaptive.getBestModel(taskType, complexity, profile, availableProviders, request.routingWeights);
+
+    // Ordering:
+    //   - abTestPreempts=true (default): A/B test wins if present, else adaptive.
+    //   - abTestPreempts=false: adaptive wins if it has enough samples, else A/B test.
+    const preferAb = abTestPreempts || !adaptiveTarget;
+
+    if (preferAb && abResult) {
       return {
         provider: abResult.provider,
         model: abResult.model,
@@ -154,11 +172,6 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    // Try adaptive routing — uses quality scores from feedback
-    const profile = request.routingProfile || "balanced";
-    const availableProviders = new Set(config.registry.list().map((p) => p.name));
-    const adaptiveTarget = adaptive.getBestModel(taskType, complexity, profile, availableProviders, request.routingWeights);
-
     if (adaptiveTarget) {
       return {
         provider: adaptiveTarget.provider,
@@ -170,6 +183,23 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
         usedLlmFallback: classification.usedLlmFallback,
         fallbacks: allFallbacks.filter(
           (t) => !(t.provider === adaptiveTarget.provider && t.model === adaptiveTarget.model)
+        ),
+      };
+    }
+
+    // adaptive didn't apply, but an A/B test might still fit
+    if (!preferAb && abResult) {
+      return {
+        provider: abResult.provider,
+        model: abResult.model,
+        taskType,
+        complexity,
+        routedBy: "ab-test",
+        abTestId: abResult.testId,
+        usedFallback: false,
+        usedLlmFallback: classification.usedLlmFallback,
+        fallbacks: allFallbacks.filter(
+          (t) => !(t.provider === abResult.provider && t.model === abResult.model)
         ),
       };
     }

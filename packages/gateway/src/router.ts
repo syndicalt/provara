@@ -43,7 +43,7 @@ export async function createRouter(ctx: RouterContext) {
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Lang", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Package-Version", "X-Stainless-Retry-Count"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-Provara-Errors", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
   // Mount OAuth routes (public, only in multi_tenant mode)
@@ -120,8 +120,8 @@ export async function createRouter(ctx: RouterContext) {
 
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {
-    const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean }>();
-    const { provider: providerName, routing_hint, cache: cacheParam, ...rest } = body;
+    const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean; complexity_hint?: "simple" | "medium" | "complex" }>();
+    const { provider: providerName, routing_hint, complexity_hint, cache: cacheParam, ...rest } = body;
     const request = rest as CompletionRequest;
 
     // Input guardrails — check all message content before routing
@@ -177,6 +177,7 @@ export async function createRouter(ctx: RouterContext) {
       provider: providerName,
       model: request.model !== "" ? request.model : undefined,
       routingHint: routing_hint,
+      complexityHint: complexity_hint,
       routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
       routingWeights: tokenInfo?.routingWeights || undefined,
     });
@@ -188,6 +189,29 @@ export async function createRouter(ctx: RouterContext) {
     if (!skipCache) {
       const cached = getCached(request.messages, routingResult.provider, routingResult.model);
       if (cached) {
+        const cacheHitId = nanoid();
+        await ctx.db
+          .insert(requests)
+          .values({
+            id: cacheHitId,
+            provider: cached.provider,
+            model: cached.model,
+            prompt: JSON.stringify(request.messages),
+            response: cached.content,
+            inputTokens: cached.usage.inputTokens,
+            outputTokens: cached.usage.outputTokens,
+            latencyMs: 0,
+            taskType: routingResult.taskType,
+            complexity: routingResult.complexity,
+            routedBy: routingResult.routedBy,
+            usedFallback: false,
+            cached: true,
+            tenantId,
+            abTestId: routingResult.abTestId || null,
+          })
+          .run();
+
+        c.header("X-Provara-Request-Id", cacheHitId);
         return c.json({
           id: `chatcmpl-${cached.id}`,
           object: "chat.completion",
@@ -230,6 +254,7 @@ export async function createRouter(ctx: RouterContext) {
     const CONNECT_TIMEOUT_MS = 10_000;  // For initial connection / first chunk
     const COMPLETION_TIMEOUT_MS = 120_000; // For full non-streaming response
     const failedProviders = new Set<string>();
+    const attemptErrors: { provider: string; model: string; error: string }[] = [];
 
     // --- Streaming path ---
     if (request.stream) {
@@ -378,11 +403,16 @@ export async function createRouter(ctx: RouterContext) {
           if (guardrailViolations.size > 0) {
             streamHeaders["X-Provara-Guardrail"] = JSON.stringify([...guardrailViolations]);
           }
+          if (usedFallback && attemptErrors.length > 0) {
+            streamHeaders["X-Provara-Errors"] = JSON.stringify(attemptErrors);
+          }
           return new Response(sseStream, { headers: streamHeaders });
         } catch (err) {
           lastError = err;
           failedProviders.add(attempt.provider);
-          console.warn(`Provider ${attempt.provider}/${attempt.model} stream failed:`, err instanceof Error ? err.message : err);
+          const msg = err instanceof Error ? err.message : String(err);
+          attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
+          console.warn(`Provider ${attempt.provider}/${attempt.model} stream failed:`, msg);
           continue;
         }
       }
@@ -421,7 +451,9 @@ export async function createRouter(ctx: RouterContext) {
       } catch (err) {
         lastError = err;
         failedProviders.add(attempt.provider);
-        console.warn(`Provider ${attempt.provider}/${attempt.model} failed:`, err instanceof Error ? err.message : err);
+        const msg = err instanceof Error ? err.message : String(err);
+        attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
+        console.warn(`Provider ${attempt.provider}/${attempt.model} failed:`, msg);
         continue;
       }
     }
@@ -539,6 +571,7 @@ export async function createRouter(ctx: RouterContext) {
           usedFallback,
           usedLlmFallback: routingResult.usedLlmFallback,
         },
+        ...(usedFallback && attemptErrors.length > 0 ? { errors: attemptErrors } : {}),
       },
     });
   });

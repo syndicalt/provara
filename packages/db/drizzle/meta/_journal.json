@@ -106,6 +106,13 @@
       "when": 1776386181268,
       "tag": "0014_unique_rhino",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1776392435304,
+      "tag": "0015_opposite_queen_noir",
+      "breakpoints": true
     }
   ]
 }
