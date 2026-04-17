@@ -2,12 +2,19 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { gatewayFetchRaw } from "../lib/gateway-client";
+import { GatedPanel } from "./gated-panel";
 
 interface RegressionStatus {
   enabled: boolean;
   budget: { used: number; limit: number; remaining: number };
   bankSize: number;
   defaultWeeklyBudgetUsd: number;
+}
+
+interface GatedState {
+  reason: string;
+  currentTier: string;
+  upgradeUrl?: string;
 }
 
 interface RegressionEvent {
@@ -36,15 +43,35 @@ export function RegressionPanel() {
   const [events, setEvents] = useState<RegressionEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [gated, setGated] = useState<GatedState | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [statusRes, eventsRes] = await Promise.all([
-        gatewayFetchRaw("/v1/regression/status").then((r) => r.json()),
-        gatewayFetchRaw("/v1/regression/events").then((r) => r.json()),
-      ]);
-      setStatus(statusRes);
+      const statusResponse = await gatewayFetchRaw("/v1/regression/status");
+      // Tier gate (#168) returns 402 when deployment isn't Cloud or the
+      // caller's subscription doesn't include Intelligence. Render a
+      // dedicated empty state instead of crashing on status.budget being
+      // undefined. Full Upgrade CTA UX lands in #169.
+      if (statusResponse.status === 402) {
+        const body = await statusResponse.json().catch(() => ({}));
+        setGated({
+          reason: body?.gate?.reason ?? "not_available",
+          currentTier: body?.gate?.currentTier ?? "free",
+          upgradeUrl: body?.gate?.upgradeUrl,
+        });
+        setStatus(null);
+        setEvents([]);
+        return;
+      }
+      if (!statusResponse.ok) {
+        setStatus(null);
+        return;
+      }
+      const parsedStatus: RegressionStatus = await statusResponse.json();
+      const eventsRes = await gatewayFetchRaw("/v1/regression/events").then((r) => r.json());
+      setStatus(parsedStatus);
       setEvents(eventsRes.events || []);
+      setGated(null);
     } catch (err) {
       console.error("regression panel fetch failed:", err);
     } finally {
@@ -81,6 +108,8 @@ export function RegressionPanel() {
   if (loading) {
     return <p className="text-sm text-zinc-500">Loading regression detection...</p>;
   }
+
+  if (gated) return <GatedPanel reason={gated.reason} currentTier={gated.currentTier} upgradeUrl={gated.upgradeUrl} feature="Silent-regression detection" />;
 
   if (!status) return null;
 
