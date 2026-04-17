@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { generateToken, hashToken, maskToken } from "../auth/tokens.js";
 import { getTenantId } from "../auth/tenant.js";
 import { getAuthUser } from "../auth/admin.js";
+import { invalidateAuthCache } from "./../auth/middleware.js";
 
 export function createTokenRoutes(db: Db) {
   const app = new Hono();
@@ -139,6 +140,7 @@ export function createTokenRoutes(db: Db) {
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
       })
       .run();
+    invalidateAuthCache();
 
     // Return the full token — this is the ONLY time it's shown
     return c.json(
@@ -192,6 +194,11 @@ export function createTokenRoutes(db: Db) {
 
     if (Object.keys(updates).length > 0) {
       await db.update(apiTokens).set(updates).where(tokenWhere).run();
+      // Toggling `enabled` changes what the auth cache should answer;
+      // any other update is benign but invalidating across the board
+      // is cheap and avoids a stale-state bug if we add new mutable
+      // fields later.
+      invalidateAuthCache();
     }
 
     const updated = await db.select().from(apiTokens).where(tokenWhere).get();
@@ -210,6 +217,7 @@ export function createTokenRoutes(db: Db) {
     }
 
     await db.delete(apiTokens).where(tokenWhere).run();
+    invalidateAuthCache();
     return c.json({ deleted: true });
   });
 

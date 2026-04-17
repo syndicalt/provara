@@ -58,9 +58,15 @@ export function decrypt(data: EncryptedData): string {
   return decrypted;
 }
 
+/**
+ * Obscured display of an API key. Shows a fixed-width bullet prefix + the
+ * last 4 chars only. Previously we also surfaced the first 4 chars, but
+ * that leaks the vendor prefix (sk-proj-, xai-, etc.) and — across many
+ * keys — hints at key structure. Last-4 is enough for users to
+ * distinguish which of their stored keys a row represents.
+ */
 export function maskKey(key: string): string {
-  if (key.length <= 8) return "••••" + key.slice(-4);
-  return key.slice(0, 4) + "••••" + key.slice(-4);
+  return "••••••••" + key.slice(-4);
 }
 
 export function hasMasterKey(): boolean {
