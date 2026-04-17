@@ -186,7 +186,7 @@ export async function createRouter(ctx: RouterContext) {
     // Check cache before calling any provider
     const skipCache = !isCacheable || routingResult.routedBy === "ab-test";
     if (!skipCache) {
-      const cached = getCached(request.messages);
+      const cached = getCached(request.messages, routingResult.provider, routingResult.model);
       if (cached) {
         return c.json({
           id: `chatcmpl-${cached.id}`,
@@ -341,7 +341,7 @@ export async function createRouter(ctx: RouterContext) {
                 }).catch(() => {});
 
                 if (!skipCache) {
-                  putCache(request.messages, {
+                  putCache(request.messages, usedProvider, usedModel, {
                     id: requestId,
                     provider: usedProvider,
                     model: usedModel,
@@ -476,7 +476,7 @@ export async function createRouter(ctx: RouterContext) {
 
     // Cache the response for future identical requests
     if (!skipCache) {
-      putCache(request.messages, response);
+      putCache(request.messages, usedProvider, usedModel, response);
     }
 
     // Fire-and-forget: LLM-as-judge quality scoring on a sample of responses
