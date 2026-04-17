@@ -662,12 +662,57 @@ export default function AbTestsPage() {
           <p className="text-zinc-400">No A/B tests yet. Create one to start comparing models.</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {tests.map((test) => (
-            <TestCard key={test.id} test={test} onUpdate={fetchTests} />
-          ))}
-        </div>
+        <GroupedTests tests={tests} onUpdate={fetchTests} />
       )}
+    </div>
+  );
+}
+
+/**
+ * Renders A/B tests split into Active / Paused / Completed sections in
+ * fixed order. When a test's status changes, `fetchTests` refetches and
+ * the new grouping naturally moves the card into the correct section —
+ * no per-card position tracking needed.
+ */
+const GROUP_ORDER: Array<AbTest["status"]> = ["active", "paused", "completed"];
+const GROUP_LABELS: Record<AbTest["status"], string> = {
+  active: "Active",
+  paused: "Paused",
+  completed: "Completed",
+};
+
+function GroupedTests({ tests, onUpdate }: { tests: AbTest[]; onUpdate: () => void }) {
+  const grouped: Record<AbTest["status"], AbTest[]> = {
+    active: [],
+    paused: [],
+    completed: [],
+  };
+  for (const t of tests) {
+    if (grouped[t.status]) grouped[t.status].push(t);
+  }
+
+  return (
+    <div className="space-y-6">
+      {GROUP_ORDER.map((status) => {
+        const group = grouped[status];
+        return (
+          <section key={status}>
+            <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2 flex items-center gap-2">
+              {GROUP_LABELS[status]}
+              <span className="text-zinc-600 font-normal">({group.length})</span>
+            </h2>
+            {group.length === 0 ? (
+              <p className="text-xs text-zinc-600 italic">No {GROUP_LABELS[status].toLowerCase()} tests.</p>
+            ) : (
+              <div className="space-y-3">
+                {group.map((test) => (
+                  <TestCard key={test.id} test={test} onUpdate={onUpdate} />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }
