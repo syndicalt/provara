@@ -192,12 +192,19 @@ export default function RequestDetailPage() {
     try {
       const messages = formatMessages(request.prompt);
       const start = performance.now();
+      // Preserve the original request's cell so the replay's EMA signal
+      // lands where it belongs. Without these hints the router falls into
+      // its "model-only pin" branch and defaults to general/medium,
+      // polluting that cell with misclassified samples (#113).
+      const replayBody: Record<string, unknown> = {
+        model: replayModel,
+        messages,
+      };
+      if (request.taskType) replayBody.routing_hint = request.taskType;
+      if (request.complexity) replayBody.complexity_hint = request.complexity;
       const res = await gatewayFetchRaw("/v1/chat/completions", {
         method: "POST",
-        body: JSON.stringify({
-          model: replayModel,
-          messages,
-        }),
+        body: JSON.stringify(replayBody),
       });
       const latencyMs = Math.round(performance.now() - start);
       const data = await res.json();
@@ -471,6 +478,9 @@ export default function RequestDetailPage() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 space-y-4">
           <p className="text-xs text-zinc-500">
             Send the same prompt to a different model and compare results.
+            {request.taskType && request.complexity && (
+              <> Ratings on this replay train the <code className="text-zinc-400">{request.taskType}/{request.complexity}</code> cell, matching the original.</>
+            )}
           </p>
           <div className="flex gap-3 items-end">
             <div className="flex-1">
