@@ -206,7 +206,7 @@ export default function PlaygroundPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)]">
+    <div className="flex h-[calc(100vh-3.5rem)] gap-3 p-3">
       <ConversationSidebar
         open={showConversations}
         list={saved.list}
@@ -216,9 +216,9 @@ export default function PlaygroundPage() {
         onDelete={handleDeleteConversation}
         loading={saved.loading}
       />
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 gap-3">
         {/* Top bar */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-zinc-800">
+        <div className="flex items-center gap-3 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg">
           <button
             onClick={() => setShowConversations((v) => !v)}
             title={showConversations ? "Hide conversations" : "Show conversations"}
@@ -255,6 +255,7 @@ export default function PlaygroundPage() {
             {session.messages.length > 0 && (
               <button
                 onClick={session.startNewTopic}
+                title="Draws a divider and stops sending prior messages to the model — saves tokens when you change subject without wanting to lose the transcript."
                 className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
               >
                 New Topic
@@ -271,6 +272,7 @@ export default function PlaygroundPage() {
             )}
             <button
               onClick={handleNewConversation}
+              title="Start a fresh conversation. The current chat stays saved in the sidebar."
               className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
             >
               Clear

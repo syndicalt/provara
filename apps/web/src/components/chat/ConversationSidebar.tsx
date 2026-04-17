@@ -37,7 +37,7 @@ export function ConversationSidebar({
 }: Props) {
   if (!open) return null;
   return (
-    <div className="w-60 border-r border-zinc-800 bg-zinc-900/40 flex flex-col overflow-hidden">
+    <div className="w-60 bg-zinc-900 border border-zinc-800 rounded-lg flex flex-col overflow-hidden">
       <div className="p-2 border-b border-zinc-800">
         <button
           type="button"
