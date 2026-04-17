@@ -25,45 +25,68 @@ import {
 
 const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000";
 const STATE_COOKIE = "provara_oauth_state";
+const RETURN_COOKIE = "provara_oauth_return";
+
+// Only allow redirecting to in-app paths (never external URLs)
+function sanitizeReturn(raw: string | undefined | null): string {
+  if (!raw) return "/dashboard";
+  if (!raw.startsWith("/") || raw.startsWith("//")) return "/dashboard";
+  return raw;
+}
 
 export function createAuthRoutes(db: Db) {
   const app = new Hono();
+
+  const cookieOpts = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "Lax" as const,
+    path: "/",
+    maxAge: 600,
+  };
 
   // --- Login redirects ---
 
   app.get("/login/google", (c) => {
     const state = generateState();
-    setCookie(c, STATE_COOKIE, state, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "Lax",
-      path: "/",
-      maxAge: 600, // 10 minutes
-    });
+    const returnTo = sanitizeReturn(c.req.query("return"));
+    setCookie(c, STATE_COOKIE, state, cookieOpts);
+    setCookie(c, RETURN_COOKIE, returnTo, cookieOpts);
     return c.redirect(buildGoogleAuthUrl(state));
   });
 
   app.get("/login/github", (c) => {
     const state = generateState();
-    setCookie(c, STATE_COOKIE, state, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "Lax",
-      path: "/",
-      maxAge: 600,
-    });
+    const returnTo = sanitizeReturn(c.req.query("return"));
+    setCookie(c, STATE_COOKIE, state, cookieOpts);
+    setCookie(c, RETURN_COOKIE, returnTo, cookieOpts);
     return c.redirect(buildGitHubAuthUrl(state));
   });
 
   // --- Callbacks ---
 
+  function loginRedirect(errorCode: string): string {
+    return `${DASHBOARD_URL()}/login?error=${errorCode}`;
+  }
+
+  function successRedirect(c: Parameters<typeof getCookie>[0]): string {
+    const returnTo = sanitizeReturn(getCookie(c, RETURN_COOKIE));
+    return `${DASHBOARD_URL()}${returnTo}`;
+  }
+
   app.get("/callback/google", async (c) => {
+    // User clicked "cancel" on Google's consent screen
+    const providerError = c.req.query("error");
+    if (providerError === "access_denied") {
+      return c.redirect(loginRedirect("denied"));
+    }
+
     const code = c.req.query("code");
     const state = c.req.query("state");
     const storedState = getCookie(c, STATE_COOKIE);
 
     if (!code || !state || state !== storedState) {
-      return c.json({ error: { message: "Invalid OAuth state", type: "auth_error" } }, 400);
+      return c.redirect(loginRedirect("invalid_state"));
     }
 
     try {
@@ -72,20 +95,25 @@ export function createAuthRoutes(db: Db) {
       const user = await upsertUser(db, "google", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
-      return c.redirect(`${DASHBOARD_URL()}/dashboard`);
+      return c.redirect(successRedirect(c));
     } catch (err) {
       console.error("Google OAuth error:", err);
-      return c.redirect(`${DASHBOARD_URL()}/login?error=oauth_failed`);
+      return c.redirect(loginRedirect("oauth_failed"));
     }
   });
 
   app.get("/callback/github", async (c) => {
+    const providerError = c.req.query("error");
+    if (providerError === "access_denied") {
+      return c.redirect(loginRedirect("denied"));
+    }
+
     const code = c.req.query("code");
     const state = c.req.query("state");
     const storedState = getCookie(c, STATE_COOKIE);
 
     if (!code || !state || state !== storedState) {
-      return c.json({ error: { message: "Invalid OAuth state", type: "auth_error" } }, 400);
+      return c.redirect(loginRedirect("invalid_state"));
     }
 
     try {
@@ -94,10 +122,10 @@ export function createAuthRoutes(db: Db) {
       const user = await upsertUser(db, "github", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
-      return c.redirect(`${DASHBOARD_URL()}/dashboard`);
+      return c.redirect(successRedirect(c));
     } catch (err) {
       console.error("GitHub OAuth error:", err);
-      return c.redirect(`${DASHBOARD_URL()}/login?error=oauth_failed`);
+      return c.redirect(loginRedirect("oauth_failed"));
     }
   });
 

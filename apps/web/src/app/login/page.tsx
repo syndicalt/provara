@@ -8,17 +8,39 @@ import { useAuth } from "../../lib/auth-context";
 
 const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:4000";
 
+function errorMessage(code: string | null): string | null {
+  switch (code) {
+    case "expired":
+      return "Your session expired. Please sign in again.";
+    case "denied":
+      return "Sign-in was cancelled. You can try again whenever you're ready.";
+    case "oauth_failed":
+      return "Sign-in failed. Please try again — if this keeps happening, the OAuth provider may be down.";
+    case "invalid_state":
+      return "The sign-in link expired mid-flow. Please start again.";
+    case null:
+      return null;
+    default:
+      return "Something went wrong. Please try again.";
+  }
+}
+
 function LoginContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { user, loading } = useAuth();
   const error = searchParams.get("error");
+  const returnTo = searchParams.get("return") || "/dashboard";
+  const errorText = errorMessage(error);
+
+  // Append the return path onto the OAuth start URL so the callback can honor it.
+  const oauthReturn = returnTo === "/dashboard" ? "" : `?return=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => {
     if (!loading && user) {
-      router.replace("/dashboard");
+      router.replace(returnTo);
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, returnTo]);
 
   if (loading) {
     return (
@@ -34,19 +56,29 @@ function LoginContent() {
     <div className="min-h-[80vh] flex items-center justify-center">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
-          <h1 className="text-3xl font-bold">Welcome back</h1>
-          <p className="text-zinc-400 mt-2">Sign in to your Provara dashboard</p>
+          <h1 className="text-3xl font-bold">Sign in to Provara</h1>
+          <p className="text-zinc-400 mt-2">
+            Route across OpenAI, Anthropic, Groq, DeepSeek, and more — with adaptive quality scoring and built-in A/B testing.
+          </p>
         </div>
 
-        {error && (
-          <div className="bg-red-900/30 border border-red-800 rounded-lg px-4 py-3 text-sm text-red-300">
-            Authentication failed. Please try again.
+        {errorText && (
+          <div
+            className={`border rounded-lg px-4 py-3 text-sm ${
+              error === "denied"
+                ? "bg-zinc-900 border-zinc-700 text-zinc-300"
+                : error === "expired"
+                ? "bg-amber-900/30 border-amber-800 text-amber-200"
+                : "bg-red-900/30 border-red-800 text-red-300"
+            }`}
+          >
+            {errorText}
           </div>
         )}
 
         <div className="space-y-3">
           <a
-            href={`${GATEWAY}/auth/login/google`}
+            href={`${GATEWAY}/auth/login/google${oauthReturn}`}
             className="flex items-center justify-center gap-3 w-full px-4 py-3 bg-white text-zinc-900 rounded-lg font-medium hover:bg-zinc-100 transition-colors"
           >
             <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -59,7 +91,7 @@ function LoginContent() {
           </a>
 
           <a
-            href={`${GATEWAY}/auth/login/github`}
+            href={`${GATEWAY}/auth/login/github${oauthReturn}`}
             className="flex items-center justify-center gap-3 w-full px-4 py-3 bg-zinc-800 text-white rounded-lg font-medium hover:bg-zinc-700 transition-colors border border-zinc-700"
           >
             <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -69,9 +101,22 @@ function LoginContent() {
           </a>
         </div>
 
-        <p className="text-center text-xs text-zinc-500">
-          By signing in, you agree to our terms of service.
-        </p>
+        <div className="pt-2 text-center space-y-2">
+          <p className="text-xs text-zinc-500">
+            By signing in, you agree to our terms of service.
+          </p>
+          <p className="text-xs text-zinc-600">
+            Want to self-host instead?{" "}
+            <a
+              href="https://github.com/syndicalt/provara"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 transition-colors"
+            >
+              Run it yourself →
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );
