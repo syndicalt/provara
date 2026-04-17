@@ -72,22 +72,40 @@ paths:
                   type: integer
                   example: 1024
                 routing_hint:
-                  type: object
-                  properties:
-                    task_type:
-                      type: string
-                    complexity:
-                      type: string
+                  type: string
+                  enum: [general, coding, qa, creative, summarization, reasoning]
+                  description: Task type hint; bypasses classifier for cell assignment
+                complexity_hint:
+                  type: string
+                  enum: [simple, medium, complex]
+                  description: Complexity hint paired with routing_hint (used when pinning a model so the sample lands in a specific cell rather than general/medium)
                 cache:
                   type: boolean
                   description: Enable/disable caching for this request
       responses:
         "200":
           description: Chat completion response
+          headers:
+            X-Provara-Request-Id:
+              description: Opaque id for the persisted request row; use it to POST feedback for this completion
+              schema:
+                type: string
+            X-Provara-Model:
+              description: The model that actually answered (may differ from requested model if fallback kicked in)
+              schema:
+                type: string
+            X-Provara-Provider:
+              description: The provider that actually answered
+              schema:
+                type: string
+            X-Provara-Errors:
+              description: Present only when `_provara.routing.usedFallback = true`. JSON-encoded array of `{provider, model, error}` tuples for each failed attempt before the fallback chain succeeded.
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/CompletionResponse"
 
   /v1/providers:
     get:
@@ -558,7 +576,13 @@ paths:
 
     post:
       tags: [Feedback]
-      summary: Submit feedback for a request
+      summary: Submit or update user feedback for a request
+      description: |
+        Upserts on `(requestId, source='user', tenantId)`. First submission inserts a row
+        and pushes the score into the adaptive EMA; subsequent submissions update the
+        existing row's score in place and do not re-feed the EMA (avoids double-counting
+        the same user's iteration). The response distinguishes insert from update via the
+        `updated` boolean.
       operationId: submitFeedback
       requestBody:
         required: true
@@ -570,19 +594,30 @@ paths:
               properties:
                 requestId:
                   type: string
+                  description: Opaque id from the `X-Provara-Request-Id` response header on the original completion.
                 score:
                   type: integer
                   minimum: 1
                   maximum: 5
                 comment:
                   type: string
-                source:
-                  type: string
-                  enum: [user, judge]
-                  default: user
       responses:
+        "200":
+          description: Existing feedback row updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackSubmitResponse"
         "201":
-          description: Submitted
+          description: New feedback row created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FeedbackSubmitResponse"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: Request not found for this tenant
 
   /v1/feedback/quality/by-cell:
     get:
@@ -601,6 +636,150 @@ paths:
       responses:
         "200":
           description: Quality breakdown
+
+  /v1/feedback/quality/trend:
+    get:
+      tags: [Feedback]
+      summary: Quality score trend over time
+      operationId: qualityTrend
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+            default: 7d
+          description: Time window. `24h` buckets hourly; `7d` and `30d` bucket daily.
+      responses:
+        "200":
+          description: Time-series of avg quality scores bucketed by hour or day
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  range:
+                    type: string
+                  series:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        bucket:
+                          type: string
+                          example: "2026-04-16"
+                        avgScore:
+                          type: number
+                          format: float
+                        count:
+                          type: integer
+                        userCount:
+                          type: integer
+                        judgeCount:
+                          type: integer
+
+  /v1/feedback/judge/config:
+    get:
+      tags: [Feedback]
+      summary: Get LLM judge configuration
+      operationId: getJudgeConfig
+      responses:
+        "200":
+          description: Current judge configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JudgeConfig"
+    put:
+      tags: [Feedback]
+      summary: Update LLM judge configuration
+      description: |
+        All fields optional — only the ones you send are updated. Set `provider` and
+        `model` together to pin the judge to a specific model; set both to `null` to
+        fall back to auto (cheapest registered model).
+      operationId: setJudgeConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                sampleRate:
+                  type: number
+                  format: float
+                  minimum: 0
+                  maximum: 1
+                provider:
+                  type: string
+                  nullable: true
+                model:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Updated judge config (current effective state)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JudgeConfig"
+
+  /v1/routing/config:
+    get:
+      tags: [Routing]
+      summary: Get routing configuration
+      operationId: getRoutingConfig
+      responses:
+        "200":
+          description: Current routing configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingConfig"
+    put:
+      tags: [Routing]
+      summary: Update routing configuration
+      operationId: setRoutingConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                abTestPreempts:
+                  type: boolean
+                  description: |
+                    When `true` (default), an active A/B test on a cell takes precedence over
+                    adaptive routing. When `false`, adaptive routing wins if it has enough
+                    samples, and A/B tests only fire when adaptive can't help.
+      responses:
+        "200":
+          description: Updated routing config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RoutingConfig"
+
+  /v1/analytics/pipeline:
+    get:
+      tags: [Analytics]
+      summary: Routing pipeline stage statistics
+      description: |
+        Per-stage request counts and latencies for the routing pipeline visualization.
+        Includes `userOverride` (requests pinned to a specific model by the caller) and
+        true `fallback` events (provider failures that triggered the fallback chain) as
+        distinct stages.
+      operationId: pipelineStats
+      responses:
+        "200":
+          description: Pipeline statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineStats"
 
   /v1/analytics/requests:
     get:
@@ -626,9 +805,49 @@ paths:
           in: query
           schema:
             type: string
+        - name: taskType
+          in: query
+          schema:
+            type: string
       responses:
         "200":
-          description: Paginated request list
+          description: Paginated request list including `cached`, `usedFallback`, and `fallbackErrors` per row.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/RequestLogRow"
+                  total:
+                    type: integer
+                  limit:
+                    type: integer
+                  offset:
+                    type: integer
+
+  /v1/analytics/requests/{id}:
+    get:
+      tags: [Analytics]
+      summary: Get full detail for a single request
+      operationId: getRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Request detail with persisted routing metadata and fallback errors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestLogRow"
+        "404":
+          description: Request not found for this tenant
 
   /v1/analytics/overview:
     get:
@@ -692,3 +911,311 @@ paths:
       responses:
         "200":
           description: Cache stats
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Provara API token (prefixed `pvra_`)
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: provara_session
+      description: Dashboard session cookie, set after OAuth sign-in. Used for admin endpoints.
+
+  responses:
+    ValidationError:
+      description: Request body failed validation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              example: validation_error
+
+    ChatMessage:
+      type: object
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: string
+
+    RoutingMetadata:
+      type: object
+      required: [taskType, complexity, routedBy, usedFallback]
+      properties:
+        taskType:
+          type: string
+          example: general
+        complexity:
+          type: string
+          enum: [simple, medium, complex]
+        routedBy:
+          type: string
+          enum: [classification, routing-hint, ab-test, adaptive, user-override]
+          description: Which branch of the routing engine picked the target.
+        usedFallback:
+          type: boolean
+          description: True if the primary provider errored and the fallback chain was used.
+        usedLlmFallback:
+          type: boolean
+          description: True if the classifier's primary path failed and an LLM-based fallback classifier was used.
+
+    FallbackAttemptError:
+      type: object
+      required: [provider, model, error]
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+        error:
+          type: string
+
+    ProvaraMetadata:
+      type: object
+      required: [provider, latencyMs, cached, routing]
+      properties:
+        provider:
+          type: string
+          description: The provider that actually answered (may differ from requested if fallback fired).
+        latencyMs:
+          type: integer
+        cached:
+          type: boolean
+          description: True if this response was served from the local completion cache.
+        routing:
+          $ref: "#/components/schemas/RoutingMetadata"
+        errors:
+          type: array
+          description: Present only when `routing.usedFallback = true`. One entry per failed attempt before the fallback chain succeeded.
+          items:
+            $ref: "#/components/schemas/FallbackAttemptError"
+
+    CompletionResponse:
+      type: object
+      description: OpenAI-compatible chat completion response with a Provara-specific `_provara` extension.
+      required: [id, object, model, choices, usage, _provara]
+      properties:
+        id:
+          type: string
+          example: chatcmpl-abc123
+        object:
+          type: string
+          enum: [chat.completion]
+        created:
+          type: integer
+          description: Unix seconds
+        model:
+          type: string
+          description: The model that actually answered.
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              message:
+                $ref: "#/components/schemas/ChatMessage"
+              finish_reason:
+                type: string
+                example: stop
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+        _provara:
+          $ref: "#/components/schemas/ProvaraMetadata"
+
+    FeedbackSubmitResponse:
+      type: object
+      required: [id, requestId, score, updated]
+      properties:
+        id:
+          type: string
+          description: Feedback row id.
+        requestId:
+          type: string
+        score:
+          type: integer
+          minimum: 1
+          maximum: 5
+        updated:
+          type: boolean
+          description: False on first insert, true when an existing user-feedback row for this request was updated in place.
+
+    JudgeConfig:
+      type: object
+      required: [enabled, sampleRate]
+      properties:
+        enabled:
+          type: boolean
+        sampleRate:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Probability a completed request gets scored by the LLM judge.
+        provider:
+          type: string
+          nullable: true
+          description: Pinned provider, or null for auto (cheapest).
+        model:
+          type: string
+          nullable: true
+          description: Pinned model, or null for auto. Must pair with `provider`.
+
+    RoutingConfig:
+      type: object
+      required: [abTestPreempts]
+      properties:
+        abTestPreempts:
+          type: boolean
+          description: See PUT /v1/routing/config docs.
+
+    RequestLogRow:
+      type: object
+      required: [id, provider, model, createdAt]
+      properties:
+        id:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        prompt:
+          type: string
+          description: JSON-encoded ChatMessage[]
+        response:
+          type: string
+          nullable: true
+        inputTokens:
+          type: integer
+          nullable: true
+        outputTokens:
+          type: integer
+          nullable: true
+        latencyMs:
+          type: integer
+          nullable: true
+        cost:
+          type: number
+          format: float
+          nullable: true
+        taskType:
+          type: string
+          nullable: true
+        complexity:
+          type: string
+          nullable: true
+        routedBy:
+          type: string
+          nullable: true
+        usedFallback:
+          type: boolean
+        cached:
+          type: boolean
+          description: True if this row was written by a cache hit (no provider call was made).
+        fallbackErrors:
+          type: string
+          nullable: true
+          description: JSON-encoded FallbackAttemptError[] for requests where `usedFallback = true`. Null otherwise.
+        tenantId:
+          type: string
+          nullable: true
+        abTestId:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    PipelineStageStats:
+      type: object
+      required: [count, active]
+      properties:
+        count:
+          type: integer
+        avgLatency:
+          type: integer
+        active:
+          type: boolean
+        activeTests:
+          type: integer
+        feedbackCount:
+          type: integer
+        providerCount:
+          type: integer
+
+    PipelineStats:
+      type: object
+      required: [totalRequests, stages]
+      properties:
+        totalRequests:
+          type: integer
+        stages:
+          type: object
+          properties:
+            classifier:
+              $ref: "#/components/schemas/PipelineStageStats"
+            userOverride:
+              $ref: "#/components/schemas/PipelineStageStats"
+            abTest:
+              $ref: "#/components/schemas/PipelineStageStats"
+            adaptive:
+              $ref: "#/components/schemas/PipelineStageStats"
+            fallback:
+              $ref: "#/components/schemas/PipelineStageStats"
+            providers:
+              $ref: "#/components/schemas/PipelineStageStats"
+
+security:
+  - BearerAuth: []
+  - SessionCookie: []
+
+tags:
+  - name: Chat
+    description: OpenAI-compatible chat completions endpoint.
+  - name: Feedback
+    description: User ratings, LLM judge scoring, and quality analytics.
+  - name: Routing
+    description: Routing engine configuration.
+  - name: Providers
+    description: Active provider registry.
+  - name: Analytics
+    description: Request logs, costs, routing stats, pipeline visualization.
+  - name: A/B Tests
+    description: Weighted traffic splitting for controlled model comparisons.
+  - name: Tokens
+    description: API token management for programmatic access to the gateway.
+  - name: API Keys
+    description: Provider-side API key storage (encrypted at rest).
+  - name: Custom Providers
+    description: Registering additional OpenAI-compatible providers.
+  - name: Cache
+    description: Completion cache inspection.
+  - name: System
+    description: Health and meta endpoints.
