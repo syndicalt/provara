@@ -54,9 +54,31 @@ export async function createRouter(ctx: RouterContext) {
     ? await createSemanticCache(ctx.db, embeddings)
     : null;
 
-  // Enable CORS for web dashboard and browser-based API clients
+  // CORS: env-driven allowlist. `PROVARA_ALLOWED_ORIGINS` is a
+  // comma-separated list of exact origin strings (e.g.
+  // "https://www.provara.xyz,https://gateway.provara.xyz"). When unset we
+  // fall back to allowing any origin for non-credentialed requests and
+  // reflecting the request origin for credentialed ones — a warning is
+  // logged once at startup so operators know they're in permissive
+  // mode. Setting the allowlist on Railway / self-host Docker env
+  // upgrades to strict.
+  const allowedOrigins = (process.env.PROVARA_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (allowedOrigins.length === 0) {
+    console.warn(
+      "[cors] PROVARA_ALLOWED_ORIGINS is not set — running in permissive mode (any origin allowed with credentials). Set this env var on prod to lock down.",
+    );
+  }
+  const corsOrigin = (origin: string | undefined): string | null => {
+    if (!origin) return null;
+    if (allowedOrigins.length === 0) return origin;
+    return allowedOrigins.includes(origin) ? origin : null;
+  };
+
   app.use("/*", cors({
-    origin: (origin) => origin || "*",
+    origin: corsOrigin,
     credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "X-Stainless-OS", "X-Stainless-Arch", "X-Stainless-Lang", "X-Stainless-Runtime", "X-Stainless-Runtime-Version", "X-Stainless-Package-Version", "X-Stainless-Retry-Count"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
