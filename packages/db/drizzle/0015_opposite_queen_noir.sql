@@ -1,0 +1,1 @@
+ALTER TABLE `requests` ADD `cached` integer DEFAULT false NOT NULL;

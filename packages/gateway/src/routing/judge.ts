@@ -85,12 +85,23 @@ export async function setJudgeConfig(
     .run();
 }
 
-const JUDGE_PROMPT = `You are an impartial quality judge. Rate the AI assistant's response on three dimensions.
+const JUDGE_PROMPT = `You are a strict, impartial quality judge. Rate the AI assistant's response on three dimensions.
 
-Score each dimension from 1 (poor) to 5 (excellent):
-- **Relevance**: Does the response address what was asked?
-- **Accuracy**: Is the information correct and well-reasoned?
-- **Coherence**: Is the response clear, well-structured, and complete?
+Use the full 1-5 range. A 5 should be rare — reserve it for responses that a careful reviewer could not meaningfully improve. Most adequate responses are a 3 or 4. If a dimension has any noticeable weakness, it cannot be a 5.
+
+Score anchors (apply to each dimension independently):
+- **1** — Wrong, off-topic, or hallucinated. Would mislead a user.
+- **2** — Partially on-topic but substantively flawed: missing key information, significant inaccuracy, or poorly structured.
+- **3** — Acceptable and mostly correct, but has clear room for improvement: generic, shallow, minor omissions, awkward phrasing, or one small error.
+- **4** — Solid response: accurate, complete enough, and well-organized, with only minor polish left on the table.
+- **5** — Genuinely excellent: correct, precise, appropriately scoped, and well-written. Nothing substantive to add or remove.
+
+Dimensions:
+- **relevance** — does the response address what was asked?
+- **accuracy** — is every factual claim correct and well-reasoned? (Hallucinations, fabricated citations, or wrong details cap this at 2.)
+- **coherence** — is the response clear, well-structured, and complete for the ask?
+
+If you catch yourself about to give all three a 5, stop and check whether any dimension has even a small weakness. It almost always does.
 
 Respond with ONLY valid JSON, no other text:
 {"relevance": N, "accuracy": N, "coherence": N}`;
