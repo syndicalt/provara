@@ -68,3 +68,17 @@ button, [role="button"], a, select, summary, label[for] {
   background: rgba(63, 63, 70, 0.4);
   font-weight: 600;
 }
+
+/*
+ * Scalar /docs/api: hide the decorative "section-flare" glow that, under our
+ * CSS reset + classic-layout combo, renders as an opaque ~viewport-height
+ * block above the actual content — pushing the first heading past the fold
+ * on page load. It's purely visual (pointer-events: none), so hiding it
+ * keeps the docs semantically intact. Root cause is Scalar's responsive
+ * detection landing on `standalone-mobile` at desktop widths; the flare
+ * is sized for that layout. Fix upstream if the class detection is ever
+ * corrected; until then this one-liner avoids the regression.
+ */
+.scalar-app .section-flare {
+  display: none !important;
+}
