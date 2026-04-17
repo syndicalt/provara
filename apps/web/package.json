@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@provara/db": "*",
+    "@scalar/api-reference-react": "^0.9.23",
     "@xyflow/react": "^12.10.2",
     "next": "^15.3.0",
     "react": "^19.1.0",
