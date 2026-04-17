@@ -10,10 +10,12 @@ import { CopyButton } from "../../../components/chat/CopyButton";
 import { MarkdownMessage } from "../../../components/chat/MarkdownMessage";
 import { ModelInfoPopover } from "../../../components/chat/ModelInfoPopover";
 import { ConversationSidebar } from "../../../components/chat/ConversationSidebar";
+import { PromptPresetPicker } from "../../../components/chat/PromptPresetPicker";
 import { useChatSession } from "../../../components/chat/use-chat-session";
 import { useSessionPersist } from "../../../components/chat/use-session-persist";
 import { useSavedConversations } from "../../../components/chat/use-saved-conversations";
 import type { ChatMessage, MessageAction } from "../../../components/chat/types";
+import type { PromptPreset } from "../../../components/chat/presets";
 
 interface ProviderInfo {
   name: string;
@@ -85,6 +87,58 @@ export default function PlaygroundPage() {
     }
   }
 
+  async function handleFork(messageIndex: number) {
+    // Take messages up through (inclusive) the chosen turn and create a new
+    // conversation from them. Load it as the active session so the user can
+    // continue from the branch point without losing the original.
+    const slice = session.messages.slice(0, messageIndex + 1);
+    if (slice.length === 0) return;
+    const firstUser = slice.find((m) => m.role === "user")?.content?.trim() || "Forked conversation";
+    const truncated = firstUser.replace(/\s+/g, " ").slice(0, 59);
+    const title = `${truncated}… (fork)`;
+    const id = await saved.create(slice, title);
+    if (!id) return;
+    session.loadMessages(slice);
+    setActiveConversationId(id);
+  }
+
+  async function handleShare() {
+    if (!activeConversationId) {
+      // Auto-save first so there's something to share.
+      if (session.messages.length === 0) return;
+      const id = await saved.create(session.messages);
+      if (!id) return;
+      setActiveConversationId(id);
+      // Small wait so the server has committed; then share.
+      await new Promise((r) => setTimeout(r, 200));
+      return doShare(id);
+    }
+    return doShare(activeConversationId);
+  }
+
+  async function doShare(id: string) {
+    try {
+      const res = await gatewayClientFetch<{ token: string }>(`/v1/conversations/${id}/share`, {
+        method: "POST",
+      });
+      const url = `${window.location.origin}/shared/${res.token}`;
+      try {
+        await navigator.clipboard.writeText(url);
+        alert(`Share link copied to clipboard:\n\n${url}`);
+      } catch {
+        // Clipboard blocked — show the URL directly so the user can copy manually.
+        prompt("Share link:", url);
+      }
+    } catch {
+      alert("Failed to create share link.");
+    }
+  }
+
+  function handlePresetPick(preset: PromptPreset) {
+    if (preset.systemPrompt) setSystemPrompt(preset.systemPrompt);
+    setInput(preset.body);
+  }
+
   async function handleSend() {
     const text = input;
     setInput("");
@@ -125,6 +179,21 @@ export default function PlaygroundPage() {
     // Show on every message, user and assistant alike — "copy what I said" is useful too.
     showFor: () => true,
     render: (msg) => <CopyButton text={msg.content} />,
+  };
+
+  const forkAction: MessageAction = {
+    id: "fork",
+    showFor: (msg) => msg.role === "assistant",
+    render: (_msg, i) => (
+      <button
+        type="button"
+        onClick={() => handleFork(i)}
+        className="px-2 py-0.5 text-xs text-zinc-500 hover:text-zinc-300 border border-transparent hover:border-zinc-700 rounded transition-colors"
+        title="Fork conversation from here"
+      >
+        Fork
+      </button>
+    ),
   };
 
   // Render assistant messages as markdown; user prompts stay as plain text so
@@ -191,6 +260,15 @@ export default function PlaygroundPage() {
                 New Topic
               </button>
             )}
+            {session.messages.some((m) => m.role === "assistant") && (
+              <button
+                onClick={handleShare}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
+                title="Create a public share link"
+              >
+                Share
+              </button>
+            )}
             <button
               onClick={handleNewConversation}
               className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
@@ -205,7 +283,7 @@ export default function PlaygroundPage() {
           streaming={session.streaming}
           streamingContent={session.streamingContent}
           topicStartIndex={session.topicStartIndex}
-          actions={[copyAction, ratingAction]}
+          actions={[copyAction, forkAction, ratingAction]}
           renderContent={renderContent}
           emptyState={
             <div className="flex items-center justify-center h-full">
@@ -225,6 +303,7 @@ export default function PlaygroundPage() {
           onChange={setInput}
           onSend={handleSend}
           disabled={session.streaming}
+          leftAddon={<PromptPresetPicker onPick={handlePresetPick} />}
           rightAddon={
             session.streaming ? (
               <button

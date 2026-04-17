@@ -289,6 +289,23 @@ export const conversations = sqliteTable("conversations", {
     .$defaultFn(() => new Date()),
 });
 
+/**
+ * Public share tokens for saved conversations. A row here grants anyone
+ * holding the token read access to the referenced conversation without
+ * auth. The token is a long random string (nanoid) so guessing is
+ * impractical; `revokedAt` lets the owner turn off access after the fact
+ * without deleting the row (preserves audit trail).
+ */
+export const shares = sqliteTable("shares", {
+  token: text("token").primaryKey(),
+  conversationId: text("conversation_id").notNull(),
+  tenantId: text("tenant_id"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  revokedAt: integer("revoked_at", { mode: "timestamp" }),
+});
+
 export const semanticCache = sqliteTable("semantic_cache", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),

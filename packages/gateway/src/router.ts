@@ -16,6 +16,7 @@ import { createTenantMiddleware } from "./auth/tenant.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createConversationRoutes } from "./routes/conversations.js";
+import { createShareHandlers } from "./routes/shares.js";
 import { createRoutingConfigRoutes } from "./routes/routing-config.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
@@ -67,6 +68,12 @@ export async function createRouter(ctx: RouterContext) {
     app.route("/auth", createAuthRoutes(ctx.db));
   }
 
+  // Public share read — uses a distinct path (/v1/shared/:token, past tense)
+  // so the `/v1/shares/*` admin-auth middleware registered below doesn't
+  // accidentally gate it. Admin create/revoke operations use /v1/shares/*.
+  const shareHandlers = createShareHandlers(ctx.db);
+  app.get("/v1/shared/:token", shareHandlers.getPublic);
+
   // Auth middleware — checks Bearer token on /v1/chat/completions
   app.use("/v1/*", createAuthMiddleware(ctx.db));
 
@@ -78,6 +85,10 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/feedback/*", adminAuth);
   app.use("/v1/conversations", adminAuth);
   app.use("/v1/conversations/*", adminAuth);
+  // Authed share routes: create + revoke. Public read is /v1/shared/:token (above).
+  app.use("/v1/shares/*", adminAuth);
+  app.post("/v1/conversations/:id/share", shareHandlers.create);
+  app.delete("/v1/shares/:token", shareHandlers.revoke);
   app.use("/v1/admin/*", adminAuth);
   app.use("/v1/providers", adminAuth);
   app.use("/v1/providers/*", adminAuth);
