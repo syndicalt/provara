@@ -89,9 +89,18 @@ interface RequestDetail {
   taskType: string | null;
   complexity: string | null;
   routedBy: string | null;
+  usedFallback: boolean;
+  cached: boolean;
+  fallbackErrors: string | null;
   tenantId: string | null;
   abTestId: string | null;
   createdAt: string;
+}
+
+interface FallbackError {
+  provider: string;
+  model: string;
+  error: string;
 }
 
 interface FeedbackEntry {
@@ -274,7 +283,7 @@ export default function RequestDetailPage() {
           </div>
           <div>
             <p className="text-xs text-zinc-500 mb-1">Routing</p>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               {request.routedBy && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-blue-900/30 text-blue-300 border border-blue-800/50">
                   {request.routedBy}
@@ -288,6 +297,16 @@ export default function RequestDetailPage() {
               {request.complexity && (
                 <span className="text-xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/50">
                   {request.complexity}
+                </span>
+              )}
+              {request.cached && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-900/40 text-cyan-300 border border-cyan-800/50">
+                  cached
+                </span>
+              )}
+              {request.usedFallback && (
+                <span className="text-xs px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-800/50">
+                  fallback
                 </span>
               )}
             </div>
@@ -314,6 +333,30 @@ export default function RequestDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Fallback errors (if any attempts failed before success) */}
+      {request.fallbackErrors && (() => {
+        let errors: FallbackError[] = [];
+        try { errors = JSON.parse(request.fallbackErrors); } catch {}
+        if (errors.length === 0) return null;
+        return (
+          <div className="bg-amber-950/20 border border-amber-900/40 rounded-lg p-4 space-y-2">
+            <h2 className="text-sm font-semibold text-amber-300">Fallback attempts</h2>
+            <p className="text-xs text-amber-400/70">
+              These providers were tried first and failed. The gateway then routed to the fallback chain.
+            </p>
+            <ul className="space-y-1.5">
+              {errors.map((e, i) => (
+                <li key={i} className="text-xs font-mono">
+                  <span className="text-amber-300">{e.provider}/{e.model}</span>
+                  <span className="text-zinc-500 mx-2">→</span>
+                  <span className="text-zinc-400">{e.error}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })()}
 
       {/* Messages */}
       <div className="space-y-3">

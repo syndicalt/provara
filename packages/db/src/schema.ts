@@ -81,6 +81,7 @@ export const requests = sqliteTable("requests", {
   routedBy: text("routed_by"),
   usedFallback: integer("used_fallback", { mode: "boolean" }).notNull().default(false),
   cached: integer("cached", { mode: "boolean" }).notNull().default(false),
+  fallbackErrors: text("fallback_errors"),
   tenantId: text("tenant_id"),
   abTestId: text("ab_test_id").references(() => abTests.id),
   createdAt: integer("created_at", { mode: "timestamp" })

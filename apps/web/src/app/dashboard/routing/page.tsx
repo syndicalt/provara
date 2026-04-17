@@ -114,24 +114,33 @@ const routingStatsColumns: Column<RoutingStat>[] = [
   { key: "avgLatency", label: "Avg Latency", sortable: true, align: "right", render: (row) => formatLatency(row.avgLatency) },
 ];
 
+interface RoutingConfig {
+  abTestPreempts: boolean;
+}
+
 export default function RoutingPage() {
   const [stats, setStats] = useState<RoutingStat[]>([]);
   const [distribution, setDistribution] = useState<Distribution | null>(null);
   const [adaptiveCells, setAdaptiveCells] = useState<AdaptiveCell[]>([]);
+  const [routingConfig, setRoutingConfig] = useState<RoutingConfig | null>(null);
+  const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
   const { pulseTick, recentUpdateCount } = useAdaptiveScoreBuffer(adaptiveCells);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [statsRes, distRes] = await Promise.all([
+        const [statsRes, distRes, configRes] = await Promise.all([
           gatewayFetchRaw("/v1/analytics/routing/stats"),
           gatewayFetchRaw("/v1/analytics/routing/distribution"),
+          gatewayFetchRaw("/v1/routing/config"),
         ]);
         const statsData = await statsRes.json();
         const distData = await distRes.json();
+        const configData = await configRes.json();
         setStats(statsData.stats || []);
         setDistribution(distData);
+        setRoutingConfig(configData);
       } catch (err) {
         console.error("Failed to fetch routing data:", err);
       } finally {
@@ -140,6 +149,24 @@ export default function RoutingPage() {
     }
     fetchData();
   }, []);
+
+  async function toggleAbTestPreempts() {
+    if (!routingConfig || savingConfig) return;
+    setSavingConfig(true);
+    const next = !routingConfig.abTestPreempts;
+    try {
+      const res = await gatewayFetchRaw("/v1/routing/config", {
+        method: "PUT",
+        body: JSON.stringify({ abTestPreempts: next }),
+      });
+      const data = await res.json();
+      setRoutingConfig(data);
+    } catch (err) {
+      console.error("Failed to update routing config:", err);
+    } finally {
+      setSavingConfig(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -169,6 +196,32 @@ export default function RoutingPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <h1 className="text-2xl font-bold">Routing Analytics</h1>
+
+      {/* Routing Config */}
+      {routingConfig && (
+        <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-6">
+          <h2 className="text-sm font-semibold text-zinc-300 mb-4">Routing Configuration</h2>
+          <div className="flex items-start justify-between gap-6">
+            <div className="flex-1">
+              <p className="text-sm text-zinc-300 mb-1">A/B tests preempt adaptive routing</p>
+              <p className="text-xs text-zinc-500 max-w-2xl">
+                When enabled (default), an active A/B test on a cell takes precedence over adaptive routing — useful for controlled comparisons. When disabled, adaptive wins if it has enough samples for the cell, and A/B tests only fire when adaptive can't help.
+              </p>
+            </div>
+            <button
+              onClick={toggleAbTestPreempts}
+              disabled={savingConfig}
+              className={`px-3 py-1.5 rounded text-xs font-medium transition-colors shrink-0 ${
+                routingConfig.abTestPreempts
+                  ? "bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/50"
+                  : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+              } ${savingConfig ? "opacity-60" : ""}`}
+            >
+              {savingConfig ? "Saving..." : routingConfig.abTestPreempts ? "On" : "Off"}
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* Pipeline Visualization */}
       <section>

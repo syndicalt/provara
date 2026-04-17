@@ -17,6 +17,8 @@ interface RequestRow {
   taskType: string | null;
   complexity: string | null;
   routedBy: string | null;
+  usedFallback: boolean;
+  cached: boolean;
   createdAt: string;
 }
 
@@ -219,7 +221,7 @@ export default function LogsPage() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       {r.taskType && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
                           {r.taskType}
@@ -228,6 +230,22 @@ export default function LogsPage() {
                       {r.complexity && (
                         <span className="text-xs px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700/50">
                           {r.complexity}
+                        </span>
+                      )}
+                      {r.cached && (
+                        <span
+                          title="Served from cache (no provider call)"
+                          className="text-xs px-1.5 py-0.5 rounded bg-cyan-900/40 text-cyan-300 border border-cyan-800/50"
+                        >
+                          cached
+                        </span>
+                      )}
+                      {r.usedFallback && (
+                        <span
+                          title="Primary provider failed; answered by fallback chain"
+                          className="text-xs px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-800/50"
+                        >
+                          fallback
                         </span>
                       )}
                     </div>

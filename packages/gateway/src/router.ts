@@ -14,6 +14,7 @@ import { createAdminMiddleware, requireRole } from "./auth/admin.js";
 import { createTenantMiddleware } from "./auth/tenant.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
+import { createRoutingConfigRoutes } from "./routes/routing-config.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createTeamRoutes } from "./routes/team.js";
@@ -64,6 +65,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/providers", adminAuth);
   app.use("/v1/providers/*", adminAuth);
   app.use("/v1/cache/*", adminAuth);
+  app.use("/v1/routing/*", adminAuth);
 
   // Role-based access — owner-only routes (after adminAuth attaches user)
   app.use("/v1/admin/*", requireRole("owner"));
@@ -83,6 +85,7 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount feedback routes
   app.route("/v1/feedback", createFeedbackRoutes(ctx.db, routingEngine.adaptive));
+  app.route("/v1/routing/config", createRoutingConfigRoutes(ctx.db));
 
   // Mount token management routes (owner only)
   app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
@@ -341,6 +344,7 @@ export async function createRouter(ctx: RouterContext) {
                     complexity: routingResult.complexity,
                     routedBy: routingResult.routedBy,
                     usedFallback,
+                    fallbackErrors: attemptErrors.length > 0 ? JSON.stringify(attemptErrors) : null,
                     tenantId,
                     abTestId: routingResult.abTestId || null,
                   })
@@ -482,6 +486,7 @@ export async function createRouter(ctx: RouterContext) {
         complexity: routingResult.complexity,
         routedBy: routingResult.routedBy,
         usedFallback,
+        fallbackErrors: attemptErrors.length > 0 ? JSON.stringify(attemptErrors) : null,
         tenantId,
         abTestId: routingResult.abTestId || null,
       })
