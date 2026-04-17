@@ -14,6 +14,7 @@ import { PromptPresetPicker } from "../../../components/chat/PromptPresetPicker"
 import { useChatSession } from "../../../components/chat/use-chat-session";
 import { useSessionPersist } from "../../../components/chat/use-session-persist";
 import { useSavedConversations } from "../../../components/chat/use-saved-conversations";
+import { useToast } from "../../../components/toast";
 import type { ChatMessage, MessageAction } from "../../../components/chat/types";
 import type { PromptPreset } from "../../../components/chat/presets";
 
@@ -38,6 +39,7 @@ export default function PlaygroundPage() {
 
   const session = useChatSession();
   const saved = useSavedConversations();
+  const toast = useToast();
 
   useEffect(() => {
     gatewayClientFetch<{ providers: ProviderInfo[] }>("/v1/providers")
@@ -124,13 +126,16 @@ export default function PlaygroundPage() {
       const url = `${window.location.origin}/shared/${res.token}`;
       try {
         await navigator.clipboard.writeText(url);
-        alert(`Share link copied to clipboard:\n\n${url}`);
+        toast.success("Share link copied to clipboard");
       } catch {
-        // Clipboard blocked — show the URL directly so the user can copy manually.
-        prompt("Share link:", url);
+        // Clipboard blocked — log the URL for the user's console fallback
+        // and surface a toast. Sticky (duration: 0) so they have time to
+        // open devtools.
+        console.info("[share] clipboard blocked. URL:", url);
+        toast.error("Couldn't copy to clipboard — URL logged to console", 0);
       }
     } catch {
-      alert("Failed to create share link.");
+      toast.error("Failed to create share link");
     }
   }
 
