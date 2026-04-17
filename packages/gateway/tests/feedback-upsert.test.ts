@@ -4,7 +4,7 @@ import { feedback, requests } from "@provara/db";
 import { nanoid } from "nanoid";
 import { eq } from "drizzle-orm";
 import { createFeedbackRoutes } from "../src/routes/feedback.js";
-import { createAdaptiveRouter } from "../src/routing/adaptive.js";
+import { createAdaptiveRouter } from "../src/routing/adaptive/index.js";
 import { makeTestDb } from "./_setup/db.js";
 
 async function buildTestApp() {

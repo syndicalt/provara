@@ -7,12 +7,12 @@ import type { TaskType, Complexity } from "../classifier/types.js";
 import type { RoutingResult, RouteTarget } from "./types.js";
 import { classifyRequest } from "../classifier/index.js";
 import { selectVariant } from "../ab/index.js";
-import { createAdaptiveRouter, type RoutingProfile, type RoutingWeights } from "./adaptive.js";
+import { createAdaptiveRouter, type RoutingProfile, type RoutingWeights } from "./adaptive/index.js";
 import { getPricing } from "../cost/index.js";
 import { getRoutingConfig } from "./config.js";
 
 export type { RoutingResult, RouteTarget } from "./types.js";
-export { type RoutingProfile } from "./adaptive.js";
+export { type RoutingProfile } from "./adaptive/index.js";
 
 export interface RoutingEngineConfig {
   registry: ProviderRegistry;
