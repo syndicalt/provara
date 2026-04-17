@@ -8,7 +8,9 @@ export default function ApiDocsPage() {
   useEffect(() => {
     // Scalar's standalone build looks for a <script id="api-reference">
     // element with data-url + data-configuration, then renders next to it.
-    // We create those via DOM APIs to sidestep Next.js's JSX <script> warnings.
+    // We append directly to body (where Scalar expects to mount) instead of
+    // wrapping in a React tree node — otherwise we'd end up with an orphan
+    // div taking up a full viewport before the real content renders.
     const configScript = document.createElement("script");
     configScript.id = "api-reference";
     configScript.setAttribute("data-url", "/openapi.yaml");
@@ -17,7 +19,9 @@ export default function ApiDocsPage() {
       JSON.stringify({
         theme: "kepler",
         darkMode: true,
-        layout: "modern",
+        // classic = single-column, expandable-section layout. Avoids the horizontal
+        // request-builder rail that caused body-wide horizontal scroll in `modern`.
+        layout: "classic",
         hideClientButton: false,
         metaData: { title: "Provara Gateway API · Reference" },
       }),
@@ -29,18 +33,20 @@ export default function ApiDocsPage() {
     loader.async = true;
     document.body.appendChild(loader);
 
+    // Belt-and-suspenders: any stray overflow inside Scalar's rendered tree
+    // (long code samples, auto-generated schema tables) shouldn't push the page
+    // sideways. Only apply on this route; restored on unmount so other pages
+    // keep their default scrolling.
+    const prevOverflowX = document.documentElement.style.overflowX;
+    document.documentElement.style.overflowX = "hidden";
+
     return () => {
       configScript.remove();
       loader.remove();
-      // Scalar injects its own DOM next to the config script; tear it down
-      // when the route unmounts so client-side nav back to the page re-inits.
       document.querySelectorAll(".scalar-app, scalar-api-reference").forEach((el) => el.remove());
+      document.documentElement.style.overflowX = prevOverflowX;
     };
   }, []);
 
-  return (
-    <div className="min-h-screen bg-zinc-950">
-      {/* Scalar renders itself into the body via the loader script. */}
-    </div>
-  );
+  return null;
 }
