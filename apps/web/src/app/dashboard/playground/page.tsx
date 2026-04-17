@@ -115,6 +115,14 @@ export default function PlaygroundPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
+  // The textarea is disabled while `streaming` is true, which blurs it. When
+  // streaming flips back to false, React re-enables the element on the next
+  // commit — refocus here so the user can keep typing without clicking back in.
+  // Also fires once on mount (streaming starts false) to give the page focus.
+  useEffect(() => {
+    if (!streaming) inputRef.current?.focus();
+  }, [streaming]);
+
   const allModels = providers.flatMap((p) =>
     p.models.map((m) => ({ provider: p.name, model: m }))
   );
@@ -244,7 +252,6 @@ export default function PlaygroundPage() {
     } finally {
       setStreaming(false);
       sessionStorage.removeItem("pg:streaming");
-      inputRef.current?.focus();
     }
   }
 
