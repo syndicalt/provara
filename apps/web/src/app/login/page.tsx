@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { PublicNav } from "../../components/public-nav";
@@ -103,7 +104,11 @@ function LoginContent() {
 
         <div className="pt-2 text-center space-y-2">
           <p className="text-xs text-zinc-500">
-            By signing in, you agree to our terms of service.
+            By signing in, you agree to our{" "}
+            <Link href="/terms" className="text-zinc-400 hover:text-zinc-200 underline underline-offset-2 transition-colors">
+              terms of service
+            </Link>
+            .
           </p>
           <p className="text-xs text-zinc-600">
             Want to self-host instead?{" "}
