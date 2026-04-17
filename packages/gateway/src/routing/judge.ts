@@ -5,7 +5,7 @@ import { appConfig, feedback } from "@provara/db";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getPricing } from "../cost/index.js";
-import type { AdaptiveRouter } from "./adaptive.js";
+import type { AdaptiveRouter } from "./adaptive/index.js";
 
 const JUDGE_CONFIG_KEY = "judge_config";
 

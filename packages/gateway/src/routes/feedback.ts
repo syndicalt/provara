@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { getTokenInfo } from "../auth/middleware.js";
 import { getTenantId } from "../auth/tenant.js";
 import { getJudgeConfig, setJudgeConfig } from "../routing/judge.js";
-import type { AdaptiveRouter } from "../routing/adaptive.js";
+import type { AdaptiveRouter } from "../routing/adaptive/index.js";
 
 export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
   const app = new Hono();
