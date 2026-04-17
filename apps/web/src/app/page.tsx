@@ -190,7 +190,7 @@ export default function Home() {
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-[1.05]">
                 <span className="block">One Gateway, Every LLM</span>
-                <span className="block mt-6 text-blue-400">Smarter with every request</span>
+                <span className="block mt-6 text-blue-400">Smarter with Every Request</span>
               </h1>
               <p className="mt-6 text-lg text-zinc-400 leading-relaxed">
                 Route traffic across OpenAI, Anthropic, Groq, DeepSeek, xAI, and more — then watch the gateway learn which models perform best on your workload and quietly shift routing toward them. No retraining, no manual tuning, no SDK swap.
