@@ -40,7 +40,20 @@ export function createAnalyticsRoutes(db: Db) {
       ? (orderParam === "asc" ? asc(sortCol) : desc(sortCol))
       : desc(requests.createdAt);
 
-    const rows = (await db
+    // Filters applied in SQL, not post-hoc in JS — otherwise pagination
+    // slices the raw result BEFORE filters, so a user asking for 25
+    // filtered rows can get 0–25 back depending on how many in the
+    // sliced window happen to match. The old behavior also meant `total`
+    // didn't reflect the filtered count, so page navigation was wrong.
+    const conditions = [
+      tenantId ? eq(requests.tenantId, tenantId) : undefined,
+      provider ? eq(requests.provider, provider) : undefined,
+      model ? eq(requests.model, model) : undefined,
+      taskType ? eq(requests.taskType, taskType) : undefined,
+    ].filter((c): c is NonNullable<typeof c> => c !== undefined);
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const rows = await db
       .select({
         id: requests.id,
         provider: requests.provider,
@@ -62,19 +75,18 @@ export function createAnalyticsRoutes(db: Db) {
       })
       .from(requests)
       .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(whereClause)
       .orderBy(orderExpr)
       .limit(limit)
       .offset(offset)
-      .all())
-      .filter((r) => {
-        if (provider && r.provider !== provider) return false;
-        if (model && r.model !== model) return false;
-        if (taskType && r.taskType !== taskType) return false;
-        return true;
-      });
+      .all();
 
-    const total = await db.select({ count: sql<number>`count(*)` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
+    // Total uses the same filters so page counts match filtered results.
+    const total = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(requests)
+      .where(whereClause)
+      .get();
 
     return c.json({ requests: rows, total: total?.count || 0, limit, offset });
   });
