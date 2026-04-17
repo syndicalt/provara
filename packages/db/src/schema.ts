@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, blob, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -81,6 +81,11 @@ export const requests = sqliteTable("requests", {
   routedBy: text("routed_by"),
   usedFallback: integer("used_fallback", { mode: "boolean" }).notNull().default(false),
   cached: integer("cached", { mode: "boolean" }).notNull().default(false),
+  /** "exact" | "semantic" when cached=true. Null when cached=false. */
+  cacheSource: text("cache_source"),
+  /** Tokens that would have been billed but weren't, because of a cache hit. */
+  tokensSavedInput: integer("tokens_saved_input"),
+  tokensSavedOutput: integer("tokens_saved_output"),
   fallbackErrors: text("fallback_errors"),
   tenantId: text("tenant_id"),
   abTestId: text("ab_test_id").references(() => abTests.id),
@@ -264,6 +269,31 @@ export const modelScores = sqliteTable("model_scores", {
 }, (table) => [
   primaryKey({ columns: [table.taskType, table.complexity, table.provider, table.model] }),
 ]);
+
+export const semanticCache = sqliteTable("semantic_cache", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  /** Hash of the concatenated system prompt (if any). Matches exactly on lookup. */
+  systemPromptHash: text("system_prompt_hash"),
+  /** Raw user text that was embedded. Stored for debugging / observability. */
+  promptText: text("prompt_text").notNull(),
+  /** Float32Array packed as bytes. Dim depends on the embedding model at write time. */
+  embedding: blob("embedding", { mode: "buffer" }).notNull(),
+  /** Dim of the embedding so we can reject cross-model matches after a model change. */
+  embeddingDim: integer("embedding_dim").notNull(),
+  /** Embedding model that produced this vector. */
+  embeddingModel: text("embedding_model").notNull(),
+  response: text("response").notNull(),
+  inputTokens: integer("input_tokens").notNull(),
+  outputTokens: integer("output_tokens").notNull(),
+  hitCount: integer("hit_count").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  lastHitAt: integer("last_hit_at", { mode: "timestamp" }),
+});
 
 export const appConfig = sqliteTable("app_config", {
   key: text("key").primaryKey(),

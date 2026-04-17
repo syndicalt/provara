@@ -232,6 +232,68 @@ export function createAnalyticsRoutes(db: Db) {
     });
   });
 
+  // Cache savings — how many tokens we didn't bill the provider for, because
+  // of cache hits (exact + semantic). This is the advertisable number.
+  app.get("/cache/savings", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const tenantFilter = tenantId ? eq(requests.tenantId, tenantId) : undefined;
+
+    const totals = await db
+      .select({
+        tokensSavedInput: sql<number>`coalesce(sum(${requests.tokensSavedInput}), 0)`,
+        tokensSavedOutput: sql<number>`coalesce(sum(${requests.tokensSavedOutput}), 0)`,
+        totalRequests: sql<number>`count(*)`,
+      })
+      .from(requests)
+      .where(tenantFilter)
+      .get();
+
+    const hitCounts = await db
+      .select({
+        cacheSource: requests.cacheSource,
+        count: sql<number>`count(*)`,
+      })
+      .from(requests)
+      .where(
+        tenantFilter
+          ? and(tenantFilter, eq(requests.cached, true))
+          : eq(requests.cached, true),
+      )
+      .groupBy(requests.cacheSource)
+      .all();
+
+    const byModel = await db
+      .select({
+        provider: requests.provider,
+        model: requests.model,
+        tokensSavedInput: sql<number>`coalesce(sum(${requests.tokensSavedInput}), 0)`,
+        tokensSavedOutput: sql<number>`coalesce(sum(${requests.tokensSavedOutput}), 0)`,
+        hits: sql<number>`count(*)`,
+      })
+      .from(requests)
+      .where(
+        tenantFilter
+          ? and(tenantFilter, eq(requests.cached, true))
+          : eq(requests.cached, true),
+      )
+      .groupBy(requests.provider, requests.model)
+      .all();
+
+    const exactHits = hitCounts.find((r) => r.cacheSource === "exact")?.count || 0;
+    const semanticHits = hitCounts.find((r) => r.cacheSource === "semantic")?.count || 0;
+    const totalHits = exactHits + semanticHits;
+    const totalRequests = totals?.totalRequests || 0;
+
+    return c.json({
+      tokensSavedInput: totals?.tokensSavedInput || 0,
+      tokensSavedOutput: totals?.tokensSavedOutput || 0,
+      tokensSavedTotal: (totals?.tokensSavedInput || 0) + (totals?.tokensSavedOutput || 0),
+      hits: { exact: exactHits, semantic: semanticHits, total: totalHits },
+      hitRate: totalRequests > 0 ? totalHits / totalRequests : 0,
+      byModel,
+    });
+  });
+
   // Pipeline stage stats — per-stage request counts and latency
   app.get("/pipeline", async (c) => {
     const tenantId = getTenantId(c.req.raw);
