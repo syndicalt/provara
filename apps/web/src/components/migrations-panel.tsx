@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { gatewayFetchRaw } from "../lib/gateway-client";
+import { GatedPanel } from "./gated-panel";
 
 interface MigrationRow {
   id: string;
@@ -37,20 +38,46 @@ function shortDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+interface GatedState {
+  reason: string;
+  currentTier: string;
+  upgradeUrl?: string;
+}
+
 export function MigrationsPanel() {
   const [status, setStatus] = useState<Status | null>(null);
   const [migrations, setMigrations] = useState<MigrationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [gated, setGated] = useState<GatedState | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [statusRes, listRes] = await Promise.all([
-        gatewayFetchRaw("/v1/cost-migrations/status").then((r) => r.json()),
-        gatewayFetchRaw("/v1/cost-migrations").then((r) => r.json()),
-      ]);
-      setStatus(statusRes);
+      const statusRes = await gatewayFetchRaw("/v1/cost-migrations/status");
+      // Tier gate from #168 returns 402 when the deployment isn't Cloud or
+      // the caller's subscription doesn't include Intelligence. Render a
+      // dedicated empty state instead of crashing on status.savingsThisMonth
+      // being undefined. Full Upgrade CTA UX lands in #169.
+      if (statusRes.status === 402) {
+        const body = await statusRes.json().catch(() => ({}));
+        setGated({
+          reason: body?.gate?.reason ?? "not_available",
+          currentTier: body?.gate?.currentTier ?? "free",
+          upgradeUrl: body?.gate?.upgradeUrl,
+        });
+        setStatus(null);
+        setMigrations([]);
+        return;
+      }
+      if (!statusRes.ok) {
+        setStatus(null);
+        return;
+      }
+      const parsedStatus: Status = await statusRes.json();
+      const listRes = await gatewayFetchRaw("/v1/cost-migrations").then((r) => r.json());
+      setStatus(parsedStatus);
       setMigrations(listRes.migrations || []);
+      setGated(null);
     } catch (err) {
       console.error("migrations panel fetch failed:", err);
     } finally {
@@ -85,6 +112,7 @@ export function MigrationsPanel() {
   }
 
   if (loading) return <p className="text-sm text-zinc-500">Loading cost migrations...</p>;
+  if (gated) return <GatedPanel reason={gated.reason} currentTier={gated.currentTier} upgradeUrl={gated.upgradeUrl} feature="Automated cost migrations" />;
   if (!status) return null;
 
   const activeRows = migrations.filter((m) => !m.rolledBackAt);
