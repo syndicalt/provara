@@ -3,6 +3,7 @@ import type { Profile } from "@node-saml/node-saml";
 import type { Db } from "@provara/db";
 import { ssoConfigs } from "@provara/db";
 import { eq } from "drizzle-orm";
+import { getOperatorEmails } from "../config.js";
 
 /**
  * SAML 2.0 SSO support (#209, ops-managed v1).
@@ -102,6 +103,28 @@ export async function findSsoConfigForEmail(
     }
   }
   return null;
+}
+
+/**
+ * Is this email required to use SSO — i.e. does some tenant claim its
+ * domain via an active `sso_configs` row?
+ *
+ * Operator accounts (PROVARA_OPERATOR_EMAILS) always bypass. Everyone
+ * else whose domain is SSO-enforced gets refused from magic-link /
+ * Google OAuth flows (#209/T4) so there is no back-door auth path
+ * around the IdP for their email domain.
+ *
+ * Returns the active config (callers use it to compose the SSO start
+ * URL for the error response) or null when no gate applies.
+ */
+export async function ssoRequiredForEmail(
+  db: Db,
+  email: string,
+): Promise<ActiveSsoConfig | null> {
+  const lowered = email.toLowerCase();
+  const operators = getOperatorEmails();
+  if (operators.includes(lowered)) return null;
+  return findSsoConfigForEmail(db, email);
 }
 
 /**
