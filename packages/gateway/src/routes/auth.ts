@@ -27,6 +27,11 @@ import { sendEmail } from "../email/index.js";
 import { welcomeEmail, magicLinkEmail } from "../email/templates.js";
 
 const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000";
+// The gateway's own public URL (same value OAuth callbacks are registered
+// at). Used by any flow that needs to generate a URL pointing back at
+// the gateway — e.g. the magic-link email (#204). Distinct from
+// DASHBOARD_URL, which is the web app.
+const GATEWAY_PUBLIC_URL = () => process.env.OAUTH_REDIRECT_BASE || "http://localhost:4000";
 const STATE_COOKIE = "provara_oauth_state";
 const RETURN_COOKIE = "provara_oauth_return";
 
@@ -255,7 +260,11 @@ export function createAuthRoutes(db: Db) {
     // client shows a consistent "check your inbox" state; a delivery
     // failure surfaces via the user not seeing the email.
     try {
-      const verifyUrl = `${DASHBOARD_URL()}/auth/magic/verify?token=${encodeURIComponent(plainToken)}`;
+      // The verify URL points to the GATEWAY, not the web app: the
+      // endpoint is owned by the gateway, which sets the session cookie
+      // on its own origin (matches OAuth callback behavior — see #204
+      // post-merge 404 from hitting www.provara.xyz/auth/magic/verify).
+      const verifyUrl = `${GATEWAY_PUBLIC_URL()}/auth/magic/verify?token=${encodeURIComponent(plainToken)}`;
       const tmpl = magicLinkEmail({
         verifyUrl,
         email,
