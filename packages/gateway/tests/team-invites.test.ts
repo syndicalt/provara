@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import type { Db } from "@provara/db";
-import { users, teamInvites } from "@provara/db";
+import { users, teamInvites, oauthAccounts } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
 import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 
@@ -580,5 +580,112 @@ describe("OAuth invite claim (#177)", () => {
     const user = await upsertUser(db, "google", profile());
     expect(user.tenantId).not.toBe("team-alpha");
     expect(user.role).toBe("owner");
+  });
+});
+
+
+describe("DELETE /v1/admin/team/:id (member removal)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("removes a member whose user row has an attached oauth_accounts (regression for #209 UAT)", async () => {
+    // Repro of the live edge case: a member who authenticated via
+    // Google OAuth before their tenant enabled SSO carries an
+    // oauth_accounts row. The original remove path deleted sessions +
+    // users but not oauth_accounts → SQLite refused the user DELETE
+    // with a FOREIGN KEY constraint → 500 → dashboard generic error.
+    const ownerId = "owner-1";
+    const memberId = "member-1";
+    await seedUser(db, { id: ownerId, tenantId: "t-1", email: "owner@example.com", role: "owner" });
+    await seedUser(db, { id: memberId, tenantId: "t-1", email: "member@example.com", role: "member" });
+    await db.insert(oauthAccounts).values({
+      id: "oauth-1",
+      userId: memberId,
+      provider: "google",
+      providerAccountId: "google-acct-xyz",
+      email: "member@example.com",
+      createdAt: new Date(),
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request(`/v1/admin/team/${memberId}`, {
+      method: "DELETE",
+      headers: {
+        "x-test-user": authHeader({ id: ownerId, tenantId: "t-1", role: "owner" }),
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.deleted).toBe(true);
+
+    // All three rows gone — user and the oauth_accounts that referenced it.
+    const usersLeft = await db.select().from(users).where(eq(users.id, memberId)).all();
+    expect(usersLeft).toHaveLength(0);
+    const oauthLeft = await db.select().from(oauthAccounts).where(eq(oauthAccounts.userId, memberId)).all();
+    expect(oauthLeft).toHaveLength(0);
+  });
+
+  it("preserves team_invites history — consumed_by_user_id is nulled, not cascaded", async () => {
+    const ownerId = "owner-1";
+    const memberId = "member-1";
+    await seedUser(db, { id: ownerId, tenantId: "t-1", email: "owner@example.com", role: "owner" });
+    await seedUser(db, { id: memberId, tenantId: "t-1", email: "member@example.com", role: "member" });
+    await db.insert(teamInvites).values({
+      token: "inv-1",
+      tenantId: "t-1",
+      invitedEmail: "member@example.com",
+      invitedRole: "member",
+      invitedByUserId: ownerId,
+      consumedByUserId: memberId,
+      consumedAt: new Date(Date.now() - 60_000),
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request(`/v1/admin/team/${memberId}`, {
+      method: "DELETE",
+      headers: {
+        "x-test-user": authHeader({ id: ownerId, tenantId: "t-1", role: "owner" }),
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const invite = await db.select().from(teamInvites).where(eq(teamInvites.token, "inv-1")).get();
+    expect(invite).toBeTruthy();
+    expect(invite?.consumedByUserId).toBeNull();
+    expect(invite?.consumedAt).toBeTruthy(); // audit trail preserved
+  });
+
+  it("deletes team_invites where the removed user was the inviter (NOT NULL FK)", async () => {
+    const ownerId = "owner-1";
+    const inviterId = "member-inviter";
+    await seedUser(db, { id: ownerId, tenantId: "t-1", email: "owner@example.com", role: "owner" });
+    await seedUser(db, { id: inviterId, tenantId: "t-1", email: "inviter@example.com", role: "member" });
+    await db.insert(teamInvites).values({
+      token: "inv-2",
+      tenantId: "t-1",
+      invitedEmail: "pending@example.com",
+      invitedRole: "member",
+      invitedByUserId: inviterId,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request(`/v1/admin/team/${inviterId}`, {
+      method: "DELETE",
+      headers: {
+        "x-test-user": authHeader({ id: ownerId, tenantId: "t-1", role: "owner" }),
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const inviteLeft = await db.select().from(teamInvites).where(eq(teamInvites.token, "inv-2")).all();
+    expect(inviteLeft).toHaveLength(0);
   });
 });

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { users, sessions, teamInvites } from "@provara/db";
+import { users, sessions, teamInvites, oauthAccounts } from "@provara/db";
 import { eq, and, isNull, gte, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getAuthUser } from "../auth/admin.js";
@@ -94,7 +94,28 @@ export function createTeamRoutes(db: Db) {
       return c.json({ error: { message: "Member not found", type: "not_found" } }, 404);
     }
 
-    // Delete their sessions first
+    // Clean up rows that hold a FK into users so the final user delete
+    // doesn't trip SQLITE_CONSTRAINT. Surfaced during #209 SSO UAT: a
+    // member who previously signed in via Google OAuth had an
+    // oauth_accounts row, and the original delete path only removed
+    // sessions + users → FK violation → 500 → dashboard shows "unknown
+    // error."
+    //
+    // Handled here, keyed by kind of relationship:
+    //   - oauth_accounts: linked logins (1-to-many by provider). Delete.
+    //   - team_invites.invited_by_user_id: NOT NULL FK; row can't
+    //     survive without the inviter, so delete their invites.
+    //   - team_invites.consumed_by_user_id: nullable FK; null it out
+    //     rather than delete so the audit trail ("this invite was
+    //     accepted, at what time") survives the user leaving.
+    //   - sessions: existing behavior, kept.
+    await db.delete(oauthAccounts).where(eq(oauthAccounts.userId, targetId)).run();
+    await db.delete(teamInvites).where(eq(teamInvites.invitedByUserId, targetId)).run();
+    await db
+      .update(teamInvites)
+      .set({ consumedByUserId: null })
+      .where(eq(teamInvites.consumedByUserId, targetId))
+      .run();
     await db.delete(sessions).where(eq(sessions.userId, targetId)).run();
     await db.delete(users).where(eq(users.id, targetId)).run();
 
