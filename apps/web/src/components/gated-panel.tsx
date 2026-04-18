@@ -83,14 +83,12 @@ export function GatedPanel({ reason, currentTier, upgradeUrl, feature, requiredT
             {isInactive ? "Manage billing" : `Upgrade to ${requiredTier.charAt(0).toUpperCase() + requiredTier.slice(1)}`}
           </a>
         )}
-        {upgradeUrl && !isSelfHost && (
-          <a
-            href={upgradeUrl}
-            className="ml-2 text-xs text-zinc-500 hover:text-zinc-300"
-          >
-            Compare plans →
-          </a>
-        )}
+        {/* Removed the "Compare plans" secondary link — it pointed at the
+         * backend's upgradeUrl (https://provara.xyz/dashboard/billing, no
+         * www) which 404'd against the actual www deployment, and it was
+         * redundant with the primary Upgrade button above which already
+         * routes to /dashboard/billing. If we ever build a public pricing
+         * page this is where it'd re-enter. */}
       </div>
     </div>
   );
