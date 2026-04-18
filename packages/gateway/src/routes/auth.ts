@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import type { Db } from "@provara/db";
-import { users, oauthAccounts } from "@provara/db";
-import { eq, and } from "drizzle-orm";
+import { users, oauthAccounts, teamInvites } from "@provara/db";
+import { eq, and, gte, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   buildGoogleAuthUrl,
@@ -22,6 +22,8 @@ import {
   clearSessionCookie,
   getSessionFromCookie,
 } from "../auth/session.js";
+import { sendEmail } from "../email/index.js";
+import { welcomeEmail } from "../email/templates.js";
 
 const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000";
 const STATE_COOKIE = "provara_oauth_state";
@@ -259,9 +261,57 @@ export async function upsertUser(
     }
   }
 
-  // Create new user with auto-generated tenant
+  // Check for a pending team invite matching this email (#177). If
+  // found, atomically claim it — the new user lands in the inviter's
+  // tenant with the role assigned on the invite. Email comparison is
+  // case-insensitive because OAuth providers inconsistently case the
+  // local-part. Only verified emails can claim (belt-and-suspenders
+  // beyond #182's merge gate — an unverified invite-claim could
+  // hijack a shared-email case).
   const userId = nanoid();
-  const tenantId = nanoid(12);
+  let tenantId = nanoid(12);
+  let role: "owner" | "member" = "owner";
+  let claimedInviteToken: string | null = null;
+
+  if (profile.emailVerified) {
+    const pending = await db
+      .select()
+      .from(teamInvites)
+      .where(and(
+        sql`LOWER(${teamInvites.invitedEmail}) = ${profile.email.toLowerCase()}`,
+        isNull(teamInvites.consumedAt),
+        gte(teamInvites.expiresAt, new Date()),
+      ))
+      .get();
+
+    if (pending) {
+      // Atomic claim — UPDATE ... WHERE consumed_at IS NULL so two
+      // simultaneous claims of the same invite can't both win. We only
+      // flip `consumedAt` here; `consumedByUserId` is back-filled after
+      // the user row is inserted so the FK to users.id is satisfied.
+      const claim = await db
+        .update(teamInvites)
+        .set({ consumedAt: new Date() })
+        .where(and(
+          eq(teamInvites.token, pending.token),
+          isNull(teamInvites.consumedAt),
+        ))
+        .run();
+      const affected = (claim as unknown as { rowsAffected?: number; changes?: number }).rowsAffected
+        ?? (claim as unknown as { changes?: number }).changes
+        ?? 0;
+      if (affected > 0) {
+        tenantId = pending.tenantId;
+        role = pending.invitedRole;
+        claimedInviteToken = pending.token;
+        console.log(
+          `[auth] invite claimed — token=${pending.token} email=${profile.email} tenant=${pending.tenantId} role=${pending.invitedRole}`,
+        );
+      }
+      // If affected = 0, another claim won the race. Fall through to
+      // regular fresh-tenant signup.
+    }
+  }
 
   await db.insert(users).values({
     id: userId,
@@ -269,6 +319,7 @@ export async function upsertUser(
     name: profile.name,
     avatarUrl: profile.avatarUrl,
     tenantId,
+    role,
   }).run();
 
   await db.insert(oauthAccounts).values({
@@ -279,5 +330,31 @@ export async function upsertUser(
     email: profile.email,
   }).run();
 
-  return { id: userId, email: profile.email, name: profile.name, avatarUrl: profile.avatarUrl, tenantId, role: "owner" as const, createdAt: new Date() };
+  if (claimedInviteToken) {
+    await db
+      .update(teamInvites)
+      .set({ consumedByUserId: userId })
+      .where(eq(teamInvites.token, claimedInviteToken))
+      .run();
+  }
+
+  // Welcome email for fresh self-service signups (not invite claims —
+  // invitees already received the invite email). Non-blocking: send
+  // failure is logged but doesn't abort the signup.
+  if (!claimedInviteToken) {
+    try {
+      const dashboardUrl = process.env.DASHBOARD_URL || "https://www.provara.xyz/dashboard";
+      const tmpl = welcomeEmail({ name: profile.name, dashboardUrl });
+      await sendEmail({
+        to: profile.email,
+        subject: tmpl.subject,
+        html: tmpl.html,
+        text: tmpl.text,
+      });
+    } catch (err) {
+      console.warn("[auth] welcome email failed (non-blocking):", err);
+    }
+  }
+
+  return { id: userId, email: profile.email, name: profile.name, avatarUrl: profile.avatarUrl, tenantId, role, createdAt: new Date() };
 }

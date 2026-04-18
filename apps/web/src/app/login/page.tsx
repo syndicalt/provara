@@ -33,8 +33,10 @@ function LoginContent() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const error = searchParams.get("error");
+  const reason = searchParams.get("reason");
   const returnTo = searchParams.get("return") || "/dashboard";
   const errorText = errorMessage(error);
+  const isInvite = reason === "invite";
 
   // Append the return path onto the OAuth start URL so the callback can honor it.
   const oauthReturn = returnTo === "/dashboard" ? "" : `?return=${encodeURIComponent(returnTo)}`;
@@ -59,9 +61,13 @@ function LoginContent() {
     <div className="min-h-[80vh] flex items-center justify-center">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
-          <h1 className="text-3xl font-bold">Sign in to Provara</h1>
+          <h1 className="text-3xl font-bold">
+            {isInvite ? "You've been invited" : "Sign in to Provara"}
+          </h1>
           <p className="text-zinc-400 mt-2">
-            Route across OpenAI, Anthropic, Groq, DeepSeek, and more — with adaptive quality scoring and built-in A/B testing.
+            {isInvite
+              ? "Sign in with the email address you were invited with. You'll join the team automatically."
+              : "Route across OpenAI, Anthropic, Groq, DeepSeek, and more — with adaptive quality scoring and built-in A/B testing."}
           </p>
         </div>
 
