@@ -3,7 +3,8 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { gatewayFetchRaw } from "../../lib/gateway-client";
 import { PublicNav } from "../../components/public-nav";
 import { useAuth } from "../../lib/auth-context";
 
@@ -42,10 +43,15 @@ function LoginContent() {
   const oauthReturn = returnTo === "/dashboard" ? "" : `?return=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => {
-    if (!loading && user) {
+    // An already-signed-in user clicking an invite link is almost
+    // certainly on the wrong account — auto-forwarding to the return
+    // URL silently drops the invite. Hold them on this page and show
+    // the mismatch banner instead so they can sign out and claim as
+    // the invited email.
+    if (!loading && user && !isInvite) {
       router.replace(returnTo);
     }
-  }, [user, loading, router, returnTo]);
+  }, [user, loading, router, returnTo, isInvite]);
 
   if (loading) {
     return (
@@ -53,6 +59,10 @@ function LoginContent() {
         <p className="text-zinc-400">Loading...</p>
       </div>
     );
+  }
+
+  if (user && isInvite) {
+    return <InviteMismatchBanner userEmail={user.email} returnTo={returnTo} />;
   }
 
   if (user) return null;
@@ -69,6 +79,13 @@ function LoginContent() {
               ? "Sign in with the email address you were invited with. You'll join the team automatically."
               : "Route across OpenAI, Anthropic, Groq, DeepSeek, and more — with adaptive quality scoring and built-in A/B testing."}
           </p>
+          {isInvite && (
+            <p className="text-xs text-amber-200/80 mt-3 px-3 py-2 rounded bg-amber-950/20 border border-amber-900/40">
+              Pick the account matching the invited email. Signing in with a
+              different account will start a new workspace and leave the invite
+              unclaimed.
+            </p>
+          )}
         </div>
 
         {errorText && (
@@ -129,6 +146,63 @@ function LoginContent() {
               Run it yourself →
             </a>
           </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shown when an authenticated user lands on /login?reason=invite. The
+ * invite can only be claimed by signing in as the invited email, so we
+ * stop here instead of auto-forwarding them into their own workspace
+ * (the previous silent-drop behavior). Signing out + re-signing-in with
+ * the correct OAuth account is the recovery path.
+ */
+function InviteMismatchBanner({ userEmail, returnTo }: { userEmail: string; returnTo: string }) {
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function signOutAndStay() {
+    setSigningOut(true);
+    try {
+      await gatewayFetchRaw("/auth/logout", { method: "POST" });
+    } catch {
+      // Best-effort — reload regardless so the auth context re-reads /auth/me
+    }
+    // Full reload so the auth context refetches and we land on this same
+    // login page as an unauthenticated user with the invite copy visible.
+    window.location.href = `/login?reason=invite&return=${encodeURIComponent(returnTo)}`;
+  }
+
+  return (
+    <div className="min-h-[80vh] flex items-center justify-center px-4">
+      <div className="w-full max-w-md space-y-5">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold">You&apos;re already signed in</h1>
+        </div>
+        <div className="bg-amber-950/30 border border-amber-900/60 rounded-lg p-4 text-sm text-amber-100 space-y-2">
+          <p>
+            You&apos;re signed in as <span className="font-mono text-amber-50">{userEmail}</span>.
+            Invites can only be claimed by signing in with the email address the invite was sent to.
+          </p>
+          <p className="text-amber-200/80">
+            If the invite was sent to a different address, sign out and sign back in with that account.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <button
+            onClick={signOutAndStay}
+            disabled={signingOut}
+            className="w-full px-4 py-3 rounded-lg font-medium bg-white text-zinc-900 hover:bg-zinc-100 transition-colors disabled:opacity-50"
+          >
+            {signingOut ? "Signing out…" : "Sign out and continue"}
+          </button>
+          <Link
+            href={returnTo}
+            className="block text-center text-xs text-zinc-500 hover:text-zinc-300 pt-1"
+          >
+            Cancel — stay signed in as {userEmail}
+          </Link>
         </div>
       </div>
     </div>
