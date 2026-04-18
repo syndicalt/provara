@@ -149,9 +149,14 @@ export function makeSamlClient(
     // mean anyone who can reach the ACS can impersonate anyone — that's
     // how the samlify CVE worked.
     wantAssertionsSigned: true,
-    // Response signing is optional in the SAML 2.0 spec; most IdPs do
-    // it anyway. Require it.
-    wantAuthnResponseSigned: true,
+    // Response signing is optional in the SAML 2.0 spec, and several
+    // common IdPs (Google Workspace by default, some Okta configs) only
+    // sign the inner assertion. Accept assertion-only signing — the
+    // assertion signature still proves authenticity of the identity
+    // claim, which is the thing that matters for authentication. An
+    // unsigned response envelope can't meaningfully mislead us when the
+    // signed assertion inside is the load-bearing artifact.
+    wantAuthnResponseSigned: false,
     // "never" is a pragmatic choice until we land a DB-backed replay
     // cache. node-saml's default cache is per-SAML-instance and in-memory;
     // our route handlers build a new SAML instance per request, so the
