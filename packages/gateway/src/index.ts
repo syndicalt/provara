@@ -20,6 +20,8 @@ import { runCostMigrationCycle } from "./routing/adaptive/migrations.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getJudgeConfig } from "./routing/judge.js";
 import { isCloudDeployment } from "./config.js";
+import { runUsageReportCycle } from "./billing/usage.js";
+import { getStripe } from "./stripe/index.js";
 
 const port = parseInt(process.env.PORT || "4000", 10);
 
@@ -128,6 +130,35 @@ if (cloudDeployment) {
         // Refresh the boost table so the router picks up the new migration
         // without a restart — boost applies on the very next routing decision.
         await app.routingEngine.boostTable.refresh();
+      }
+    },
+  });
+}
+
+// Usage report cycle (#170). Daily sweep that computes overage per
+// Pro/Team subscription and pushes Stripe meter events for the delta.
+// Idempotent — safe to retry, guarded by high-water marks in the
+// usage_reports table.
+const USAGE_REPORT_INTERVAL_MS = parseInt(
+  process.env.PROVARA_USAGE_REPORT_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
+  10,
+);
+if (cloudDeployment) {
+  await scheduler.schedule({
+    name: "usage-report",
+    intervalMs: USAGE_REPORT_INTERVAL_MS,
+    initialDelayMs: 150_000,
+    handler: async () => {
+      const stripe = getStripe();
+      if (!stripe) {
+        console.warn("[usage] scheduler tick skipped — Stripe SDK not configured");
+        return;
+      }
+      const stats = await runUsageReportCycle(db, stripe);
+      if (stats.reportsWritten > 0 || stats.errors > 0) {
+        console.log(
+          `[usage] cycle complete: evaluated=${stats.subscriptionsEvaluated} reports=${stats.reportsWritten} delta=${stats.deltaRequestsReported} errors=${stats.errors}`,
+        );
       }
     },
   });

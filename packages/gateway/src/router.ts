@@ -39,6 +39,7 @@ import { createMigrationRoutes } from "./routes/migrations.js";
 import { createWebhookRoutes } from "./routes/webhooks.js";
 import { createBillingRoutes } from "./routes/billing.js";
 import { requireIntelligenceTier } from "./auth/tier.js";
+import { requireQuota } from "./auth/quota.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -197,6 +198,12 @@ export async function createRouter(ctx: RouterContext) {
     const results = await ctx.registry.refreshModels();
     return c.json({ results });
   });
+
+  // Free-tier quota gate (#170). Sits specifically on /v1/chat/completions
+  // so it runs after auth + tenant middleware (which have already
+  // resolved the tenant) but before the provider call. Self-host
+  // bypasses via the isCloudDeployment() check inside the middleware.
+  app.use("/v1/chat/completions", requireQuota(ctx.db));
 
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {

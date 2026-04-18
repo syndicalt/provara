@@ -7,6 +7,7 @@ import { getSubscriptionForTenant } from "../stripe/subscriptions.js";
 import { getStripe } from "../stripe/index.js";
 import { getOperatorEmails } from "../config.js";
 import { users } from "@provara/db";
+import { listRecentUsageReports, TIER_QUOTAS } from "../billing/usage.js";
 
 /**
  * Billing routes (#169). Dashboard-facing endpoints for reading the
@@ -20,24 +21,14 @@ import { users } from "@provara/db";
  * back into these routes to take action.
  */
 
-interface QuotaByTier {
-  requestsPerMonth: number;
-}
-
-const TIER_QUOTAS: Record<string, QuotaByTier> = {
-  free: { requestsPerMonth: 10_000 },
-  pro: { requestsPerMonth: 100_000 },
-  team: { requestsPerMonth: 500_000 },
-  enterprise: { requestsPerMonth: Number.MAX_SAFE_INTEGER },
-  selfhost_enterprise: { requestsPerMonth: Number.MAX_SAFE_INTEGER },
-  // Operator tenants and anything unrecognized get unlimited — operators
-  // aren't billed, and unknown tiers default to permissive rather than
-  // blocking a live customer on our own metadata misconfiguration.
-  operator: { requestsPerMonth: Number.MAX_SAFE_INTEGER },
-};
-
+/**
+ * Tier quotas single-sourced from `src/billing/usage.ts::TIER_QUOTAS`
+ * so the displayed quota here cannot drift from what the metering
+ * cycle actually enforces. Any future change to quotas is a one-file
+ * edit with compile-time safety.
+ */
 function quotaForTier(tier: string): number {
-  return TIER_QUOTAS[tier]?.requestsPerMonth ?? Number.MAX_SAFE_INTEGER;
+  return TIER_QUOTAS[tier] ?? Number.MAX_SAFE_INTEGER;
 }
 
 export function createBillingRoutes(db: Db) {
@@ -239,6 +230,22 @@ export function createBillingRoutes(db: Db) {
     });
 
     return c.json({ url: session.url });
+  });
+
+  /**
+   * Audit log of recent usage reports for the caller's tenant (#170).
+   * Customer-facing: "prove the overage charge on my invoice" workflow.
+   * Tenant-scoped; no privileged access required beyond being signed in
+   * as a member of the tenant. Returns up to 50 most-recent periods
+   * (subscription + legacy rows).
+   */
+  app.get("/usage-reports", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    if (!tenantId) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    const reports = await listRecentUsageReports(db, tenantId);
+    return c.json({ reports });
   });
 
   return app;
