@@ -205,4 +205,8 @@ export const FAQS = [
     q: "How do I talk to a human about Enterprise pricing?",
     a: "Email legal@provara.xyz — include your expected request volume, team size, and any compliance or SLA requirements. We'll get back within one business day with a tailored quote.",
   },
+  {
+    q: "How is my routing data isolated on Team and Enterprise?",
+    a: "Team and Enterprise tenants default to an isolated routing matrix — your router reads only your tenant's quality scores, and your ratings update only your tenant's matrix. Two opt-in toggles let you consume or contribute to the shared pool. Enterprise customers get contractual commitments on isolation, audit logs, and deletion — see the Enterprise Data Handling Addendum at /enterprise-data-handling for the full text.",
+  },
 ];
