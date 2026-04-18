@@ -189,6 +189,12 @@ await scheduler.schedule({
   },
 });
 
+// Spend-budget alerts (#219/T7). Daily sweep that fires threshold
+// emails for tenants whose current-period spend has crossed a new
+// alert threshold.
+const { registerBudgetAlertsJob } = await import("./scheduler/budget-alerts.js");
+registerBudgetAlertsJob(scheduler, db);
+
 scheduler.start();
 
 // Discover available models from each provider's API at startup

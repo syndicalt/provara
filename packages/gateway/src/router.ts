@@ -32,6 +32,7 @@ import { createPromptRoutes } from "./routes/prompts.js";
 import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
 import { getTenantId } from "./auth/tenant.js";
 import { getRequestAttribution } from "./auth/attribution.js";
+import { checkBudgetHardStop } from "./billing/budget-alerts.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
@@ -280,6 +281,25 @@ export async function createRouter(ctx: RouterContext) {
     // Spend-attribution (#219): resolved once per request and threaded
     // through every `requests` insert + cost-log write.
     const attribution = getRequestAttribution(c.req.raw);
+
+    // Spend-budget hard stop (#219/T7). One SELECT + aggregate on every
+    // chat completion for tenants that have opted in — cheap on the
+    // tenant-scoped spend index, skipped entirely for tenants without a
+    // budget row (the early return in `checkBudgetHardStop`).
+    if (tenantId) {
+      const budget = await checkBudgetHardStop(ctx.db, tenantId);
+      if (budget.blocked) {
+        return c.json(
+          {
+            error: {
+              message: `Spend budget exceeded: ${budget.spend?.toFixed(2)} / ${budget.cap?.toFixed(2)} USD (${budget.period}).`,
+              type: "budget_exceeded",
+            },
+          },
+          402,
+        );
+      }
+    }
     const routingResult = await routingEngine.route({
       messages: request.messages,
       provider: providerName,

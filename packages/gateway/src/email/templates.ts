@@ -153,6 +153,51 @@ export function magicLinkEmail(params: MagicLinkEmailParams): { subject: string;
   return { subject, html: emailShell(subject, body), text };
 }
 
+export interface BudgetAlertEmailParams {
+  tenantId: string;
+  threshold: number;
+  spendUsd: number;
+  capUsd: number;
+  period: "monthly" | "quarterly";
+  periodStart: Date;
+  periodEnd: Date;
+  dashboardUrl: string;
+}
+
+export function budgetAlertEmail(params: BudgetAlertEmailParams): { subject: string; html: string; text: string } {
+  const money = (n: number) => `$${n.toFixed(2)}`;
+  const pct = Math.min(100, Math.round((params.spendUsd / Math.max(params.capUsd, 0.0001)) * 100));
+  const subject = params.threshold >= 100
+    ? `Provara budget exceeded (${money(params.spendUsd)} of ${money(params.capUsd)})`
+    : `Provara budget at ${params.threshold}% (${money(params.spendUsd)} of ${money(params.capUsd)})`;
+  const headline = params.threshold >= 100
+    ? "Your spend has reached 100% of your budget"
+    : `Your spend has crossed ${params.threshold}% of your budget`;
+  const periodLabel = params.period === "monthly" ? "this month" : "this quarter";
+  const body = `
+    <p style="font-size:16px; color:#fafafa; margin:0 0 18px;">${headline}</p>
+    <p style="margin:0 0 14px;">${periodLabel[0].toUpperCase() + periodLabel.slice(1)} you've spent <strong style="color:#fafafa;">${escapeHtml(money(params.spendUsd))}</strong> of a <strong style="color:#fafafa;">${escapeHtml(money(params.capUsd))}</strong> cap (${pct}%).</p>
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 22px;">
+      <tr>
+        <td style="background:#2563eb; border-radius:8px;">
+          <a href="${escapeHtml(params.dashboardUrl)}" style="display:inline-block; padding:12px 22px; color:#ffffff; font-weight:600; text-decoration:none; font-size:14px;">View spend dashboard &rarr;</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0; font-size:12px; color:#71717a;">Turn off or adjust this alert from your budget settings.</p>
+  `;
+  const text = [
+    headline,
+    "",
+    `${periodLabel[0].toUpperCase() + periodLabel.slice(1)} you've spent ${money(params.spendUsd)} of a ${money(params.capUsd)} cap (${pct}%).`,
+    "",
+    `Dashboard: ${params.dashboardUrl}`,
+    "",
+    "Turn off or adjust this alert from your budget settings.",
+  ].join("\n");
+  return { subject, html: emailShell(subject, body), text };
+}
+
 export interface WelcomeEmailParams {
   name: string;
   dashboardUrl: string;

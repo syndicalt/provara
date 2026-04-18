@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { costLogs, requests, feedback, users, apiTokens } from "@provara/db";
+import { costLogs, requests, feedback, users, apiTokens, spendBudgets } from "@provara/db";
 import { and, eq, gte, lt, sql, inArray } from "drizzle-orm";
 import { getAuthUser } from "../auth/admin.js";
 import { tenantHasTeamAccess, tenantHasEnterpriseAccess } from "../auth/tier.js";
@@ -394,6 +394,132 @@ export function createSpendRoutes(db: Db) {
       rows: limited,
       truncated: rows.length > MAX_ROWS,
     });
+  });
+
+  /**
+   * GET /v1/spend/budgets — returns the tenant's single budget row, or
+   * null when nothing is configured. Team+ gate.
+   *
+   * PUT /v1/spend/budgets — upsert the tenant's budget. Body:
+   *   {
+   *     period: "monthly" | "quarterly",
+   *     cap_usd: number,
+   *     alert_thresholds: number[],  // e.g. [50, 75, 90, 100]
+   *     alert_emails: string[],
+   *     hard_stop?: boolean           // default false
+   *   }
+   * A PUT resets `alerted_thresholds` for the current period (the caller
+   * wants the latest config to take effect cleanly).
+   */
+  app.get("/budgets", async (c) => {
+    const authUser = getAuthUser(c.req.raw);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    if (!(await tenantHasTeamAccess(db, authUser.tenantId))) {
+      return c.json(
+        { error: { message: "Budgets are available on Team and Enterprise plans.", type: "insufficient_tier" } },
+        402,
+      );
+    }
+    const row = await db
+      .select()
+      .from(spendBudgets)
+      .where(eq(spendBudgets.tenantId, authUser.tenantId))
+      .get();
+    return c.json({ budget: row ?? null });
+  });
+
+  app.put("/budgets", async (c) => {
+    const authUser = getAuthUser(c.req.raw);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    if (!(await tenantHasTeamAccess(db, authUser.tenantId))) {
+      return c.json(
+        { error: { message: "Budgets are available on Team and Enterprise plans.", type: "insufficient_tier" } },
+        402,
+      );
+    }
+    const body = await c.req.json().catch(() => null) as {
+      period?: "monthly" | "quarterly";
+      cap_usd?: number;
+      alert_thresholds?: number[];
+      alert_emails?: string[];
+      hard_stop?: boolean;
+    } | null;
+
+    if (!body || typeof body.cap_usd !== "number" || body.cap_usd <= 0) {
+      return c.json(
+        { error: { message: "cap_usd is required and must be > 0.", type: "invalid_request" } },
+        400,
+      );
+    }
+    const period = body.period ?? "monthly";
+    if (period !== "monthly" && period !== "quarterly") {
+      return c.json(
+        { error: { message: "period must be 'monthly' or 'quarterly'.", type: "invalid_request" } },
+        400,
+      );
+    }
+    const thresholds = (body.alert_thresholds ?? [50, 75, 90, 100])
+      .filter((t) => typeof t === "number" && t > 0 && t <= 200);
+    const emails = (body.alert_emails ?? []).filter((e) => typeof e === "string" && e.includes("@"));
+    const hardStop = Boolean(body.hard_stop);
+
+    // Period-start for reset semantics: use the current period's floor so
+    // the reset logic in the scheduler treats a new budget as belonging
+    // to the period in which it was created.
+    const now = new Date();
+    const periodStart = period === "monthly"
+      ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+      : new Date(Date.UTC(now.getUTCFullYear(), Math.floor(now.getUTCMonth() / 3) * 3, 1));
+
+    const existing = await db
+      .select()
+      .from(spendBudgets)
+      .where(eq(spendBudgets.tenantId, authUser.tenantId))
+      .get();
+
+    if (existing) {
+      await db
+        .update(spendBudgets)
+        .set({
+          period,
+          capUsd: body.cap_usd,
+          alertThresholds: thresholds,
+          alertEmails: emails,
+          hardStop,
+          alertedThresholds: [],
+          periodStartedAt: periodStart,
+          updatedAt: now,
+        })
+        .where(eq(spendBudgets.tenantId, authUser.tenantId))
+        .run();
+    } else {
+      await db
+        .insert(spendBudgets)
+        .values({
+          tenantId: authUser.tenantId,
+          period,
+          capUsd: body.cap_usd,
+          alertThresholds: thresholds,
+          alertEmails: emails,
+          hardStop,
+          alertedThresholds: [],
+          periodStartedAt: periodStart,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+    }
+
+    const row = await db
+      .select()
+      .from(spendBudgets)
+      .where(eq(spendBudgets.tenantId, authUser.tenantId))
+      .get();
+    return c.json({ budget: row });
   });
 
   /**

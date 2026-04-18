@@ -265,6 +265,77 @@ describe("GET /v1/spend/by (#219/T3)", () => {
   });
 });
 
+describe("/v1/spend/budgets (#219/T7)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("GET returns null when no budget configured", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/budgets", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.budget).toBeNull();
+  });
+
+  it("PUT creates and GET returns it", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const put = await app.request("/v1/spend/budgets", {
+      method: "PUT",
+      headers: { "x-test-user": authHeader(owner), "content-type": "application/json" },
+      body: JSON.stringify({
+        cap_usd: 250,
+        alert_thresholds: [50, 90],
+        alert_emails: ["finance@example.com"],
+        hard_stop: true,
+      }),
+    });
+    expect(put.status).toBe(200);
+    const putBody = await put.json();
+    expect(putBody.budget).toMatchObject({
+      capUsd: 250,
+      alertThresholds: [50, 90],
+      alertEmails: ["finance@example.com"],
+      hardStop: true,
+    });
+
+    const get = await app.request("/v1/spend/budgets", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const getBody = await get.json();
+    expect(getBody.budget.capUsd).toBe(250);
+  });
+
+  it("PUT rejects invalid cap_usd", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/budgets", {
+      method: "PUT",
+      headers: { "x-test-user": authHeader(owner), "content-type": "application/json" },
+      body: JSON.stringify({ cap_usd: -5 }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("PUT gates Pro tenants with 402", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/budgets", {
+      method: "PUT",
+      headers: { "x-test-user": authHeader(owner), "content-type": "application/json" },
+      body: JSON.stringify({ cap_usd: 100 }),
+    });
+    expect(res.status).toBe(402);
+  });
+});
+
 describe("GET /v1/spend/trajectory (#219/T4)", () => {
   let db: Db;
   beforeEach(async () => {

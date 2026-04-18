@@ -747,6 +747,40 @@ export const auditLogs = sqliteTable("audit_logs", {
 ]);
 
 /**
+ * Spend budgets (#219/T7). One budget per tenant for v1 — the tenant
+ * picks a monthly or quarterly cap, a list of alert thresholds (%) and
+ * a list of email recipients. The budget-alerts scheduler job re-checks
+ * spend daily; when a new threshold is crossed, it appends the threshold
+ * to `alerted_thresholds` and sends an email. Thresholds reset when the
+ * period rolls over (tracked via `period_started_at`).
+ *
+ * `hard_stop=true` flips the hot-path chat-completions handler from
+ * "warn by email only" to "refuse with 402 when at or over cap" —
+ * belt-and-suspenders for tenants that want a genuine ceiling rather
+ * than an advisory alarm. Default is off; explicit opt-in.
+ *
+ * `alert_thresholds` / `alert_emails` / `alerted_thresholds` are stored
+ * as JSON arrays to keep the table free of child-row bookkeeping. At
+ * most a handful of entries each in practice.
+ */
+export const spendBudgets = sqliteTable("spend_budgets", {
+  tenantId: text("tenant_id").primaryKey(),
+  period: text("period", { enum: ["monthly", "quarterly"] }).notNull().default("monthly"),
+  capUsd: real("cap_usd").notNull(),
+  alertThresholds: text("alert_thresholds", { mode: "json" }).$type<number[]>().notNull(),
+  alertEmails: text("alert_emails", { mode: "json" }).$type<string[]>().notNull(),
+  hardStop: integer("hard_stop", { mode: "boolean" }).notNull().default(false),
+  alertedThresholds: text("alerted_thresholds", { mode: "json" }).$type<number[]>().notNull(),
+  periodStartedAt: integer("period_started_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
  * SAML SSO configuration per tenant (#209). Ops-managed in v1 — seeded
  * by operators via a CLI per Enterprise deal, not self-serve in the
  * dashboard. Exactly one row per tenant (PK on tenant_id).
