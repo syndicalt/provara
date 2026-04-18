@@ -264,3 +264,54 @@ describe("GET /v1/spend/by (#219/T3)", () => {
     expect(body.rows[0]).toMatchObject({ key: "tok_prod", label: "Production ingest", cost_usd: 2 });
   });
 });
+
+describe("GET /v1/spend/trajectory (#219/T4)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 401 without auth", async () => {
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 402 for a Pro tenant", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns 400 for an invalid period", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory?period=hourly", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns MTD cost and projection for a Team tenant", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    // Two spends in the current month.
+    await seedRequestAndCost(db, "m1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 2.5, createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) });
+    await seedRequestAndCost(db, "m2", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.5, createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory?period=month", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.period).toBe("month");
+    expect(body.mtd_cost).toBeGreaterThan(0);
+    expect(body.projected_cost).toBeGreaterThanOrEqual(body.mtd_cost);
+    expect(body.anomaly).toHaveProperty("flagged");
+  });
+});

@@ -4,6 +4,12 @@ import { costLogs, requests, feedback, users, apiTokens } from "@provara/db";
 import { and, eq, gte, lt, sql, inArray } from "drizzle-orm";
 import { getAuthUser } from "../auth/admin.js";
 import { tenantHasTeamAccess, tenantHasEnterpriseAccess } from "../auth/tier.js";
+import {
+  computeTrajectory,
+  periodBounds,
+  type DailyCost,
+  type TrajectoryPeriod,
+} from "../billing/trajectory.js";
 
 /**
  * Spend intelligence API (#219). All endpoints under `/v1/spend/*` are
@@ -387,6 +393,80 @@ export function createSpendRoutes(db: Db) {
         : null,
       rows: limited,
       truncated: rows.length > MAX_ROWS,
+    });
+  });
+
+  /**
+   * GET /v1/spend/trajectory?period=month|quarter
+   *
+   * Returns MTD cost for the current period, a linear-run-rate forecast,
+   * the prior period's total, and an anomaly flag when the last 7 days'
+   * daily average exceeds 2× the trailing 28-day baseline. Team+ gate.
+   */
+  app.get("/trajectory", async (c) => {
+    const authUser = getAuthUser(c.req.raw);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    if (!(await tenantHasTeamAccess(db, authUser.tenantId))) {
+      return c.json(
+        {
+          error: {
+            message: "Spend trajectory is available on Team and Enterprise plans.",
+            type: "insufficient_tier",
+          },
+        },
+        402,
+      );
+    }
+
+    const period = (c.req.query("period") ?? "month") as TrajectoryPeriod;
+    if (period !== "month" && period !== "quarter") {
+      return c.json(
+        { error: { message: "Invalid period. Expected one of: month, quarter", type: "invalid_request" } },
+        400,
+      );
+    }
+
+    const now = new Date();
+    const { start } = periodBounds(now, period);
+    // Fetch daily buckets from the baseline window (35 days before period start
+    // covers the anomaly baseline + recent window) up to now. One row per day
+    // per tenant; we sum in SQL and bucketize in Node.
+    const baselineStart = new Date(start.getTime() - 35 * 24 * 60 * 60 * 1000);
+
+    const rawRows = await db
+      .select({
+        day: sql<string>`strftime('%Y-%m-%d', ${costLogs.createdAt}, 'unixepoch')`,
+        cost: sql<number>`COALESCE(SUM(${costLogs.cost}), 0)`,
+      })
+      .from(costLogs)
+      .where(
+        and(
+          eq(costLogs.tenantId, authUser.tenantId),
+          gte(costLogs.createdAt, baselineStart),
+        ),
+      )
+      .groupBy(sql`strftime('%Y-%m-%d', ${costLogs.createdAt}, 'unixepoch')`)
+      .all();
+
+    const daily: DailyCost[] = rawRows
+      .filter((r) => r.day)
+      .map((r) => ({
+        date: new Date(`${r.day}T00:00:00.000Z`),
+        cost: Number(r.cost) || 0,
+      }));
+
+    const trajectory = computeTrajectory(daily, now, period);
+
+    return c.json({
+      period,
+      period_start: trajectory.period_start.toISOString(),
+      period_end: trajectory.period_end.toISOString(),
+      mtd_cost: trajectory.mtd_cost,
+      projected_cost: trajectory.projected_cost,
+      prior_period_cost: trajectory.prior_period_cost,
+      anomaly: trajectory.anomaly,
     });
   });
 
