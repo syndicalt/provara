@@ -12,6 +12,11 @@ export interface CostEntry {
   inputTokens: number;
   outputTokens: number;
   tenantId?: string | null;
+  /** Spend-attribution fields (#219). Denormalized onto `cost_logs` so
+   *  per-user / per-token aggregations hit a covering index without a
+   *  join back to `requests`. Both nullable. */
+  userId?: string | null;
+  apiTokenId?: string | null;
 }
 
 export async function logCost(db: Db, entry: CostEntry): Promise<number> {
@@ -27,6 +32,8 @@ export async function logCost(db: Db, entry: CostEntry): Promise<number> {
       inputTokens: entry.inputTokens,
       outputTokens: entry.outputTokens,
       cost,
+      userId: entry.userId ?? null,
+      apiTokenId: entry.apiTokenId ?? null,
     })
     .run();
 

@@ -126,6 +126,16 @@ export const requests = sqliteTable("requests", {
   tokensSavedOutput: integer("tokens_saved_output"),
   fallbackErrors: text("fallback_errors"),
   tenantId: text("tenant_id"),
+  /**
+   * Attribution for spend intelligence (#219). Populated at ingest from
+   * the authenticated request context; nullable for historical rows and
+   * for request paths that don't resolve a user or token (system /
+   * scheduled callers). User and token are not mutually exclusive in
+   * principle, but in practice dashboard calls set userId and bearer-
+   * token calls set apiTokenId.
+   */
+  userId: text("user_id"),
+  apiTokenId: text("api_token_id"),
   abTestId: text("ab_test_id").references(() => abTests.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -682,10 +692,20 @@ export const costLogs = sqliteTable("cost_logs", {
   inputTokens: integer("input_tokens").notNull(),
   outputTokens: integer("output_tokens").notNull(),
   cost: real("cost").notNull(),
+  /**
+   * Denormalized attribution for spend-intelligence aggregations (#219).
+   * Mirrors the parent `requests` row so per-user / per-token spend
+   * queries hit `cost_logs` alone with a covering index, without a join.
+   */
+  userId: text("user_id"),
+  apiTokenId: text("api_token_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("cost_logs_tenant_user_created_idx").on(table.tenantId, table.userId, table.createdAt),
+  index("cost_logs_tenant_token_created_idx").on(table.tenantId, table.apiTokenId, table.createdAt),
+]);
 
 /**
  * Audit log (#210). Append-only record of security- and admin-relevant
@@ -725,6 +745,70 @@ export const auditLogs = sqliteTable("audit_logs", {
   index("audit_logs_tenant_created_idx").on(table.tenantId, table.createdAt),
   index("audit_logs_tenant_action_created_idx").on(table.tenantId, table.action, table.createdAt),
 ]);
+
+/**
+ * Spend budgets (#219/T7). One budget per tenant for v1 — the tenant
+ * picks a monthly or quarterly cap, a list of alert thresholds (%) and
+ * a list of email recipients. The budget-alerts scheduler job re-checks
+ * spend daily; when a new threshold is crossed, it appends the threshold
+ * to `alerted_thresholds` and sends an email. Thresholds reset when the
+ * period rolls over (tracked via `period_started_at`).
+ *
+ * `hard_stop=true` flips the hot-path chat-completions handler from
+ * "warn by email only" to "refuse with 402 when at or over cap" —
+ * belt-and-suspenders for tenants that want a genuine ceiling rather
+ * than an advisory alarm. Default is off; explicit opt-in.
+ *
+ * `alert_thresholds` / `alert_emails` / `alerted_thresholds` are stored
+ * as JSON arrays to keep the table free of child-row bookkeeping. At
+ * most a handful of entries each in practice.
+ */
+/**
+ * Daily routing-weight snapshots (#219/T5). One row per
+ * (tenant, task_type, complexity) per captured_at day. Drives the
+ * drift-correlation view: "last Thursday you pushed cost-weight from
+ * 0.4 to 0.7 and anthropic's spend share dropped 28 points in the
+ * week after".
+ *
+ * For v1 `task_type` and `complexity` are the literal strings
+ * `"_all_"` / `"_all_"` — per-tenant weights, not per-cell. The
+ * columns exist so that a future per-cell weights feature can populate
+ * them without a schema migration.
+ *
+ * `weights` stores the fully-resolved 3-tuple `{quality, cost, latency}`
+ * so readers don't have to reverse-resolve a profile name at read time.
+ * Append-only; purged by the same retention policy as audit logs.
+ */
+export const routingWeightSnapshots = sqliteTable("routing_weight_snapshots", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  taskType: text("task_type").notNull().default("_all_"),
+  complexity: text("complexity").notNull().default("_all_"),
+  weights: text("weights", { mode: "json" }).$type<{ quality: number; cost: number; latency: number }>().notNull(),
+  profile: text("profile"),
+  capturedAt: integer("captured_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("rws_tenant_captured_idx").on(table.tenantId, table.capturedAt),
+]);
+
+export const spendBudgets = sqliteTable("spend_budgets", {
+  tenantId: text("tenant_id").primaryKey(),
+  period: text("period", { enum: ["monthly", "quarterly"] }).notNull().default("monthly"),
+  capUsd: real("cap_usd").notNull(),
+  alertThresholds: text("alert_thresholds", { mode: "json" }).$type<number[]>().notNull(),
+  alertEmails: text("alert_emails", { mode: "json" }).$type<string[]>().notNull(),
+  hardStop: integer("hard_stop", { mode: "boolean" }).notNull().default(false),
+  alertedThresholds: text("alerted_thresholds", { mode: "json" }).$type<number[]>().notNull(),
+  periodStartedAt: integer("period_started_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
 
 /**
  * SAML SSO configuration per tenant (#209). Ops-managed in v1 — seeded

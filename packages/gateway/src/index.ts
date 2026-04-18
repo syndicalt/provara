@@ -189,6 +189,29 @@ await scheduler.schedule({
   },
 });
 
+// Spend-budget alerts (#219/T7). Daily sweep that fires threshold
+// emails for tenants whose current-period spend has crossed a new
+// alert threshold.
+const { registerBudgetAlertsJob } = await import("./scheduler/budget-alerts.js");
+registerBudgetAlertsJob(scheduler, db);
+
+// Routing-weight snapshot (#219/T5). Daily snapshot of each tenant's
+// resolved weights; feeds the drift-correlation view.
+await scheduler.schedule({
+  name: "weight-snapshots",
+  intervalMs: 24 * 60 * 60 * 1000,
+  initialDelayMs: 120_000,
+  handler: async () => {
+    const { runWeightSnapshotCycle } = await import("./scheduler/weight-snapshots.js");
+    const stats = await runWeightSnapshotCycle(db);
+    if (stats.snapshotsWritten > 0) {
+      console.log(
+        `[weight-snapshots] tenants=${stats.tenantsScanned} written=${stats.snapshotsWritten}`,
+      );
+    }
+  },
+});
+
 scheduler.start();
 
 // Discover available models from each provider's API at startup

@@ -1,0 +1,595 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { Hono } from "hono";
+import type { Db } from "@provara/db";
+import { apiTokens, costLogs, feedback, modelScores, requests, routingWeightSnapshots, users } from "@provara/db";
+import { nanoid } from "nanoid";
+import { makeTestDb } from "./_setup/db.js";
+import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
+
+vi.mock("../src/auth/admin.js", () => ({
+  getAuthUser: (req: Request) => {
+    const h = req.headers.get("x-test-user");
+    if (!h) return null;
+    const [id, tenantId, role] = h.split(":");
+    return { id, tenantId, role: role as "owner" | "member" };
+  },
+}));
+
+import { createSpendRoutes } from "../src/routes/spend.js";
+
+function buildApp(db: Db) {
+  const app = new Hono();
+  app.route("/v1/spend", createSpendRoutes(db));
+  return app;
+}
+
+function authHeader(u: { id: string; tenantId: string; role: "owner" | "member" }) {
+  return `${u.id}:${u.tenantId}:${u.role}`;
+}
+
+async function seedOwner(
+  db: Db,
+  tenantId: string,
+  tier?: "pro" | "team" | "enterprise",
+) {
+  await db.insert(users).values({
+    id: `owner-${tenantId}`,
+    email: `owner@${tenantId}.example.com`,
+    tenantId,
+    role: "owner",
+    createdAt: new Date(),
+  }).run();
+  if (tier) await grantIntelligenceAccess(db, tenantId, { tier });
+  return { id: `owner-${tenantId}`, tenantId, role: "owner" as const };
+}
+
+interface SeedOpts {
+  tenantId: string;
+  provider: string;
+  model: string;
+  taskType?: string;
+  complexity?: string;
+  userId?: string | null;
+  apiTokenId?: string | null;
+  cost: number;
+  createdAt?: Date;
+  judgeScore?: number; // 1..5 — if set, writes a feedback row with source=judge
+}
+
+async function seedRequestAndCost(db: Db, id: string, opts: SeedOpts) {
+  // Default to 1 minute ago so rows fall inside the default 30-day
+  // window even when the test and the query hit the same millisecond.
+  const ts = opts.createdAt ?? new Date(Date.now() - 60_000);
+  await db.insert(requests).values({
+    id,
+    provider: opts.provider,
+    model: opts.model,
+    prompt: "[]",
+    taskType: opts.taskType,
+    complexity: opts.complexity,
+    tenantId: opts.tenantId,
+    userId: opts.userId ?? null,
+    apiTokenId: opts.apiTokenId ?? null,
+    createdAt: ts,
+  }).run();
+  await db.insert(costLogs).values({
+    id: `cl-${id}`,
+    requestId: id,
+    tenantId: opts.tenantId,
+    provider: opts.provider,
+    model: opts.model,
+    inputTokens: 100,
+    outputTokens: 100,
+    cost: opts.cost,
+    userId: opts.userId ?? null,
+    apiTokenId: opts.apiTokenId ?? null,
+    createdAt: ts,
+  }).run();
+  if (opts.judgeScore) {
+    await db.insert(feedback).values({
+      id: `fb-${id}`,
+      requestId: id,
+      tenantId: opts.tenantId,
+      score: opts.judgeScore,
+      source: "judge",
+      createdAt: ts,
+    }).run();
+  }
+}
+
+describe("GET /v1/spend/by (#219/T3)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 401 without auth", async () => {
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=provider");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 on an invalid dim", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=bogus", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("gates dim=provider behind Team+ (Pro gets 402)", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("gates dim=user behind Enterprise (Team gets 402)", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=user", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("aggregates by provider with quality envelope", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const now = new Date();
+    const recent = new Date(now.getTime() - 1 * 60 * 60 * 1000);
+
+    await seedRequestAndCost(db, "r1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 0.10, judgeScore: 5, createdAt: recent });
+    await seedRequestAndCost(db, "r2", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 0.20, judgeScore: 4, createdAt: recent });
+    await seedRequestAndCost(db, "r3", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 0.30, createdAt: recent });
+    await seedRequestAndCost(db, "r4", { tenantId: "t-team", provider: "anthropic", model: "claude-sonnet-4-6", cost: 1.00, judgeScore: 3, createdAt: recent });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.dim).toBe("provider");
+    // Sorted by cost_usd DESC: anthropic $1.00, openai $0.60
+    expect(body.rows).toHaveLength(2);
+    expect(body.rows[0]).toMatchObject({ key: "anthropic", cost_usd: 1, requests: 1, judged_requests: 1, quality_median: 3 });
+    expect(body.rows[1]).toMatchObject({ key: "openai", cost_usd: 0.6, requests: 3, judged_requests: 2 });
+    // Linear-interpolation median of [4,5] = 4.5
+    expect(body.rows[1].quality_median).toBe(4.5);
+    expect(body.rows[1].cost_per_quality_point).toBeCloseTo(0.6 / 4.5, 5);
+  });
+
+  it("isolates spend across tenants", async () => {
+    const ownerA = await seedOwner(db, "t-a", "team");
+    await seedOwner(db, "t-b", "team");
+    await seedRequestAndCost(db, "rA", { tenantId: "t-a", provider: "openai", model: "gpt-4.1-nano", cost: 0.5 });
+    await seedRequestAndCost(db, "rB", { tenantId: "t-b", provider: "openai", model: "gpt-4.1-nano", cost: 99.0 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=provider", {
+      headers: { "x-test-user": authHeader(ownerA) },
+    });
+    const body = await res.json();
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0].cost_usd).toBe(0.5);
+  });
+
+  it("computes period comparison (compare=prior)", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const now = new Date();
+    // Current window: last 30 days. Prior: 30 before that.
+    const inCurrent = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000);
+    const inPrior = new Date(now.getTime() - 45 * 24 * 60 * 60 * 1000);
+
+    await seedRequestAndCost(db, "c1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.50, createdAt: inCurrent });
+    await seedRequestAndCost(db, "p1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 0.50, createdAt: inPrior });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const body = await res.json();
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({
+      key: "openai",
+      cost_usd: 1.5,
+      delta_usd: 1,
+      delta_pct: 2, // (1.5 - 0.5) / 0.5
+    });
+    expect(body.compare_period).not.toBeNull();
+    expect(body.compare_period.mode).toBe("prior");
+  });
+
+  it("resolves user labels to email and handles deleted users", async () => {
+    const owner = await seedOwner(db, "t-ent", "enterprise");
+    await db.insert(users).values({
+      id: "u_alice",
+      email: "alice@t-ent.example.com",
+      tenantId: "t-ent",
+      role: "member",
+      createdAt: new Date(),
+    }).run();
+
+    await seedRequestAndCost(db, "u1", { tenantId: "t-ent", provider: "openai", model: "gpt-4.1-nano", userId: "u_alice", cost: 1.0 });
+    await seedRequestAndCost(db, "u2", { tenantId: "t-ent", provider: "openai", model: "gpt-4.1-nano", userId: "u_deleted_1234567890", cost: 2.0 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=user", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const body = await res.json();
+    expect(body.rows).toHaveLength(2);
+    const byKey = Object.fromEntries(body.rows.map((r: any) => [r.key, r.label]));
+    expect(byKey["u_alice"]).toBe("alice@t-ent.example.com");
+    expect(byKey["u_deleted_1234567890"]).toMatch(/^Unknown user \(/);
+  });
+
+  it("aggregates by category returning structured task_type/complexity", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    await seedRequestAndCost(db, "k1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", taskType: "coding", complexity: "hard", cost: 3.0 });
+    await seedRequestAndCost(db, "k2", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", taskType: "coding", complexity: "easy", cost: 0.5 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=category", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const body = await res.json();
+    expect(body.rows).toHaveLength(2);
+    const hard = body.rows.find((r: any) => r.key === "coding+hard");
+    expect(hard).toMatchObject({ task_type: "coding", complexity: "hard", cost_usd: 3 });
+  });
+
+  it("aggregates by token with label from apiTokens.name", async () => {
+    const owner = await seedOwner(db, "t-ent", "enterprise");
+    await db.insert(apiTokens).values({
+      id: "tok_prod",
+      name: "Production ingest",
+      tenant: "t-ent",
+      hashedToken: "h_prod",
+      tokenPrefix: "pvra_abc",
+      enabled: true,
+      createdAt: new Date(),
+    }).run();
+    await seedRequestAndCost(db, "t1", { tenantId: "t-ent", provider: "openai", model: "gpt-4.1-nano", apiTokenId: "tok_prod", cost: 2.0 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/by?dim=token", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const body = await res.json();
+    expect(body.rows[0]).toMatchObject({ key: "tok_prod", label: "Production ingest", cost_usd: 2 });
+  });
+});
+
+describe("GET /v1/spend/export (#219/T8)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 401 without auth", async () => {
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=provider");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 402 for Pro tenants", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns 402 on dim=user for Team tenants", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=user", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns a CSV file with the expected headers and filename", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    await seedRequestAndCost(db, "e1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.23, judgeScore: 4 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    const disp = res.headers.get("content-disposition") ?? "";
+    expect(disp).toMatch(/^attachment; filename="spend-t-team-provider-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv"$/);
+
+    const body = await res.text();
+    const lines = body.trim().split("\n");
+    expect(lines[0]).toBe(
+      "dim,key,label,cost_usd,currency,requests,judged_requests,quality_median,quality_p25,quality_p75,cost_per_quality_point,delta_usd,delta_pct",
+    );
+    expect(lines).toHaveLength(2); // header + openai row
+    const cells = lines[1].split(",");
+    expect(cells[0]).toBe("provider");
+    expect(cells[1]).toBe("openai");
+    expect(cells[4]).toBe("USD");
+  });
+
+  it("emits category-specific columns when dim=category", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    await seedRequestAndCost(db, "cat1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", taskType: "coding", complexity: "hard", cost: 3.0 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=category", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const body = await res.text();
+    const lines = body.trim().split("\n");
+    expect(lines[0].endsWith("task_type,complexity")).toBe(true);
+    const cells = lines[1].split(",");
+    expect(cells[cells.length - 2]).toBe("coding");
+    expect(cells[cells.length - 1]).toBe("hard");
+  });
+
+  it("escapes labels containing commas and quotes", async () => {
+    const { spendRowsToCsv } = await import("../src/routes/spend.js");
+    const csv = spendRowsToCsv("provider", [
+      {
+        key: "openai",
+        label: 'Foo, "Bar", Baz',
+        cost_usd: 1.5,
+        requests: 3,
+        judged_requests: 0,
+        quality_median: null,
+        quality_p25: null,
+        quality_p75: null,
+        cost_per_quality_point: null,
+        delta_usd: null,
+        delta_pct: null,
+      },
+    ]);
+    expect(csv).toContain('"Foo, ""Bar"", Baz"');
+  });
+});
+
+describe("GET /v1/spend/drift (#219/T5)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 402 for Team tenants (Enterprise gate)", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/drift", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns events for an Enterprise tenant with snapshots", async () => {
+    const owner = await seedOwner(db, "t-ent", "enterprise");
+    const nowSec = Math.floor(Date.now() / 1000) * 1000;
+    const d10 = new Date(nowSec - 10 * 24 * 60 * 60 * 1000);
+    const d5 = new Date(nowSec - 5 * 24 * 60 * 60 * 1000);
+    await db.insert(routingWeightSnapshots).values({
+      id: nanoid(), tenantId: "t-ent", taskType: "_all_", complexity: "_all_",
+      weights: { quality: 0.4, cost: 0.4, latency: 0.2 }, capturedAt: d10,
+    }).run();
+    await db.insert(routingWeightSnapshots).values({
+      id: nanoid(), tenantId: "t-ent", taskType: "_all_", complexity: "_all_",
+      weights: { quality: 0.2, cost: 0.7, latency: 0.1 }, capturedAt: d5,
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/drift", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0].deltas.cost).toBeCloseTo(0.3, 2);
+  });
+});
+
+describe("GET /v1/spend/recommendations (#219/T6)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 402 for Team tenants (Enterprise gate)", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/recommendations", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns the configured threshold and a recommendations array for Enterprise", async () => {
+    const owner = await seedOwner(db, "t-ent", "enterprise");
+
+    // Seed enough volume + scores for one recommendation.
+    for (let i = 0; i < 50; i++) {
+      const id = `e-${i}`;
+      await db.insert(requests).values({
+        id,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        prompt: "[]",
+        taskType: "coding",
+        complexity: "hard",
+        inputTokens: 200,
+        outputTokens: 300,
+        tenantId: "t-ent",
+        createdAt: new Date(Date.now() - i * 60_000),
+      }).run();
+      await db.insert(costLogs).values({
+        id: `cl-e-${i}`,
+        requestId: id,
+        tenantId: "t-ent",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        inputTokens: 200,
+        outputTokens: 300,
+        cost: 0.02,
+        createdAt: new Date(Date.now() - i * 60_000),
+      }).run();
+    }
+    await db.insert(modelScores).values({
+      tenantId: "t-ent", taskType: "coding", complexity: "hard",
+      provider: "anthropic", model: "claude-sonnet-4-6",
+      qualityScore: 0.76, sampleCount: 40, updatedAt: new Date(),
+    }).run();
+    await db.insert(modelScores).values({
+      tenantId: "t-ent", taskType: "coding", complexity: "hard",
+      provider: "openai", model: "gpt-4.1-mini",
+      qualityScore: 0.74, sampleCount: 30, updatedAt: new Date(),
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/recommendations", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("quality_delta_threshold");
+    expect(body.recommendations.length).toBeGreaterThan(0);
+    expect(body.recommendations[0].to_model).toBe("gpt-4.1-mini");
+  });
+});
+
+describe("/v1/spend/budgets (#219/T7)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("GET returns null when no budget configured", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/budgets", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.budget).toBeNull();
+  });
+
+  it("PUT creates and GET returns it", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const put = await app.request("/v1/spend/budgets", {
+      method: "PUT",
+      headers: { "x-test-user": authHeader(owner), "content-type": "application/json" },
+      body: JSON.stringify({
+        cap_usd: 250,
+        alert_thresholds: [50, 90],
+        alert_emails: ["finance@example.com"],
+        hard_stop: true,
+      }),
+    });
+    expect(put.status).toBe(200);
+    const putBody = await put.json();
+    expect(putBody.budget).toMatchObject({
+      capUsd: 250,
+      alertThresholds: [50, 90],
+      alertEmails: ["finance@example.com"],
+      hardStop: true,
+    });
+
+    const get = await app.request("/v1/spend/budgets", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const getBody = await get.json();
+    expect(getBody.budget.capUsd).toBe(250);
+  });
+
+  it("PUT rejects invalid cap_usd", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/budgets", {
+      method: "PUT",
+      headers: { "x-test-user": authHeader(owner), "content-type": "application/json" },
+      body: JSON.stringify({ cap_usd: -5 }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("PUT gates Pro tenants with 402", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/budgets", {
+      method: "PUT",
+      headers: { "x-test-user": authHeader(owner), "content-type": "application/json" },
+      body: JSON.stringify({ cap_usd: 100 }),
+    });
+    expect(res.status).toBe(402);
+  });
+});
+
+describe("GET /v1/spend/trajectory (#219/T4)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 401 without auth", async () => {
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 402 for a Pro tenant", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns 400 for an invalid period", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory?period=hourly", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns MTD cost and projection for a Team tenant", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    // Two spends in the current month.
+    await seedRequestAndCost(db, "m1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 2.5, createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) });
+    await seedRequestAndCost(db, "m2", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.5, createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/trajectory?period=month", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.period).toBe("month");
+    expect(body.mtd_cost).toBeGreaterThan(0);
+    expect(body.projected_cost).toBeGreaterThanOrEqual(body.mtd_cost);
+    expect(body.anomaly).toHaveProperty("flagged");
+  });
+});

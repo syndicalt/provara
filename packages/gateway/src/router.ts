@@ -23,6 +23,7 @@ import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createSamlAuthRoutes } from "./routes/auth-saml.js";
 import { createAuditRoutes } from "./routes/audit.js";
+import { createSpendRoutes } from "./routes/spend.js";
 import { createTeamRoutes } from "./routes/team.js";
 import { createModelRoutes } from "./routes/models.js";
 import { createGuardrailRoutes } from "./routes/guardrails.js";
@@ -30,6 +31,8 @@ import { createAlertRoutes } from "./routes/alerts.js";
 import { createPromptRoutes } from "./routes/prompts.js";
 import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
 import { getTenantId } from "./auth/tenant.js";
+import { getRequestAttribution } from "./auth/attribution.js";
+import { checkBudgetHardStop } from "./billing/budget-alerts.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
@@ -137,6 +140,8 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/billing/*", adminAuth);
   app.use("/v1/audit-logs", adminAuth);
   app.use("/v1/audit-logs/*", adminAuth);
+  app.use("/v1/spend", adminAuth);
+  app.use("/v1/spend/*", adminAuth);
 
   // Role-based access — owner-only routes (after adminAuth attaches user)
   app.use("/v1/admin/*", requireRole("owner"));
@@ -149,6 +154,7 @@ export async function createRouter(ctx: RouterContext) {
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
   app.route("/v1/billing", createBillingRoutes(ctx.db));
   app.route("/v1/audit-logs", createAuditRoutes(ctx.db));
+  app.route("/v1/spend", createSpendRoutes(ctx.db));
 
   // Intelligence-tier routes (#168): gate behind PROVARA_CLOUD + subscription
   // tier check. Self-host deployments get a 402 with an explanation. Cloud
@@ -272,6 +278,28 @@ export async function createRouter(ctx: RouterContext) {
     // Route the request through the intelligent routing engine
     const tokenInfo = getTokenInfo(c.req.raw);
     const tenantId = tokenInfo?.tenant || getTenantId(c.req.raw) || null;
+    // Spend-attribution (#219): resolved once per request and threaded
+    // through every `requests` insert + cost-log write.
+    const attribution = getRequestAttribution(c.req.raw);
+
+    // Spend-budget hard stop (#219/T7). One SELECT + aggregate on every
+    // chat completion for tenants that have opted in — cheap on the
+    // tenant-scoped spend index, skipped entirely for tenants without a
+    // budget row (the early return in `checkBudgetHardStop`).
+    if (tenantId) {
+      const budget = await checkBudgetHardStop(ctx.db, tenantId);
+      if (budget.blocked) {
+        return c.json(
+          {
+            error: {
+              message: `Spend budget exceeded: ${budget.spend?.toFixed(2)} / ${budget.cap?.toFixed(2)} USD (${budget.period}).`,
+              type: "budget_exceeded",
+            },
+          },
+          402,
+        );
+      }
+    }
     const routingResult = await routingEngine.route({
       messages: request.messages,
       provider: providerName,
@@ -317,6 +345,8 @@ export async function createRouter(ctx: RouterContext) {
           tokensSavedInput: inputTokens,
           tokensSavedOutput: outputTokens,
           tenantId,
+          userId: attribution.userId,
+          apiTokenId: attribution.apiTokenId,
           abTestId: routingResult.abTestId || null,
         })
         .run();
@@ -510,6 +540,8 @@ export async function createRouter(ctx: RouterContext) {
                     usedFallback,
                     fallbackErrors: attemptErrors.length > 0 ? JSON.stringify(attemptErrors) : null,
                     tenantId,
+                    userId: attribution.userId,
+                    apiTokenId: attribution.apiTokenId,
                     abTestId: routingResult.abTestId || null,
                   })
                   .run();
@@ -531,6 +563,8 @@ export async function createRouter(ctx: RouterContext) {
                   inputTokens: usage.inputTokens,
                   outputTokens: usage.outputTokens,
                   tenantId,
+                  userId: attribution.userId,
+                  apiTokenId: attribution.apiTokenId,
                 }).catch(() => {});
 
                 if (!skipCache) {
@@ -663,6 +697,8 @@ export async function createRouter(ctx: RouterContext) {
         usedFallback,
         fallbackErrors: attemptErrors.length > 0 ? JSON.stringify(attemptErrors) : null,
         tenantId,
+        userId: attribution.userId,
+        apiTokenId: attribution.apiTokenId,
         abTestId: routingResult.abTestId || null,
       })
       .run();
@@ -684,6 +720,8 @@ export async function createRouter(ctx: RouterContext) {
       inputTokens: response.usage.inputTokens,
       outputTokens: response.usage.outputTokens,
       tenantId,
+      userId: attribution.userId,
+      apiTokenId: attribution.apiTokenId,
     });
 
     // Cache the response for future identical requests

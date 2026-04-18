@@ -225,6 +225,27 @@
       "when": 1776520237541,
       "tag": "0031_spooky_hellfire_club",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1776523578604,
+      "tag": "0032_busy_professor_monster",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1776525220700,
+      "tag": "0033_overjoyed_lake",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1776525836171,
+      "tag": "0034_fantastic_legion",
+      "breakpoints": true
     }
   ]
 }
