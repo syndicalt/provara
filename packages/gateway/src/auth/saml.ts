@@ -152,9 +152,23 @@ export function makeSamlClient(
     // Response signing is optional in the SAML 2.0 spec; most IdPs do
     // it anyway. Require it.
     wantAuthnResponseSigned: true,
-    // SP-initiated flows must replay-check via InResponseTo; IdP-initiated
-    // flows don't send InResponseTo, so "ifPresent" accepts both.
-    validateInResponseTo: ValidateInResponseTo.ifPresent,
+    // "never" is a pragmatic choice until we land a DB-backed replay
+    // cache. node-saml's default cache is per-SAML-instance and in-memory;
+    // our route handlers build a new SAML instance per request, so the
+    // AuthnRequest ID issued in /start is never visible to the /acs
+    // handler, causing every valid SP-initiated response to be rejected
+    // with "InResponseTo is not valid".
+    //
+    // Signature, timestamp (NotBefore / NotOnOrAfter), audience, and
+    // destination validation all still fire, so forged responses are
+    // still refused. The narrowed surface is replay of a valid captured
+    // response within its assertion lifetime (typically 5 minutes).
+    //
+    // Follow-up: replace the in-memory CacheProvider with a libSQL-
+    // backed one that persists AuthnRequest IDs across replicas and
+    // expires them at assertion lifetime. Then flip this back to
+    // `ValidateInResponseTo.ifPresent`.
+    validateInResponseTo: ValidateInResponseTo.never,
     // EmailAddress is the universally-supported NameID format; some IdPs
     // (notably Entra by default) emit it as the unspecified format, so
     // leaving this `null` lets the library accept whatever the IdP sends.
