@@ -12,7 +12,7 @@ vi.mock("../src/auth/tenant.js", () => ({
 }));
 
 // Import AFTER the mock so the middleware picks up the mocked getTenantId.
-import { requireIntelligenceTier, tenantHasIntelligenceAccess } from "../src/auth/tier.js";
+import { requireIntelligenceTier, requireEnterpriseTier, tenantHasIntelligenceAccess } from "../src/auth/tier.js";
 
 function buildApp(db: Db) {
   const app = new Hono();
@@ -131,6 +131,75 @@ describe("requireIntelligenceTier", () => {
     const app = buildApp(db);
     const res = await app.request("/gated");
     expect(res.status).toBe(401);
+  });
+});
+
+describe("requireEnterpriseTier", () => {
+  let db: Db;
+
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+
+  afterEach(() => resetTierEnv());
+
+  function buildEnterpriseApp(d: Db) {
+    const app = new Hono();
+    app.use("*", requireEnterpriseTier(d));
+    app.get("/enterprise", (c) => c.json({ ok: true }));
+    return app;
+  }
+
+  it("returns 402 on self-host (no PROVARA_CLOUD)", async () => {
+    const app = buildEnterpriseApp(db);
+    const res = await app.request("/enterprise", { headers: { "x-test-tenant": "tenant-1" } });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.gate.reason).toBe("not_cloud");
+  });
+
+  it("returns 402 for Pro tenant (insufficient tier)", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildEnterpriseApp(db);
+    const res = await app.request("/enterprise", { headers: { "x-test-tenant": "tenant-pro" } });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.gate.reason).toBe("insufficient_tier");
+    expect(body.gate.currentTier).toBe("pro");
+  });
+
+  it("returns 402 for Team tenant (insufficient tier)", async () => {
+    await grantIntelligenceAccess(db, "tenant-team", { tier: "team" });
+    const app = buildEnterpriseApp(db);
+    const res = await app.request("/enterprise", { headers: { "x-test-tenant": "tenant-team" } });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.gate.currentTier).toBe("team");
+  });
+
+  it("allows access for Enterprise tenant", async () => {
+    await grantIntelligenceAccess(db, "tenant-ent", { tier: "enterprise" });
+    const app = buildEnterpriseApp(db);
+    const res = await app.request("/enterprise", { headers: { "x-test-tenant": "tenant-ent" } });
+    expect(res.status).toBe(200);
+  });
+
+  it("allows access for operator tenant without any subscription", async () => {
+    await seedOperatorUser(db, "op-tenant", "ops@corelumen.com");
+    const app = buildEnterpriseApp(db);
+    const res = await app.request("/enterprise", { headers: { "x-test-tenant": "op-tenant" } });
+    expect(res.status).toBe(200);
+  });
+
+  it("returns 402 for canceled Enterprise subscription", async () => {
+    await grantIntelligenceAccess(db, "tenant-ent", { tier: "enterprise" });
+    await db.update(subscriptions).set({ status: "canceled" }).run();
+    const app = buildEnterpriseApp(db);
+    const res = await app.request("/enterprise", { headers: { "x-test-tenant": "tenant-ent" } });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.gate.reason).toBe("inactive_status");
   });
 });
 

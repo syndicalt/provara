@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import { magicLinkTokens, users, teamInvites, sessions } from "@provara/db";
+import { magicLinkTokens, users, teamInvites, sessions, ssoConfigs } from "@provara/db";
 import type { Db } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
 import { createAuthRoutes } from "../src/routes/auth.js";
@@ -289,6 +289,97 @@ describe("magic link request + verify (#204)", () => {
       const invite = await db.select().from(teamInvites).where(eq(teamInvites.token, inviteToken)).get();
       expect(invite?.consumedAt).toBeTruthy();
       expect(invite?.consumedByUserId).toBe(user?.id);
+    });
+  });
+
+  describe("SSO-required gate (#209/T4)", () => {
+    async function seedSso(db: Db, tenantId: string, domains: string[]) {
+      const now = new Date();
+      await db.insert(ssoConfigs).values({
+        tenantId,
+        idpEntityId: "https://idp.example.com/meta",
+        idpSsoUrl: "https://idp.example.com/sso",
+        idpCert: "PEM-placeholder",
+        spEntityId: `https://gateway.provara.xyz/saml/${tenantId}`,
+        emailDomains: domains,
+        requireEncryption: false,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+    }
+
+    it("refuses magic-link request for an SSO-enforced email domain", async () => {
+      const db = await makeTestDb();
+      await seedSso(db, "tenant-acme", ["acme.com"]);
+      const res = await app(db).request("/auth/magic-link/request", {
+        method: "POST",
+        body: JSON.stringify({ email: "alice@acme.com", firstName: "Alice", lastName: "A" }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error.type).toBe("sso_required");
+      expect(body.sso.startUrl).toContain("/auth/saml/start?email=");
+      expect(body.sso.tenantId).toBe("tenant-acme");
+
+      // Must not have persisted a token — otherwise the SSO bypass would
+      // be trivially side-stepped by ignoring the 409 and following the
+      // emailed link.
+      const tokens = await db.select().from(magicLinkTokens).all();
+      expect(tokens).toHaveLength(0);
+    });
+
+    it("allows magic-link for a domain no tenant claims", async () => {
+      const db = await makeTestDb();
+      await seedSso(db, "tenant-acme", ["acme.com"]);
+      const res = await app(db).request("/auth/magic-link/request", {
+        method: "POST",
+        body: JSON.stringify({ email: "stranger@other.com", firstName: "X", lastName: "Y" }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("bypasses the gate for operator-allowlist emails even on an SSO domain", async () => {
+      const db = await makeTestDb();
+      await seedSso(db, "tenant-acme", ["corelumen.com"]);
+      process.env.PROVARA_OPERATOR_EMAILS = "ops@corelumen.com";
+      try {
+        const res = await app(db).request("/auth/magic-link/request", {
+          method: "POST",
+          body: JSON.stringify({ email: "ops@corelumen.com", firstName: "O", lastName: "P" }),
+          headers: { "content-type": "application/json" },
+        });
+        // Operator email → no SSO gate → magic-link flow proceeds (status "sent"
+        // or "new_user" — either way, not 409).
+        expect(res.status).not.toBe(409);
+      } finally {
+        delete process.env.PROVARA_OPERATOR_EMAILS;
+      }
+    });
+
+    it("ignores disabled SSO configs (gate doesn't fire)", async () => {
+      const db = await makeTestDb();
+      const now = new Date();
+      await db.insert(ssoConfigs).values({
+        tenantId: "tenant-acme",
+        idpEntityId: "https://idp.example.com/meta",
+        idpSsoUrl: "https://idp.example.com/sso",
+        idpCert: "PEM-placeholder",
+        spEntityId: "https://gateway.provara.xyz/saml/tenant-acme",
+        emailDomains: ["acme.com"],
+        requireEncryption: false,
+        status: "disabled",
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+      const res = await app(db).request("/auth/magic-link/request", {
+        method: "POST",
+        body: JSON.stringify({ email: "alice@acme.com", firstName: "A", lastName: "B" }),
+        headers: { "content-type": "application/json" },
+      });
+      expect(res.status).not.toBe(409);
     });
   });
 });

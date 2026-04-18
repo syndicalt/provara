@@ -174,6 +174,107 @@ export function requireIntelligenceTier(db: Db) {
 }
 
 /**
+ * Middleware factory: like `requireIntelligenceTier`, but gates on the
+ * Enterprise tier specifically. Used for enterprise-exclusive features
+ * (SAML SSO #209, extended audit-log retention, dedicated support APIs).
+ *
+ * Same operator bypass + Cloud check as `requireIntelligenceTier` — the
+ * only difference is the tier comparison: the tenant's subscription row
+ * must have `tier === "enterprise"` (or `selfhost_enterprise`, which the
+ * dashboard TIER_ORDER treats at the same rank).
+ */
+export function requireEnterpriseTier(db: Db) {
+  return async (c: Context, next: Next) => {
+    const tenantId = getTenantId(c.req.raw);
+
+    if (tenantId && (await isOperatorTenant(db, tenantId))) {
+      return next();
+    }
+
+    if (!isCloudDeployment()) {
+      return c.json(
+        {
+          error: {
+            message: "Enterprise features are available on Provara Cloud.",
+            type: "cloud_only",
+          },
+          gate: {
+            reason: "not_cloud",
+            currentTier: "selfhost",
+            upgradeUrl: "https://provara.xyz/pricing",
+          } satisfies TierGateFailure,
+        },
+        402,
+      );
+    }
+
+    if (!tenantId) {
+      return c.json(
+        { error: { message: "Authentication required.", type: "auth_error" } },
+        401,
+      );
+    }
+
+    const sub = await getSubscriptionForTenant(db, tenantId);
+
+    if (!sub) {
+      return c.json(
+        {
+          error: {
+            message: "This feature is available on the Enterprise plan.",
+            type: "insufficient_tier",
+          },
+          gate: {
+            reason: "no_subscription",
+            currentTier: "free",
+            upgradeUrl: "https://provara.xyz/pricing",
+          } satisfies TierGateFailure,
+        },
+        402,
+      );
+    }
+
+    if (!ACTIVE_STATUSES.has(sub.status)) {
+      return c.json(
+        {
+          error: {
+            message: "Your subscription is not in an active status.",
+            type: "inactive_subscription",
+          },
+          gate: {
+            reason: "inactive_status",
+            currentTier: sub.tier,
+            status: sub.status,
+            upgradeUrl: "https://provara.xyz/dashboard/billing",
+          } satisfies TierGateFailure,
+        },
+        402,
+      );
+    }
+
+    if (sub.tier !== "enterprise" && sub.tier !== "selfhost_enterprise") {
+      return c.json(
+        {
+          error: {
+            message: "This feature is available on the Enterprise plan.",
+            type: "insufficient_tier",
+          },
+          gate: {
+            reason: "insufficient_tier",
+            currentTier: sub.tier,
+            status: sub.status,
+            upgradeUrl: "https://provara.xyz/pricing",
+          } satisfies TierGateFailure,
+        },
+        402,
+      );
+    }
+
+    return next();
+  };
+}
+
+/**
  * Non-middleware variant for server-side callers (scheduler cycles) that
  * need to decide per-tenant whether to process. Mirrors the middleware
  * logic exactly so the gates are consistent, including the operator

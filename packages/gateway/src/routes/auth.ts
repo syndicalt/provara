@@ -25,6 +25,7 @@ import {
 } from "../auth/session.js";
 import { sendEmail } from "../email/index.js";
 import { welcomeEmail, magicLinkEmail } from "../email/templates.js";
+import { ssoRequiredForEmail } from "../auth/saml.js";
 
 const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000";
 // The gateway's own public URL (same value OAuth callbacks are registered
@@ -100,6 +101,15 @@ export function createAuthRoutes(db: Db) {
     try {
       const accessToken = await exchangeGoogleCode(code);
       const profile = await getGoogleUser(accessToken);
+      // SSO-required gate (#209/T4): if this Google account's email is
+      // on a domain some tenant has SSO-enforced, refuse the OAuth path
+      // and send the caller back to /login to go through SAML.
+      if (typeof profile.email === "string") {
+        const ssoForced = await ssoRequiredForEmail(db, profile.email);
+        if (ssoForced) {
+          return c.redirect(loginRedirect("sso_required"));
+        }
+      }
       const user = await upsertUser(db, "google", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
@@ -204,6 +214,28 @@ export function createAuthRoutes(db: Db) {
     const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     if (!isValidEmail(email)) {
       return c.json({ error: { message: "A valid email is required.", type: "validation_error" } }, 400);
+    }
+
+    // If this email's domain is SSO-enforced (some tenant has an active
+    // sso_configs row that claims it), refuse magic-link and send the
+    // caller to the SSO start URL. Without this gate a user could
+    // side-step their org's IdP by requesting a magic link for their
+    // own email. See #209/T4.
+    const ssoForced = await ssoRequiredForEmail(db, email);
+    if (ssoForced) {
+      return c.json(
+        {
+          error: {
+            message: "Your organization requires SSO sign-in. Use SSO instead of the magic link.",
+            type: "sso_required",
+          },
+          sso: {
+            startUrl: `/auth/saml/start?email=${encodeURIComponent(email)}`,
+            tenantId: ssoForced.tenantId,
+          },
+        },
+        409,
+      );
     }
 
     const firstName = typeof body.firstName === "string" ? body.firstName.trim() : "";
