@@ -20,9 +20,16 @@ export default async function InviteLandingPage({
 }: {
   params: Promise<{ token: string }>;
 }) {
-  // Await to satisfy Next 15's Promise-based params contract, even
-  // though we don't use the value — the token is already in the URL
-  // bar for the user to visually confirm.
-  await params;
-  redirect(`/login?return=${encodeURIComponent("/dashboard")}&reason=invite`);
+  // Forward the invite token to /login so it can thread through the
+  // OAuth flow. The server-side callback uses it (#189) to detect a
+  // "signed in with the wrong Google/GitHub account" mismatch and
+  // surface an actionable banner instead of silently creating a fresh
+  // solo workspace.
+  const { token } = await params;
+  const params_ = new URLSearchParams({
+    return: "/dashboard",
+    reason: "invite",
+    invite_token: token,
+  });
+  redirect(`/login?${params_.toString()}`);
 }

@@ -26,6 +26,10 @@ import {
 import { sendEmail } from "../email/index.js";
 import { welcomeEmail, magicLinkEmail } from "../email/templates.js";
 import { ssoRequiredForEmail } from "../auth/saml.js";
+import {
+  detectInviteEmailMismatch,
+  buildPostOauthRedirect,
+} from "../auth/invite-mismatch.js";
 import { emitAudit } from "../audit/emit.js";
 import {
   AUDIT_AUTH_LOGIN_SUCCESS,
@@ -40,6 +44,14 @@ const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000"
 const GATEWAY_PUBLIC_URL = () => process.env.OAUTH_REDIRECT_BASE || "http://localhost:4000";
 const STATE_COOKIE = "provara_oauth_state";
 const RETURN_COOKIE = "provara_oauth_return";
+/**
+ * Invite token threaded from /invite/[token] → /login → OAuth start
+ * (#189). Read in the callback to detect a mismatch between the
+ * signed-in OAuth account's email and the invite's `invited_email`.
+ * Same short TTL as the state/return cookies — the entire OAuth
+ * round-trip is measured in seconds.
+ */
+const INVITE_COOKIE = "provara_oauth_invite";
 
 // Only allow redirecting to in-app paths (never external URLs)
 function sanitizeReturn(raw: string | undefined | null): string {
@@ -64,16 +76,20 @@ export function createAuthRoutes(db: Db) {
   app.get("/login/google", (c) => {
     const state = generateState();
     const returnTo = sanitizeReturn(c.req.query("return"));
+    const inviteToken = c.req.query("invite_token");
     setCookie(c, STATE_COOKIE, state, cookieOpts);
     setCookie(c, RETURN_COOKIE, returnTo, cookieOpts);
+    if (inviteToken) setCookie(c, INVITE_COOKIE, inviteToken, cookieOpts);
     return c.redirect(buildGoogleAuthUrl(state));
   });
 
   app.get("/login/github", (c) => {
     const state = generateState();
     const returnTo = sanitizeReturn(c.req.query("return"));
+    const inviteToken = c.req.query("invite_token");
     setCookie(c, STATE_COOKIE, state, cookieOpts);
     setCookie(c, RETURN_COOKIE, returnTo, cookieOpts);
+    if (inviteToken) setCookie(c, INVITE_COOKIE, inviteToken, cookieOpts);
     return c.redirect(buildGitHubAuthUrl(state));
   });
 
@@ -86,6 +102,24 @@ export function createAuthRoutes(db: Db) {
   function successRedirect(c: Parameters<typeof getCookie>[0]): string {
     const returnTo = sanitizeReturn(getCookie(c, RETURN_COOKIE));
     return `${DASHBOARD_URL()}${returnTo}`;
+  }
+
+  /** Read the invite cookie and delegate to the mismatch detector. */
+  async function checkInviteMismatch(
+    c: Parameters<typeof getCookie>[0],
+    profileEmail: string | undefined | null,
+  ): Promise<{ expected: string } | null> {
+    const token = getCookie(c, INVITE_COOKIE);
+    return detectInviteEmailMismatch(db, token, profileEmail);
+  }
+
+  /** Build the post-OAuth redirect, honoring an invite-email mismatch. */
+  function successRedirectWithMismatch(
+    c: Parameters<typeof getCookie>[0],
+    mismatch: { expected: string } | null,
+  ): string {
+    const returnTo = sanitizeReturn(getCookie(c, RETURN_COOKIE));
+    return buildPostOauthRedirect(DASHBOARD_URL(), returnTo, mismatch);
   }
 
   app.get("/callback/google", async (c) => {
@@ -115,6 +149,12 @@ export function createAuthRoutes(db: Db) {
           return c.redirect(loginRedirect("sso_required"));
         }
       }
+      // Invite-email mismatch check (#189): compare the profile email
+      // to the invite the caller came from; if they differ, we still
+      // sign the user in (their own workspace) but surface a banner
+      // on /dashboard so they know the invite went unclaimed and can
+      // sign out + back in with the right account.
+      const inviteMismatch = await checkInviteMismatch(c, profile.email);
       const user = await upsertUser(db, "google", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
@@ -125,7 +165,7 @@ export function createAuthRoutes(db: Db) {
         action: AUDIT_AUTH_LOGIN_SUCCESS,
         metadata: { method: "google" },
       });
-      return c.redirect(successRedirect(c));
+      return c.redirect(successRedirectWithMismatch(c, inviteMismatch));
     } catch (err) {
       if (err instanceof OAuthMergeRefusedError) {
         return c.redirect(loginRedirect("email_unverified"));
@@ -152,6 +192,10 @@ export function createAuthRoutes(db: Db) {
     try {
       const accessToken = await exchangeGitHubCode(code);
       const profile = await getGitHubUser(accessToken);
+      // Invite-email mismatch check (#189). See the Google callback for
+      // why we still sign the user in on a mismatch — we surface a
+      // dashboard banner rather than silently dropping the invite.
+      const inviteMismatch = await checkInviteMismatch(c, profile.email);
       const user = await upsertUser(db, "github", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
@@ -162,7 +206,7 @@ export function createAuthRoutes(db: Db) {
         action: AUDIT_AUTH_LOGIN_SUCCESS,
         metadata: { method: "github" },
       });
-      return c.redirect(successRedirect(c));
+      return c.redirect(successRedirectWithMismatch(c, inviteMismatch));
     } catch (err) {
       if (err instanceof OAuthMergeRefusedError) {
         return c.redirect(loginRedirect("email_unverified"));
