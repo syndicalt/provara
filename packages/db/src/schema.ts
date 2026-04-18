@@ -688,6 +688,45 @@ export const costLogs = sqliteTable("cost_logs", {
 });
 
 /**
+ * Audit log (#210). Append-only record of security- and admin-relevant
+ * events per tenant. NOT a substitute for the `requests` table — API
+ * traffic lives there and has its own retention; audit rows are for
+ * things a compliance auditor or security admin would ask about
+ * (logins, API-key rotations, subscription changes, admin actions).
+ *
+ * Immutability invariant is enforced at the app layer: only
+ * `emitAudit()` writes; only the retention purge job deletes; nothing
+ * issues UPDATE. A future tamper-evidence hash chain can layer on top
+ * without schema change (add a `chain_hash` column in a sibling issue).
+ *
+ * `actor_user_id` is nullable for system-emitted events (scheduled
+ * jobs, webhook-driven billing transitions). `actor_email` is
+ * denormalized so the display "Alice deleted API key X" survives the
+ * user being removed from the tenant.
+ *
+ * `metadata` is free-form JSON — request IP, user-agent, before/after
+ * diff for updates, Stripe subscription ID, etc. Kept flexible on
+ * purpose; audit consumers (UI filter, CSV export, SIEM pull) treat it
+ * as an opaque blob.
+ */
+export const auditLogs = sqliteTable("audit_logs", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  actorUserId: text("actor_user_id"),
+  actorEmail: text("actor_email"),
+  action: text("action").notNull(),
+  resourceType: text("resource_type"),
+  resourceId: text("resource_id"),
+  metadata: text("metadata", { mode: "json" }).$type<Record<string, unknown>>(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("audit_logs_tenant_created_idx").on(table.tenantId, table.createdAt),
+  index("audit_logs_tenant_action_created_idx").on(table.tenantId, table.action, table.createdAt),
+]);
+
+/**
  * SAML SSO configuration per tenant (#209). Ops-managed in v1 — seeded
  * by operators via a CLI per Enterprise deal, not self-serve in the
  * dashboard. Exactly one row per tenant (PK on tenant_id).

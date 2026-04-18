@@ -218,6 +218,13 @@
       "when": 1776515325102,
       "tag": "0030_amusing_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1776520237541,
+      "tag": "0031_spooky_hellfire_club",
+      "breakpoints": true
     }
   ]
 }
