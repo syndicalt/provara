@@ -3,11 +3,24 @@
 import { useState, useRef, useEffect } from "react";
 import Link from "next/link";
 import { useAuth } from "../lib/auth-context";
+import { gatewayClientFetch } from "../lib/gateway-client";
+import { TierBadge } from "./tier-badge";
 
 export function UserMenu() {
   const { user, loading, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  const [tier, setTier] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Resolve the caller's tier for the badge below the avatar. Silent on
+  // failure — the badge just doesn't render if billing isn't wired up
+  // (e.g. self-host without Stripe configured).
+  useEffect(() => {
+    if (!user) return;
+    gatewayClientFetch<{ tier: string }>("/v1/billing/me")
+      .then((d) => setTier(d.tier))
+      .catch(() => setTier(null));
+  }, [user]);
 
   // Close on click outside
   useEffect(() => {
@@ -27,17 +40,24 @@ export function UserMenu() {
     <div className="relative" ref={menuRef}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-2 w-full hover:bg-zinc-800/50 rounded-md px-2 py-1.5 transition-colors"
+        className="flex items-start gap-2 w-full hover:bg-zinc-800/50 rounded-md px-2 py-1.5 transition-colors"
       >
         {user.avatarUrl && (
           <img
             src={user.avatarUrl}
             alt=""
-            className="w-6 h-6 rounded-full"
+            className="w-6 h-6 rounded-full mt-0.5 shrink-0"
           />
         )}
-        <span className="text-xs text-zinc-400 truncate flex-1 text-left">{user.name || user.email}</span>
-        <svg className="w-3 h-3 text-zinc-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="flex-1 min-w-0 text-left">
+          <div className="text-xs text-zinc-400 truncate">{user.name || user.email}</div>
+          {tier && (
+            <div className="mt-0.5">
+              <TierBadge tier={tier} size="xs" />
+            </div>
+          )}
+        </div>
+        <svg className="w-3 h-3 text-zinc-500 shrink-0 mt-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
           <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
         </svg>
       </button>
