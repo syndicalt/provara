@@ -763,6 +763,36 @@ export const auditLogs = sqliteTable("audit_logs", {
  * as JSON arrays to keep the table free of child-row bookkeeping. At
  * most a handful of entries each in practice.
  */
+/**
+ * Daily routing-weight snapshots (#219/T5). One row per
+ * (tenant, task_type, complexity) per captured_at day. Drives the
+ * drift-correlation view: "last Thursday you pushed cost-weight from
+ * 0.4 to 0.7 and anthropic's spend share dropped 28 points in the
+ * week after".
+ *
+ * For v1 `task_type` and `complexity` are the literal strings
+ * `"_all_"` / `"_all_"` — per-tenant weights, not per-cell. The
+ * columns exist so that a future per-cell weights feature can populate
+ * them without a schema migration.
+ *
+ * `weights` stores the fully-resolved 3-tuple `{quality, cost, latency}`
+ * so readers don't have to reverse-resolve a profile name at read time.
+ * Append-only; purged by the same retention policy as audit logs.
+ */
+export const routingWeightSnapshots = sqliteTable("routing_weight_snapshots", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  taskType: text("task_type").notNull().default("_all_"),
+  complexity: text("complexity").notNull().default("_all_"),
+  weights: text("weights", { mode: "json" }).$type<{ quality: number; cost: number; latency: number }>().notNull(),
+  profile: text("profile"),
+  capturedAt: integer("captured_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("rws_tenant_captured_idx").on(table.tenantId, table.capturedAt),
+]);
+
 export const spendBudgets = sqliteTable("spend_budgets", {
   tenantId: text("tenant_id").primaryKey(),
   period: text("period", { enum: ["monthly", "quarterly"] }).notNull().default("monthly"),

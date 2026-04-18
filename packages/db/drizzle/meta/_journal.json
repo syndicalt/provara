@@ -239,6 +239,13 @@
       "when": 1776525220700,
       "tag": "0033_overjoyed_lake",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1776525836171,
+      "tag": "0034_fantastic_legion",
+      "breakpoints": true
     }
   ]
 }

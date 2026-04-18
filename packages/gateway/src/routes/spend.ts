@@ -10,6 +10,10 @@ import {
   type DailyCost,
   type TrajectoryPeriod,
 } from "../billing/trajectory.js";
+import {
+  computeDriftEvents,
+  DEFAULT_ATTRIBUTION_WINDOW_DAYS,
+} from "../billing/drift.js";
 
 /**
  * Spend intelligence API (#219). All endpoints under `/v1/spend/*` are
@@ -720,6 +724,51 @@ export function createSpendRoutes(db: Db) {
       projected_cost: trajectory.projected_cost,
       prior_period_cost: trajectory.prior_period_cost,
       anomaly: trajectory.anomaly,
+    });
+  });
+
+  /**
+   * GET /v1/spend/drift?from=<iso>&to=<iso>&window=<days>
+   *
+   * Enterprise-only. Returns weight-change events in the requested
+   * window along with the per-provider spend mix in the N-day attribution
+   * window after each change. Unique-to-Provara analytical view —
+   * standalone LLM analytics tools can't connect routing decisions to
+   * cost outcomes because they don't see the router.
+   */
+  app.get("/drift", async (c) => {
+    const authUser = getAuthUser(c.req.raw);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    if (!(await tenantHasEnterpriseAccess(db, authUser.tenantId))) {
+      return c.json(
+        {
+          error: {
+            message: "Weight-drift analysis is available on the Enterprise plan.",
+            type: "insufficient_tier",
+          },
+        },
+        402,
+      );
+    }
+
+    const window = parseWindow(c.req.query("from"), c.req.query("to"));
+    const windowRaw = c.req.query("window");
+    const attributionWindowDays = windowRaw
+      ? Math.min(Math.max(1, Number(windowRaw) || DEFAULT_ATTRIBUTION_WINDOW_DAYS), 90)
+      : DEFAULT_ATTRIBUTION_WINDOW_DAYS;
+
+    const events = await computeDriftEvents(db, authUser.tenantId, {
+      from: window.from,
+      to: window.to,
+      windowDays: attributionWindowDays,
+    });
+
+    return c.json({
+      period: { from: window.from.toISOString(), to: window.to.toISOString() },
+      attribution_window_days: attributionWindowDays,
+      events,
     });
   });
 

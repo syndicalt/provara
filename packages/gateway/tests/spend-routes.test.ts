@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { apiTokens, costLogs, feedback, requests, users } from "@provara/db";
+import { apiTokens, costLogs, feedback, requests, routingWeightSnapshots, users } from "@provara/db";
+import { nanoid } from "nanoid";
 import { makeTestDb } from "./_setup/db.js";
 import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 
@@ -356,6 +357,48 @@ describe("GET /v1/spend/export (#219/T8)", () => {
       },
     ]);
     expect(csv).toContain('"Foo, ""Bar"", Baz"');
+  });
+});
+
+describe("GET /v1/spend/drift (#219/T5)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 402 for Team tenants (Enterprise gate)", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/drift", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns events for an Enterprise tenant with snapshots", async () => {
+    const owner = await seedOwner(db, "t-ent", "enterprise");
+    const nowSec = Math.floor(Date.now() / 1000) * 1000;
+    const d10 = new Date(nowSec - 10 * 24 * 60 * 60 * 1000);
+    const d5 = new Date(nowSec - 5 * 24 * 60 * 60 * 1000);
+    await db.insert(routingWeightSnapshots).values({
+      id: nanoid(), tenantId: "t-ent", taskType: "_all_", complexity: "_all_",
+      weights: { quality: 0.4, cost: 0.4, latency: 0.2 }, capturedAt: d10,
+    }).run();
+    await db.insert(routingWeightSnapshots).values({
+      id: nanoid(), tenantId: "t-ent", taskType: "_all_", complexity: "_all_",
+      weights: { quality: 0.2, cost: 0.7, latency: 0.1 }, capturedAt: d5,
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/drift", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0].deltas.cost).toBeCloseTo(0.3, 2);
   });
 });
 
