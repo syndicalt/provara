@@ -105,6 +105,157 @@ function RoutingMatrix({ stats }: { stats: RoutingStat[] }) {
   );
 }
 
+function IsolationSection({
+  isolation,
+  saving,
+  onToggleConsume,
+  onToggleContribute,
+}: {
+  isolation: IsolationResponse;
+  saving: null | "consumesPool" | "contributesPool";
+  onToggleConsume: () => void;
+  onToggleContribute: () => void;
+}) {
+  const tierLabel =
+    isolation.tier === "enterprise" ? "Enterprise" : isolation.tier === "team" ? "Team" : "Pro";
+  const isolatedByDefault = isolation.tier === "team" || isolation.tier === "enterprise";
+  const matrixEmpty = isolatedByDefault && !isolation.preferences.consumesPool;
+
+  return (
+    <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 space-y-5">
+      <div className="flex items-start justify-between gap-6">
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-300">Adaptive Isolation</h2>
+          <p className="text-xs text-zinc-500 mt-1 max-w-2xl">
+            Controls whether your tenant's routing matrix is isolated from the shared pool and whether your ratings contribute to it. Current plan: <span className="text-zinc-300">{tierLabel}</span>.
+          </p>
+        </div>
+        <a
+          href="/enterprise-data-handling"
+          className="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Data handling ↗
+        </a>
+      </div>
+
+      {!isolation.canToggle && (
+        <div className="rounded border border-zinc-800 bg-zinc-950/60 px-4 py-3 text-xs text-zinc-400">
+          Pro plans use the shared routing pool for both reads and writes. Isolated per-tenant routing is a Team and Enterprise feature.{" "}
+          <a href="/pricing" className="text-blue-400 hover:text-blue-300">Compare plans</a>.
+        </div>
+      )}
+
+      <div className="space-y-4">
+        <ToggleRow
+          label="Use pooled routing signal"
+          hint="When your matrix is empty or sparse, fall back to the shared pool at decision time. Pool data is never copied into your matrix."
+          on={isolation.policy.readsPool}
+          saving={saving === "consumesPool"}
+          disabled={!isolation.canToggle}
+          onClick={onToggleConsume}
+        />
+        <ToggleRow
+          label="Contribute ratings to pooled signal"
+          hint="When on, your ratings update the shared pool in addition to your own matrix. Contributions merge into a statistical model and cannot be retroactively removed — turn off at any time to stop future contributions."
+          warning
+          on={isolation.policy.writesPool}
+          saving={saving === "contributesPool"}
+          disabled={!isolation.canToggle}
+          onClick={onToggleContribute}
+        />
+      </div>
+
+      {matrixEmpty && (
+        <div className="rounded border border-zinc-800 bg-zinc-950/60 px-4 py-3 text-xs text-zinc-400">
+          Your routing matrix is isolated. Until your own ratings accrue, routing falls back to cost-based selection for cells you have no history on. Turn on <span className="text-zinc-300">Use pooled routing signal</span> to bootstrap from the shared pool without cutting ties.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ToggleRow({
+  label,
+  hint,
+  on,
+  saving,
+  disabled,
+  warning,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  on: boolean;
+  saving: boolean;
+  disabled: boolean;
+  warning?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-6">
+      <div className="flex-1">
+        <p className="text-sm text-zinc-300">{label}</p>
+        <p className={`text-xs mt-1 max-w-2xl ${warning ? "text-amber-300/80" : "text-zinc-500"}`}>{hint}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled || saving}
+        className={`px-3 py-1.5 rounded text-xs font-medium transition-colors shrink-0 ${
+          disabled
+            ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+            : on
+            ? "bg-emerald-900/50 text-emerald-300 hover:bg-emerald-800/50"
+            : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+        } ${saving ? "opacity-60" : ""}`}
+      >
+        {saving ? "Saving..." : on ? "On" : "Off"}
+      </button>
+    </div>
+  );
+}
+
+function ContributeConfirmModal({
+  onCancel,
+  onConfirm,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+      <div className="w-full max-w-md rounded-lg border border-zinc-800 bg-zinc-900 p-6 shadow-xl">
+        <h3 className="text-base font-semibold text-zinc-100">Contribute to the shared pool?</h3>
+        <p className="mt-3 text-sm text-zinc-400 leading-relaxed">
+          Ratings you contribute will merge into the shared pool's statistical model and{" "}
+          <span className="text-amber-300">cannot be retroactively removed</span>. You can stop future contributions at any time by turning this toggle back off, but past contributions remain in the pool.
+        </p>
+        <p className="mt-3 text-xs text-zinc-500">
+          See the <a href="/enterprise-data-handling" className="text-blue-400 hover:text-blue-300" target="_blank" rel="noreferrer">data handling addendum</a> for the full contractual language.
+        </p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded bg-zinc-800 px-3 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-700"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-emerald-50 hover:bg-emerald-600"
+          >
+            I understand, enable
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const routingStatsColumns: Column<RoutingStat>[] = [
   { key: "taskType", label: "Task Type", sortable: true, filterable: true, render: (row) => row.taskType ? <Badge variant={row.taskType}>{row.taskType}</Badge> : <>—</>, getValue: (row) => row.taskType },
   { key: "complexity", label: "Complexity", sortable: true, filterable: true, render: (row) => row.complexity ? <Badge variant={row.complexity}>{row.complexity}</Badge> : <>—</>, getValue: (row) => row.complexity },
@@ -119,22 +270,43 @@ interface RoutingConfig {
   abTestPreempts: boolean;
 }
 
+type IsolationTier = "free" | "pro" | "team" | "enterprise";
+
+interface IsolationResponse {
+  tier: IsolationTier;
+  canToggle: boolean;
+  policy: {
+    readsPool: boolean;
+    writesPool: boolean;
+    readsTenantRow: boolean;
+    writesTenantRow: boolean;
+  };
+  preferences: {
+    consumesPool: boolean;
+    contributesPool: boolean;
+  };
+}
+
 export default function RoutingPage() {
   const [stats, setStats] = useState<RoutingStat[]>([]);
   const [distribution, setDistribution] = useState<Distribution | null>(null);
   const [adaptiveCells, setAdaptiveCells] = useState<AdaptiveCell[]>([]);
   const [routingConfig, setRoutingConfig] = useState<RoutingConfig | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
+  const [isolation, setIsolation] = useState<IsolationResponse | null>(null);
+  const [savingIsolation, setSavingIsolation] = useState<null | "consumesPool" | "contributesPool">(null);
+  const [contributeConfirm, setContributeConfirm] = useState(false);
   const [loading, setLoading] = useState(true);
   const { pulseTick, recentUpdateCount } = useAdaptiveScoreBuffer(adaptiveCells);
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [statsRes, distRes, configRes] = await Promise.all([
+        const [statsRes, distRes, configRes, isoRes] = await Promise.all([
           gatewayFetchRaw("/v1/analytics/routing/stats"),
           gatewayFetchRaw("/v1/analytics/routing/distribution"),
           gatewayFetchRaw("/v1/routing/config"),
+          gatewayFetchRaw("/v1/routing/isolation").catch(() => null),
         ]);
         const statsData = await statsRes.json();
         const distData = await distRes.json();
@@ -142,6 +314,9 @@ export default function RoutingPage() {
         setStats(statsData.stats || []);
         setDistribution(distData);
         setRoutingConfig(configData);
+        if (isoRes && isoRes.ok) {
+          setIsolation(await isoRes.json());
+        }
       } catch (err) {
         console.error("Failed to fetch routing data:", err);
       } finally {
@@ -150,6 +325,52 @@ export default function RoutingPage() {
     }
     fetchData();
   }, []);
+
+  async function patchIsolation(payload: { consumesPool?: boolean; contributesPool?: boolean }, key: "consumesPool" | "contributesPool") {
+    setSavingIsolation(key);
+    try {
+      const res = await gatewayFetchRaw("/v1/routing/isolation", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as IsolationResponse;
+        // Re-fetch to get updated derived policy (backend recomputes).
+        const policyRes = await gatewayFetchRaw("/v1/routing/isolation");
+        if (policyRes.ok) {
+          setIsolation(await policyRes.json());
+        } else {
+          setIsolation((prev) => (prev ? { ...prev, preferences: data.preferences } : prev));
+        }
+      } else {
+        console.error("isolation patch failed", await res.text());
+      }
+    } catch (err) {
+      console.error("isolation patch error", err);
+    } finally {
+      setSavingIsolation(null);
+    }
+  }
+
+  function onToggleConsume() {
+    if (!isolation || !isolation.canToggle || savingIsolation) return;
+    patchIsolation({ consumesPool: !isolation.preferences.consumesPool }, "consumesPool");
+  }
+
+  function onToggleContribute() {
+    if (!isolation || !isolation.canToggle || savingIsolation) return;
+    // Irreversibility warning fires only when enabling (turning off is safe).
+    if (!isolation.preferences.contributesPool) {
+      setContributeConfirm(true);
+      return;
+    }
+    patchIsolation({ contributesPool: false }, "contributesPool");
+  }
+
+  function confirmContribute() {
+    setContributeConfirm(false);
+    patchIsolation({ contributesPool: true }, "contributesPool");
+  }
 
   async function toggleAbTestPreempts() {
     if (!routingConfig || savingConfig) return;
@@ -197,6 +418,28 @@ export default function RoutingPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <h1 className="text-2xl font-bold">Routing Analytics</h1>
+
+      {/* Adaptive Isolation — only visible when backend returns a response
+          (i.e. cloud deployment with known tier). Free tenants are hidden
+          entirely; Pro sees disabled toggles with upgrade copy; Team +
+          Enterprise get working toggles with an irreversibility modal
+          gating the "contribute to pool" enable. */}
+      {isolation && isolation.tier !== "free" && (
+        <IsolationSection
+          isolation={isolation}
+          saving={savingIsolation}
+          onToggleConsume={onToggleConsume}
+          onToggleContribute={onToggleContribute}
+        />
+      )}
+
+      {/* Modal — irreversibility confirmation for "contribute to pool" enable */}
+      {contributeConfirm && (
+        <ContributeConfirmModal
+          onCancel={() => setContributeConfirm(false)}
+          onConfirm={confirmContribute}
+        />
+      )}
 
       {/* Routing Config */}
       {routingConfig && (

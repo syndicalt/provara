@@ -18,6 +18,7 @@ import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createConversationRoutes } from "./routes/conversations.js";
 import { createShareHandlers } from "./routes/shares.js";
 import { createRoutingConfigRoutes } from "./routes/routing-config.js";
+import { createRoutingIsolationRoutes } from "./routes/routing-isolation.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createTeamRoutes } from "./routes/team.js";
@@ -164,6 +165,7 @@ export async function createRouter(ctx: RouterContext) {
   app.route("/v1/feedback", createFeedbackRoutes(ctx.db, routingEngine.adaptive));
   app.route("/v1/conversations", createConversationRoutes(ctx.db));
   app.route("/v1/routing/config", createRoutingConfigRoutes(ctx.db));
+  app.route("/v1/routing/isolation", createRoutingIsolationRoutes(ctx.db));
 
   // Mount token management routes (owner only)
   app.route("/v1/admin/tokens", createTokenRoutes(ctx.db));
