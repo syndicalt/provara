@@ -84,7 +84,7 @@ function OnboardingCard() {
     <section className="bg-gradient-to-br from-blue-950/40 via-zinc-900 to-zinc-900 border border-blue-900/40 rounded-xl p-8">
       <h2 className="text-xl font-semibold mb-2">Welcome to Provara 👋</h2>
       <p className="text-sm text-zinc-400 mb-6 max-w-2xl">
-        Your gateway is live. Send traffic through it and this dashboard will start showing routing decisions, costs, and quality scores per cell. Three steps to get going:
+        Your gateway is live. Send traffic through it and this dashboard will start showing routing decisions, costs, and quality scores per cell. Four steps to get going:
       </p>
       <ol className="space-y-4 max-w-2xl">
         <li className="flex gap-3">
@@ -110,6 +110,14 @@ function OnboardingCard() {
           <div className="flex-1">
             <p className="text-sm text-zinc-200 font-medium">Watch the pipeline learn</p>
             <p className="text-xs text-zinc-500">Every request gets classified, routed, and optionally scored by the LLM judge. After a few dozen requests, the adaptive router starts picking the best model per cell on its own.</p>
+          </div>
+        </li>
+        <li className="flex gap-3">
+          <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600/20 border border-blue-500/40 text-blue-300 text-xs font-semibold flex items-center justify-center">4</span>
+          <div className="flex-1">
+            <p className="text-sm text-zinc-200 font-medium">Pick a plan</p>
+            <p className="text-xs text-zinc-500 mb-2">Free gets you started. Pro unlocks higher limits and Intelligence features — auto-A/B, silent-regression detection, cost migrations. Team and Enterprise add per-tenant routing isolation.</p>
+            <a href="/dashboard/billing" className="inline-block text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-md transition-colors">Manage subscription →</a>
           </div>
         </li>
       </ol>
