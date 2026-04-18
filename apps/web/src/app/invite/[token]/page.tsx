@@ -1,31 +1,28 @@
 import { redirect } from "next/navigation";
-import { PublicNav } from "../../../components/public-nav";
 
 /**
- * Invite landing. Minimal — just redirects to /login with a return URL
- * pointing back to this page. After sign-in, the OAuth handler in the
- * gateway sees the pending invite matching the user's email and
- * consumes it, landing them on the inviter's tenant.
+ * Invite landing. Bounces to /login with /dashboard as the return URL.
+ * The actual invite claim happens in the gateway's OAuth callback —
+ * upsertUser looks up any pending invite matching the authenticated
+ * email and atomically consumes it before the session cookie is set.
  *
- * If the user is already signed in and has a session, they skip the
- * login step — the invite will be claimed (or ignored if their email
- * doesn't match) on whatever signup path applies.
+ * We intentionally do NOT return the user to /invite/:token after
+ * login. Doing so would create a redirect loop: the authenticated
+ * user hits this page again → redirect to /login → /login sees the
+ * session → router.replace(returnTo) back to /invite/:token → …
  *
- * Server component — no client JS needed beyond the nav.
+ * The token in the URL is retained for email traceability (so an
+ * invitee can confirm they clicked the right link) but isn't needed
+ * by the claim flow — match is on email, not token.
  */
 export default async function InviteLandingPage({
   params,
 }: {
   params: Promise<{ token: string }>;
 }) {
-  const { token } = await params;
-  // Pass the full /invite/:token path as the return so the post-login
-  // redirect lands back here, giving the user a visible confirmation
-  // that they were added to the team.
-  const returnTo = encodeURIComponent(`/invite/${token}`);
-  redirect(`/login?return=${returnTo}&reason=invite`);
-
-  // Unreachable, but TypeScript wants a return:
-  void PublicNav;
-  return null;
+  // Await to satisfy Next 15's Promise-based params contract, even
+  // though we don't use the value — the token is already in the URL
+  // bar for the user to visually confirm.
+  await params;
+  redirect(`/login?return=${encodeURIComponent("/dashboard")}&reason=invite`);
 }
