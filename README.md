@@ -25,6 +25,7 @@ Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and c
 - **Streaming** — Full SSE streaming support with first-chunk fallback detection
 - **Response Caching** — In-memory cache for deterministic requests (temperature=0)
 - **Multi-Tenant** — OAuth (Google + GitHub), role-based access (owner/member), tenant-scoped data
+- **Team Invites** — Owner-invite flow with seat quotas per tier, atomic email-verified claim on OAuth callback, and transactional invite + welcome email via Resend
 - **Encrypted Key Storage** — AES-256-GCM encryption for provider API keys at rest
 - **Web Dashboard** — Sidebar navigation with grouped sections: Monitor, Test, Configure, Admin
 
@@ -706,7 +707,16 @@ GITHUB_CLIENT_ID=...
 GITHUB_CLIENT_SECRET=...
 OAUTH_REDIRECT_BASE=https://your-gateway.example.com
 DASHBOARD_URL=https://your-dashboard.example.com
+
+# Optional — enables transactional invite + welcome email.
+# Without these, invites still work via copy-paste link from the dashboard.
+RESEND_API_KEY=re_...
+PROVARA_EMAIL_FROM="Provara <noreply@yourdomain.com>"
 ```
+
+**Teams & invites.** Owners of a tenant can invite members from `/dashboard/team`. Seat quotas apply per tier (1 for Free, 3 for Pro, 10 for Team, unlimited for Enterprise). The invite URL (`/invite/:token`) bounces new users through OAuth; `upsertUser` atomically claims the invite when the authenticated email matches, dropping the invitee into the inviter's tenant with the assigned role. Invites expire after 7 days.
+
+**Operator bypass.** Emails listed in `PROVARA_OPERATOR_EMAILS` (comma-separated) get an `operator` tier — all feature gates bypassed, no quota, no billing portal. Meant for internal staff accounts. Does not grant cross-tenant access; operators still only see their own tenant's data.
 
 ## Environment Variables
 
@@ -733,6 +743,12 @@ DASHBOARD_URL=https://your-dashboard.example.com
 | `GITHUB_CLIENT_SECRET` | Multi-tenant | GitHub OAuth client secret |
 | `OAUTH_REDIRECT_BASE` | Multi-tenant | Gateway public URL for OAuth callbacks |
 | `DASHBOARD_URL` | Multi-tenant | Web app URL for post-login redirect |
+| `PROVARA_CLOUD` | Cloud | `true` to enable Cloud-only paths (Intelligence-tier feature gates) |
+| `PROVARA_OPERATOR_EMAILS` | No | Comma-separated allowlist; users with matching emails get unlimited tier bypass |
+| `STRIPE_SECRET_KEY` | Cloud | Stripe API key for checkout, portal, and usage reporting |
+| `STRIPE_WEBHOOK_SECRET` | Cloud | Signature secret for verifying Stripe webhook deliveries |
+| `RESEND_API_KEY` | No | Enables transactional email (team invites, welcome). Without it, invites still persist and can be copy-pasted from the dashboard |
+| `PROVARA_EMAIL_FROM` | No | Sender address for transactional email (default: `Provara <noreply@provara.xyz>`) — must be on a Resend-verified domain |
 
 ### Web Dashboard
 

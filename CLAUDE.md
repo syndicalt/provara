@@ -6,9 +6,9 @@ Multi-provider LLM gateway for cost optimization and A/B testing.
 
 Turborepo monorepo with npm workspaces:
 
-- `packages/gateway` — Hono-based proxy exposing an OpenAI-compatible API on port 4000. Provider adapters auto-register based on env vars.
-- `packages/db` — Drizzle ORM + SQLite. Schema: requests, ab_tests, ab_test_variants, cost_logs.
-- `apps/web` — Next.js + Tailwind CSS dashboard for comparing model outputs.
+- `packages/gateway` — Hono-based proxy exposing an OpenAI-compatible API on port 4000. Provider adapters auto-register based on env vars. Also owns OAuth, teams, billing, email, adaptive routing, and all admin routes.
+- `packages/db` — Drizzle ORM + libSQL/SQLite. Schema covers requests, A/B tests, cost logs, model scores, auth (users/sessions/oauth_accounts), team invites, subscriptions, usage reports, and more — migrations live under `packages/db/drizzle/`.
+- `apps/web` — Next.js + Tailwind CSS dashboard: monitoring, playground, routing config, admin (tokens, API keys, billing, team, prompts, alerts, guardrails).
 
 ## Commands
 
