@@ -16,6 +16,7 @@ vi.mock("../src/auth/tenant.js", async (importOriginal) => {
 });
 
 import { createBillingRoutes } from "../src/routes/billing.js";
+import { __resetStripeForTests } from "../src/stripe/index.js";
 
 function buildApp(db: Db) {
   const app = new Hono();
@@ -196,5 +197,30 @@ describe("/v1/billing/checkout-session", () => {
     // 503 bails before auth check because Stripe is unconfigured — both
     // are acceptable; pin whichever we actually return.
     expect([401, 503]).toContain(res.status);
+  });
+
+  it("returns 409 when the tenant already has an active subscription", async () => {
+    // Make getStripe() non-null so the 503 guard doesn't short-circuit.
+    // A bogus key is fine because the guard runs before any real Stripe
+    // API call (which would fail).
+    process.env.STRIPE_SECRET_KEY = "sk_test_dummy_for_unit_test";
+    __resetStripeForTests();
+    try {
+      await seedTenantWithUser(db, "tenant-active");
+      await grantIntelligenceAccess(db, "tenant-active", { tier: "pro" });
+
+      const app = buildApp(db);
+      const res = await app.request("/v1/billing/checkout-session", {
+        method: "POST",
+        headers: { "x-test-tenant": "tenant-active", "content-type": "application/json" },
+        body: JSON.stringify({ priceLookupKey: "cloud_team_monthly" }),
+      });
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.error.type).toBe("already_subscribed");
+    } finally {
+      delete process.env.STRIPE_SECRET_KEY;
+      __resetStripeForTests();
+    }
   });
 });
