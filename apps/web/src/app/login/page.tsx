@@ -28,6 +28,16 @@ function errorMessage(code: string | null): string | null {
       return "That magic link has expired. Request a fresh one below.";
     case "magic_link_used":
       return "That magic link has already been used. Request a fresh one below.";
+    case "sso_required":
+      return "Your organization requires SSO sign-in. Enter your work email below to continue via your identity provider.";
+    case "sso_not_configured":
+      return "SSO is not set up for that email's domain. If this looks wrong, contact your admin.";
+    case "sso_invalid_response":
+      return "The sign-in response from your identity provider was invalid. Start over and try again.";
+    case "sso_no_email_in_assertion":
+      return "Your identity provider didn't return an email address. Contact your admin.";
+    case "sso_email_on_other_tenant":
+      return "That email is already registered to another Provara workspace. Contact your admin to resolve this.";
     case null:
       return null;
     default:
@@ -181,6 +191,46 @@ function MagicLinkForm({ returnTo }: { returnTo: string }) {
   const [sending, setSending] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  // When set, the typed email's domain is SSO-enforced — the submit
+  // button becomes "Continue with SSO" and clicking it redirects to the
+  // gateway's start URL instead of requesting a magic link.
+  const [ssoStartUrl, setSsoStartUrl] = useState<string | null>(null);
+
+  // Debounce-discover as the user types. A 400ms idle window keeps the
+  // discover endpoint off the critical path while still feeling
+  // responsive — typing pauses naturally cluster around commas and
+  // domain boundaries.
+  useEffect(() => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed.includes("@") || trimmed.length < 5) {
+      setSsoStartUrl(null);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      try {
+        const res = await gatewayFetchRaw(
+          `/auth/saml/discover?email=${encodeURIComponent(trimmed)}`,
+          { method: "GET" },
+        );
+        if (!res.ok) {
+          setSsoStartUrl(null);
+          return;
+        }
+        const body = (await res.json()) as { sso: boolean; startUrl?: string };
+        setSsoStartUrl(body.sso && body.startUrl ? body.startUrl : null);
+      } catch {
+        // Silent — discover failure just means the user gets the normal
+        // magic-link path, which will still be refused by the backend
+        // if SSO is truly required.
+        setSsoStartUrl(null);
+      }
+    }, 400);
+    return () => clearTimeout(handle);
+  }, [email]);
+
+  function goToSso(startUrl: string) {
+    window.location.href = `${GATEWAY}${startUrl}`;
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -193,6 +243,13 @@ function MagicLinkForm({ returnTo }: { returnTo: string }) {
       return;
     }
 
+    // If discover has already flagged this email as SSO-enforced, skip
+    // the magic-link request and go straight to the IdP.
+    if (ssoStartUrl) {
+      goToSso(ssoStartUrl);
+      return;
+    }
+
     setSending(true);
     try {
       const res = await gatewayFetchRaw("/auth/magic-link/request", {
@@ -202,6 +259,15 @@ function MagicLinkForm({ returnTo }: { returnTo: string }) {
       if (res.status === 429) {
         setLocalError("Too many requests for this email. Try again in a few minutes.");
         return;
+      }
+      // Backend said SSO is required for this email — the discover call
+      // must have raced. Follow the startUrl returned in the body.
+      if (res.status === 409) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.error?.type === "sso_required" && body?.sso?.startUrl) {
+          goToSso(body.sso.startUrl);
+          return;
+        }
       }
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -266,15 +332,31 @@ function MagicLinkForm({ returnTo }: { returnTo: string }) {
       {localError && (
         <p className="text-xs text-red-400">{localError}</p>
       )}
+      {ssoStartUrl && (
+        <p className="text-xs text-blue-300">
+          Your organization uses SSO. You&apos;ll be redirected to your identity provider.
+        </p>
+      )}
       <button
         type="submit"
         disabled={sending}
         className="flex items-center justify-center gap-3 w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-500 transition-colors disabled:opacity-60"
       >
-        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
-        {sending ? "Sending…" : "Sign in with Magic Link"}
+        {ssoStartUrl ? (
+          <>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m0 0v3m0-3h3m-3 0H9m3-12a4 4 0 00-4 4v3H6a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2v-8a2 2 0 00-2-2h-2V7a4 4 0 00-4-4z" />
+            </svg>
+            Continue with SSO
+          </>
+        ) : (
+          <>
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+            {sending ? "Sending…" : "Sign in with Magic Link"}
+          </>
+        )}
       </button>
     </form>
   );
