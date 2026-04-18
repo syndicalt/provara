@@ -3,6 +3,9 @@ import { costMigrations, modelScores, requests, appConfig } from "@provara/db";
 import { and, eq, sql, desc, isNull, gt } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { MIN_SAMPLES, getModelCost } from "./scoring.js";
+import { POOL_KEY } from "./score-store.js";
+import { listTenantsWithAdaptiveIsolation } from "./isolation-policy.js";
+import { tenantHasIntelligenceAccess } from "../../auth/tier.js";
 
 function numEnv(v: string | undefined, fallback: number): number {
   if (v === undefined || v === "") return fallback;
@@ -128,9 +131,21 @@ async function projectSavings(
  * (winner - epsilon) quality with enough samples and fresh signal. Returns
  * ranked candidates for the current cycle; caller enforces the per-run
  * cap and cooldown.
+ *
+ * Scope: `scopeTenantId` is the DB-layer tenant key. Pass `POOL_KEY` ("")
+ * for the shared-pool pass (Free/Pro), or a real tenantId for Team/Enterprise
+ * tenants that maintain their own row. Pre-#196 (C3) this scanned globally —
+ * a silent cross-tenant leak once tenant rows started existing.
  */
-export async function findMigrationCandidates(db: Db): Promise<MigrationCandidate[]> {
-  const rows = await db.select().from(modelScores).all();
+export async function findMigrationCandidates(
+  db: Db,
+  scopeTenantId: string = POOL_KEY,
+): Promise<MigrationCandidate[]> {
+  const rows = await db
+    .select()
+    .from(modelScores)
+    .where(eq(modelScores.tenantId, scopeTenantId))
+    .all();
   const cells = new Map<string, CellRow[]>();
   const now = Date.now();
   const staleCutoff = now - 30 * 24 * 60 * 60 * 1000;
@@ -280,24 +295,76 @@ export interface MigrationCycleStats {
   skippedCooldown: number;
 }
 
-export async function runCostMigrationCycle(db: Db): Promise<MigrationCycleStats> {
-  const enabled = await isCostMigrationEnabled(db, null);
+/**
+ * Per-scope migration pass. Returns stats for a single (scope) iteration.
+ * `scope` is `null` for the shared pool; for a Team/Enterprise tenant it's
+ * the tenantId. Keeps opt-in gate and cooldown semantics identical to the
+ * pre-#196 global cycle — just bounded by scope.
+ */
+async function runCostMigrationScope(
+  db: Db,
+  scope: string | null,
+): Promise<MigrationCycleStats> {
+  const enabled = await isCostMigrationEnabled(db, scope);
   if (!enabled) {
     return { evaluated: 0, executed: [], skippedCooldown: 0 };
   }
 
-  const candidates = await findMigrationCandidates(db);
+  const dbScope = scope ?? POOL_KEY;
+  const candidates = await findMigrationCandidates(db, dbScope);
   const executed: ExecutedMigration[] = [];
   let skipped = 0;
 
   for (const candidate of candidates) {
     if (executed.length >= MAX_MIGRATIONS_PER_CYCLE) break;
-    const result = await executeMigration(db, null, candidate);
+    const result = await executeMigration(db, scope, candidate);
     if (result) executed.push(result);
     else skipped++;
   }
 
   return { evaluated: candidates.length, executed, skippedCooldown: skipped };
+}
+
+/**
+ * Top-level migration cycle — runs one pass for the shared pool and one
+ * pass per Team/Enterprise tenant with isolation. Pool keeps benefiting
+ * Free/Pro unchanged; tenant passes respect tier gate + per-tenant
+ * opt-in + per-scope MAX_MIGRATIONS cap.
+ *
+ * Pre-C3 this ran once globally with `tenantId=null` hardcoded, meaning
+ * tenant-scoped `model_scores` rows were invisible to it and global rows
+ * were mutated on every tenant's behalf. Now the global scope is the
+ * pool proper, and tenant scopes are distinct.
+ */
+export async function runCostMigrationCycle(db: Db): Promise<MigrationCycleStats> {
+  const poolStats = await runCostMigrationScope(db, null);
+
+  const aggregate: MigrationCycleStats = {
+    evaluated: poolStats.evaluated,
+    executed: [...poolStats.executed],
+    skippedCooldown: poolStats.skippedCooldown,
+  };
+
+  if (poolStats.executed.length > 0) {
+    const saved = poolStats.executed.reduce((s, m) => s + m.projectedMonthlySavingsUsd, 0);
+    console.log(`[cost-migration] pool: executed ${poolStats.executed.length}, projected $${saved.toFixed(2)}/mo`);
+  }
+
+  const tenantIds = await listTenantsWithAdaptiveIsolation(db);
+  for (const tenantId of tenantIds) {
+    const hasTier = await tenantHasIntelligenceAccess(db, tenantId);
+    if (!hasTier) continue;
+    const stats = await runCostMigrationScope(db, tenantId);
+    aggregate.evaluated += stats.evaluated;
+    aggregate.executed.push(...stats.executed);
+    aggregate.skippedCooldown += stats.skippedCooldown;
+    if (stats.executed.length > 0) {
+      const saved = stats.executed.reduce((s, m) => s + m.projectedMonthlySavingsUsd, 0);
+      console.log(`[cost-migration] tenant=${tenantId}: executed ${stats.executed.length}, projected $${saved.toFixed(2)}/mo`);
+    }
+  }
+
+  return aggregate;
 }
 
 /**
