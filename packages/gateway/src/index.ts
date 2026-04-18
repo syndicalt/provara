@@ -122,14 +122,17 @@ if (cloudDeployment) {
     intervalMs: COST_MIGRATION_INTERVAL_MS,
     initialDelayMs: 90_000,
     handler: async () => {
+      // runCostMigrationCycle logs one line per scope (pool + each tenant)
+      // with non-zero execution — see migrations.ts. Scheduler-level log
+      // only fires for the "evaluated candidates but all skipped" case so
+      // quiet cycles stay genuinely quiet.
       const stats = await runCostMigrationCycle(db);
       if (stats.executed.length > 0) {
-        console.log(
-          `[cost-migration] executed ${stats.executed.length} migration(s), projected $${stats.executed.reduce((s, m) => s + m.projectedMonthlySavingsUsd, 0).toFixed(2)}/mo saved`,
-        );
         // Refresh the boost table so the router picks up the new migration
         // without a restart — boost applies on the very next routing decision.
         await app.routingEngine.boostTable.refresh();
+      } else if (stats.evaluated > 0) {
+        console.log(`[cost-migration] evaluated ${stats.evaluated} candidate(s), none executed (cooldown or caps)`);
       }
     },
   });

@@ -605,10 +605,10 @@ describe("closed feedback loop (#163)", () => {
       });
     }
 
-    const updates: Array<{ taskType: string; complexity: string; provider: string; model: string; score: number; source: string }> = [];
+    const updates: Array<{ taskType: string; complexity: string; provider: string; model: string; score: number; source: string; tenantId?: string | null }> = [];
     const adaptiveStub = {
-      async updateScore(taskType: string, complexity: string, provider: string, model: string, score: number, source: "user" | "judge") {
-        updates.push({ taskType, complexity, provider, model, score, source });
+      async updateScore(taskType: string, complexity: string, provider: string, model: string, score: number, source: "user" | "judge", tenantId?: string | null) {
+        updates.push({ taskType, complexity, provider, model, score, source, tenantId });
       },
     };
 
@@ -632,6 +632,7 @@ describe("closed feedback loop (#163)", () => {
         model: "gpt-4o",
         score: 2,
         source: "judge",
+        tenantId: "t", // C3: tenantId threads from cell → adaptive.updateScore
       });
     }
   });

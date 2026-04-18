@@ -366,6 +366,11 @@ export interface ReplayCycleStats {
  * Narrow interface the replay cycle uses to write judge scores back into
  * the adaptive router's EMA (#163). Typed as a thin subset so this module
  * doesn't need to import the full AdaptiveRouter and create a cycle.
+ *
+ * `tenantId` widened in #196 (C3) so regression-driven EMA updates honor
+ * the cell's tenant scoping. Pre-C3, the replay cycle dropped tenantId
+ * on the floor and every update landed in the pool — invisible for
+ * Team/Enterprise tenants whose policy has `writesPool: false`.
  */
 export interface AdaptiveScoreWriter {
   updateScore(
@@ -375,6 +380,7 @@ export interface AdaptiveScoreWriter {
     model: string,
     score: number,
     source: "user" | "judge",
+    tenantId?: string | null,
   ): Promise<void>;
 }
 
@@ -485,6 +491,7 @@ export async function runReplayCycle(
                 cell.model,
                 score,
                 "judge",
+                cell.tenantId,
               );
             } catch (err) {
               console.warn(

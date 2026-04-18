@@ -1,6 +1,6 @@
 import type { Db } from "@provara/db";
-import { tenantAdaptiveIsolation } from "@provara/db";
-import { eq } from "drizzle-orm";
+import { subscriptions, tenantAdaptiveIsolation } from "@provara/db";
+import { eq, inArray } from "drizzle-orm";
 import { isCloudDeployment } from "../../config.js";
 import { getSubscriptionForTenant } from "../../stripe/subscriptions.js";
 
@@ -101,4 +101,29 @@ export async function getTenantIsolationPolicy(
     writesPool: prefs?.contributesPool ?? false,
     readsPool: prefs?.consumesPool ?? false,
   };
+}
+
+/**
+ * List tenantIds eligible for per-tenant adaptive cycles — Team + Enterprise
+ * subscribers in an active-ish status. Used by `runCostMigrationCycle` and
+ * any other cycle that needs to iterate the set of tenants with their own
+ * `model_scores` rows.
+ *
+ * Free/Pro are excluded by design: they have no tenant-scoped rows (per
+ * C2 policy), so a per-tenant cycle for them is always a no-op. Keeping
+ * them out of the iteration keeps logs clean and avoids wasted scans.
+ *
+ * Off-cloud returns an empty list — self-host is single-tenant and the
+ * pool cycle covers it.
+ */
+export async function listTenantsWithAdaptiveIsolation(db: Db): Promise<string[]> {
+  if (!isCloudDeployment()) return [];
+  const rows = await db
+    .select({ tenantId: subscriptions.tenantId, tier: subscriptions.tier, status: subscriptions.status })
+    .from(subscriptions)
+    .where(inArray(subscriptions.tier, ["team", "enterprise"]))
+    .all();
+  return rows
+    .filter((r) => ACTIVE_STATUSES.has(r.status) && r.tenantId)
+    .map((r) => r.tenantId);
 }
