@@ -299,6 +299,12 @@ function BillingPageInner() {
               const lookupKey = annual ? plan.annualLookupKey : plan.monthlyLookupKey;
               const price = annual ? plan.priceAnnual : plan.priceMonthly;
               const suffix = annual ? "/yr" : "/mo";
+              // Plan changes for tenants already on a paid tier go through
+              // the Stripe Portal — a second Checkout would create a second
+              // subscription on the same customer, which the backend now
+              // refuses with 409 anyway.
+              const isPlanChange = currentTierRank > TIER_ORDER.free;
+              const busyKey = isPlanChange ? "portal" : lookupKey;
               return (
                 <div key={plan.tier} className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
                   <div className="flex items-center gap-2">
@@ -319,11 +325,17 @@ function BillingPageInner() {
                     ))}
                   </ul>
                   <button
-                    onClick={() => startCheckout(lookupKey)}
+                    onClick={() => (isPlanChange ? openPortal() : startCheckout(lookupKey))}
                     disabled={busy !== null}
                     className="mt-5 w-full px-3 py-2 rounded text-sm font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
                   >
-                    {busy === lookupKey ? "Starting checkout…" : `Upgrade to ${plan.label}`}
+                    {busy === busyKey
+                      ? isPlanChange
+                        ? "Opening portal…"
+                        : "Starting checkout…"
+                      : isPlanChange
+                        ? `Change plan in portal`
+                        : `Upgrade to ${plan.label}`}
                   </button>
                 </div>
               );

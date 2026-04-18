@@ -31,6 +31,8 @@ function quotaForTier(tier: string): number {
   return TIER_QUOTAS[tier] ?? Number.MAX_SAFE_INTEGER;
 }
 
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing", "past_due"]);
+
 export function createBillingRoutes(db: Db) {
   const app = new Hono();
 
@@ -194,6 +196,26 @@ export function createBillingRoutes(db: Db) {
       return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
     }
 
+    // Refuse a second Checkout when the tenant is already on a paid,
+    // active(-ish) plan. Our schema allows one subscription per tenant
+    // (unique index on subscriptions.tenant_id and .stripe_customer_id);
+    // a second Stripe sub would bill the customer twice and crash the
+    // webhook upsert on UNIQUE collision. Plan changes (Pro → Team, etc.)
+    // go through the Stripe Portal, not a fresh Checkout.
+    const existingSub = await getSubscriptionForTenant(db, tenantId);
+    if (existingSub && ACTIVE_SUBSCRIPTION_STATUSES.has(existingSub.status)) {
+      return c.json(
+        {
+          error: {
+            message:
+              "You already have an active subscription. Use the billing portal to change your plan.",
+            type: "already_subscribed",
+          },
+        },
+        409,
+      );
+    }
+
     const body = await c.req
       .json<{ priceLookupKey?: string }>()
       .catch(() => ({} as { priceLookupKey?: string }));
@@ -211,12 +233,10 @@ export function createBillingRoutes(db: Db) {
       );
     }
 
-    // Re-use the existing Stripe customer if the tenant already has a
-    // subscription, otherwise Checkout creates a fresh one. Either way
-    // the subscription's `metadata.tenantId` (set below) is what the
-    // webhook uses to link it back.
-    const existingSub = await getSubscriptionForTenant(db, tenantId);
-
+    // Re-use the existing Stripe customer if the tenant has a dormant
+    // (canceled/incomplete_expired) subscription row, otherwise Checkout
+    // creates a fresh one. Either way the subscription's `metadata.tenantId`
+    // (set below) is what the webhook uses to link it back.
     const dashboardOrigin = c.req.header("origin") || "https://www.provara.xyz";
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
