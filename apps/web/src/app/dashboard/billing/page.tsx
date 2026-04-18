@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 import { TierBadge } from "../../../components/tier-badge";
@@ -91,6 +91,17 @@ function formatDate(iso: string | undefined | null): string {
 }
 
 export default function BillingPage() {
+  // Next.js 15 requires pages that use useSearchParams to be wrapped in
+  // a Suspense boundary or the build's static-generation pass bails
+  // with a CSR-error. The inner component holds the actual logic.
+  return (
+    <Suspense fallback={<div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8"><p className="text-zinc-400">Loading billing...</p></div>}>
+      <BillingPageInner />
+    </Suspense>
+  );
+}
+
+function BillingPageInner() {
   const [me, setMe] = useState<Me | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [loading, setLoading] = useState(true);
