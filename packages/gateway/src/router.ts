@@ -263,6 +263,7 @@ export async function createRouter(ctx: RouterContext) {
 
     // Route the request through the intelligent routing engine
     const tokenInfo = getTokenInfo(c.req.raw);
+    const tenantId = tokenInfo?.tenant || getTenantId(c.req.raw) || null;
     const routingResult = await routingEngine.route({
       messages: request.messages,
       provider: providerName,
@@ -271,9 +272,8 @@ export async function createRouter(ctx: RouterContext) {
       complexityHint: complexity_hint,
       routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
       routingWeights: tokenInfo?.routingWeights || undefined,
+      tenantId,
     });
-
-    const tenantId = tokenInfo?.tenant || getTenantId(c.req.raw) || null;
 
     // Check cache before calling any provider.
     // Cache lookup order: exact-match (in-memory) → semantic-match (embedding

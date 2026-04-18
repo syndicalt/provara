@@ -1,7 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { modelScores } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
+import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 import { createScoreStore, POOL_KEY } from "../src/routing/adaptive/score-store.js";
 import { loadScoresFromDb, persistScore } from "../src/routing/adaptive/persistence.js";
 import { createAdaptiveRouter } from "../src/routing/adaptive/router.js";
@@ -144,8 +145,10 @@ describe("adaptive tenant scope — C1 foundation", () => {
     });
   });
 
-  describe("router.updateScore", () => {
-    it("default-arg updates the pool row only", async () => {
+  describe("router.updateScore — tier-dispatched writes (C2)", () => {
+    afterEach(() => resetTierEnv());
+
+    it("default-arg (no tenantId) updates the pool row only", async () => {
       const db = await makeTestDb();
       const router = await createAdaptiveRouter(db);
 
@@ -156,8 +159,9 @@ describe("adaptive tenant scope — C1 foundation", () => {
       expect(rows[0].tenantId).toBe(POOL_KEY);
     });
 
-    it("tenant-scoped updates write a tenant row without touching the pool", async () => {
+    it("Team tenant with default toggles writes tenant row only (no pool bleed)", async () => {
       const db = await makeTestDb();
+      await grantIntelligenceAccess(db, "tenant-a", { tier: "team" });
       const router = await createAdaptiveRouter(db);
 
       await router.updateScore("coding", "medium", "openai", "gpt-4", 0.5, "user");
@@ -172,8 +176,9 @@ describe("adaptive tenant scope — C1 foundation", () => {
       expect(tenant?.qualityScore).toBeCloseTo(0.9);
     });
 
-    it("tenant isolation — tenant-a ratings do not influence tenant-b", async () => {
+    it("Team tenant-a's ratings do not influence tenant-b or the pool", async () => {
       const db = await makeTestDb();
+      await grantIntelligenceAccess(db, "tenant-a", { tier: "team" });
       const router = await createAdaptiveRouter(db);
 
       await router.updateScore("coding", "medium", "openai", "gpt-4", 0.9, "user", "tenant-a");
@@ -181,6 +186,18 @@ describe("adaptive tenant scope — C1 foundation", () => {
       expect(router.getCellScores("coding", "medium", "tenant-b")).toEqual([]);
       expect(router.getCellScores("coding", "medium")).toEqual([]);
       expect(router.getCellScores("coding", "medium", "tenant-a")).toHaveLength(1);
+    });
+
+    it("Free tenant writes to the pool even when tenantId is passed", async () => {
+      const db = await makeTestDb();
+      // No subscription → Free tier → always pools.
+      const router = await createAdaptiveRouter(db);
+
+      await router.updateScore("coding", "medium", "openai", "gpt-4", 0.7, "user", "tenant-free");
+
+      const rows = await db.select().from(modelScores).all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0].tenantId).toBe(POOL_KEY);
     });
   });
 });

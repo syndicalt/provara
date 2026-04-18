@@ -29,6 +29,13 @@ export interface RoutingRequest {
   complexityHint?: Complexity;
   routingProfile?: RoutingProfile;
   routingWeights?: RoutingWeights;
+  /**
+   * Tenant identity of the caller. Drives the adaptive router's tier-
+   * aware read fallback (#195) — Team/Enterprise tenants see their
+   * isolated matrix with pool as optional fallback; Free/Pro see the
+   * shared pool only. `null`/`undefined` = anonymous caller, pool-only.
+   */
+  tenantId?: string | null;
 }
 
 export async function createRoutingEngine(config: RoutingEngineConfig) {
@@ -158,13 +165,14 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
 
     // A/B test candidate (may or may not run before adaptive based on config)
     const abResult = await findActiveAbTest(taskType, complexity);
-    const adaptiveResult = adaptive.getBestModel(
+    const adaptiveResult = await adaptive.getBestModel(
       taskType,
       complexity,
       profile,
       availableProviders,
       allFallbacks,
-      request.routingWeights
+      request.routingWeights,
+      request.tenantId,
     );
 
     // Ordering:

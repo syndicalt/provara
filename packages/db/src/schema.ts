@@ -281,6 +281,44 @@ export const modelScores = sqliteTable("model_scores", {
 ]);
 
 /**
+ * Per-tenant adaptive isolation toggles (#176 / #195). Rows exist only for
+ * tenants that have ever had their toggles touched — absence means "tier
+ * defaults apply". The live policy is computed by
+ * `tenantAdaptiveIsolationPolicy(db, tenantId)` which layers defaults +
+ * this row.
+ *
+ * Boolean semantics (SQLite ints 0/1). Toggles are valid only for Team
+ * and Enterprise tiers; API-side enforcement rejects writes from Free
+ * and Pro tenants.
+ */
+export const tenantAdaptiveIsolation = sqliteTable("tenant_adaptive_isolation", {
+  tenantId: text("tenant_id").primaryKey(),
+  consumesPool: integer("consumes_pool", { mode: "boolean" }).notNull().default(false),
+  contributesPool: integer("contributes_pool", { mode: "boolean" }).notNull().default(false),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+/**
+ * Append-only audit log of every change to a tenant's isolation toggles.
+ * Supports Enterprise "when was I contributing to the pool?" audits and
+ * our own debugging. `changedBy` is the user id that performed the
+ * change, or a literal `"operator"` for admin overrides.
+ */
+export const adaptiveIsolationPreferencesLog = sqliteTable("adaptive_isolation_preferences_log", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  field: text("field").notNull(), // 'consumes_pool' | 'contributes_pool'
+  oldValue: integer("old_value", { mode: "boolean" }).notNull(),
+  newValue: integer("new_value", { mode: "boolean" }).notNull(),
+  changedAt: integer("changed_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  changedBy: text("changed_by").notNull(),
+});
+
+/**
  * Persistent playground conversations. Sessions are tenant-scoped; the
  * `messages` column stores the full transcript as JSON (serialized
  * `ChatMessage[]`) because turns are a UI grouping, not an analytics
