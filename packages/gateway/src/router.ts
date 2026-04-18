@@ -46,6 +46,10 @@ import { createWebhookRoutes } from "./routes/webhooks.js";
 import { createBillingRoutes } from "./routes/billing.js";
 import { requireIntelligenceTier } from "./auth/tier.js";
 import { requireQuota } from "./auth/quota.js";
+import {
+  createRateLimitMiddleware,
+  loadRateLimitConfig,
+} from "./middleware/rate-limit.js";
 
 interface RouterContext {
   registry: ProviderRegistry;
@@ -100,11 +104,35 @@ export async function createRouter(ctx: RouterContext) {
     exposeHeaders: ["X-Provara-Guardrail", "X-Provara-Model", "X-Provara-Provider", "X-Provara-Request-Id", "X-Provara-Errors", "X-Provara-Cost", "X-Provara-Latency", "X-Provara-Cache", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
   }));
 
-  // Mount OAuth routes (public, only in multi_tenant mode)
+  // Per-IP rate limiting (#192). Flat limits for abuse protection;
+  // tier-based promises are handled upstream via monthly quota
+  // enforcement (`requireQuota` + TIER_QUOTAS), not here.
+  const rateLimits = loadRateLimitConfig();
+
+  // Mount OAuth routes (public, only in multi_tenant mode). Auth
+  // endpoints are public + unauthenticated, so rate-limit-hit audit
+  // emission is disabled — stdout logging only. Sign-in / invite-claim
+  // / OAuth callback are all under /auth/*.
   if (getMode() === "multi_tenant") {
+    const authRateLimit = createRateLimitMiddleware({
+      scope: "auth",
+      ...rateLimits.authPerMinute,
+    });
+    app.use("/auth/*", authRateLimit);
     app.route("/auth", createAuthRoutes(ctx.db));
     app.route("/auth/saml", createSamlAuthRoutes(ctx.db));
   }
+
+  // Global DoS floor on the chat-completions hot path. Per-token
+  // `apiTokens.rateLimit` remains the programmatic lever for
+  // fine-grained limits; this is the flat DoS ceiling that protects
+  // the process regardless of token count.
+  const chatRateLimit = createRateLimitMiddleware({
+    scope: "chat",
+    ...rateLimits.chatPerSecond,
+    audit: { db: ctx.db },
+  });
+  app.use("/v1/chat/completions", chatRateLimit);
 
   // Public share read — uses a distinct path (/v1/shared/:token, past tense)
   // so the `/v1/shares/*` admin-auth middleware registered below doesn't
