@@ -7,6 +7,12 @@ import {
   upsertSubscription,
 } from "./subscriptions.js";
 import { invalidateQuotaCache } from "../auth/quota.js";
+import { emitAudit } from "../audit/emit.js";
+import {
+  AUDIT_BILLING_SUBSCRIPTION_CREATED,
+  AUDIT_BILLING_SUBSCRIPTION_UPDATED,
+  AUDIT_BILLING_SUBSCRIPTION_CANCELED,
+} from "../audit/actions.js";
 
 /**
  * Resolve the Product a Subscription's first item points to, expanding
@@ -59,6 +65,14 @@ export async function handleCheckoutSessionCompleted(
   // Refresh quota cache so the tenant's next chat request sees the
   // new tier immediately instead of waiting for the 60s TTL (#170).
   invalidateQuotaCache(tenantId);
+  emitAudit(db, {
+    tenantId,
+    actorUserId: null,
+    action: AUDIT_BILLING_SUBSCRIPTION_CREATED,
+    resourceType: "subscription",
+    resourceId: subscription.id,
+    metadata: { product: product.name, status: subscription.status },
+  });
   console.log(`[stripe] subscription ${subscription.id} linked to tenant ${tenantId} (${product.name})`);
 }
 
@@ -80,6 +94,14 @@ export async function handleSubscriptionUpdated(
   const product = await resolveProductForSubscription(stripe, subscription);
   await upsertSubscription(db, subscription, tenantId, product);
   invalidateQuotaCache(tenantId);
+  emitAudit(db, {
+    tenantId,
+    actorUserId: null,
+    action: AUDIT_BILLING_SUBSCRIPTION_UPDATED,
+    resourceType: "subscription",
+    resourceId: subscription.id,
+    metadata: { product: product.name, status: subscription.status },
+  });
 }
 
 /**
@@ -93,7 +115,16 @@ export async function handleSubscriptionDeleted(
 ): Promise<void> {
   const tenantId = await getTenantForSubscription(db, subscription.id);
   await markSubscriptionCanceled(db, subscription.id);
-  if (tenantId) invalidateQuotaCache(tenantId);
+  if (tenantId) {
+    invalidateQuotaCache(tenantId);
+    emitAudit(db, {
+      tenantId,
+      actorUserId: null,
+      action: AUDIT_BILLING_SUBSCRIPTION_CANCELED,
+      resourceType: "subscription",
+      resourceId: subscription.id,
+    });
+  }
 }
 
 /**

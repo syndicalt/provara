@@ -26,6 +26,11 @@ import {
 import { sendEmail } from "../email/index.js";
 import { welcomeEmail, magicLinkEmail } from "../email/templates.js";
 import { ssoRequiredForEmail } from "../auth/saml.js";
+import { emitAudit } from "../audit/emit.js";
+import {
+  AUDIT_AUTH_LOGIN_SUCCESS,
+  AUDIT_AUTH_SESSION_REVOKED,
+} from "../audit/actions.js";
 
 const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000";
 // The gateway's own public URL (same value OAuth callbacks are registered
@@ -113,6 +118,13 @@ export function createAuthRoutes(db: Db) {
       const user = await upsertUser(db, "google", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
+      emitAudit(db, {
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: AUDIT_AUTH_LOGIN_SUCCESS,
+        metadata: { method: "google" },
+      });
       return c.redirect(successRedirect(c));
     } catch (err) {
       if (err instanceof OAuthMergeRefusedError) {
@@ -143,6 +155,13 @@ export function createAuthRoutes(db: Db) {
       const user = await upsertUser(db, "github", profile);
       const sessionId = await createSession(db, user.id);
       setSessionCookie(c, sessionId);
+      emitAudit(db, {
+        tenantId: user.tenantId,
+        actorUserId: user.id,
+        actorEmail: user.email,
+        action: AUDIT_AUTH_LOGIN_SUCCESS,
+        metadata: { method: "github" },
+      });
       return c.redirect(successRedirect(c));
     } catch (err) {
       if (err instanceof OAuthMergeRefusedError) {
@@ -158,8 +177,20 @@ export function createAuthRoutes(db: Db) {
   app.post("/logout", async (c) => {
     const sessionId = getSessionFromCookie(c);
     if (sessionId) {
+      // Resolve the user attached to this session for the audit row
+      // before we delete it — after delete, the link is gone.
+      const validated = await validateSession(db, sessionId);
       await deleteSession(db, sessionId);
       clearSessionCookie(c);
+      if (validated?.user) {
+        emitAudit(db, {
+          tenantId: validated.user.tenantId,
+          actorUserId: validated.user.id,
+          actorEmail: validated.user.email,
+          action: AUDIT_AUTH_SESSION_REVOKED,
+          metadata: { reason: "self" },
+        });
+      }
     }
     return c.json({ ok: true });
   });
@@ -368,6 +399,13 @@ export function createAuthRoutes(db: Db) {
 
     const sessionId = await createSession(db, user.id);
     setSessionCookie(c, sessionId);
+    emitAudit(db, {
+      tenantId: user.tenantId,
+      actorUserId: user.id,
+      actorEmail: user.email,
+      action: AUDIT_AUTH_LOGIN_SUCCESS,
+      metadata: { method: "magic_link" },
+    });
     return c.redirect(`${DASHBOARD_URL()}/dashboard`);
   });
 
