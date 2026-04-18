@@ -22,6 +22,12 @@ function errorMessage(code: string | null): string | null {
       return "The sign-in link expired mid-flow. Please start again.";
     case "email_unverified":
       return "That email is already registered with another sign-in method, and the provider you used did not verify email ownership. Please sign in with your original provider.";
+    case "magic_link_invalid":
+      return "That magic link is invalid. Request a fresh one below.";
+    case "magic_link_expired":
+      return "That magic link has expired. Request a fresh one below.";
+    case "magic_link_used":
+      return "That magic link has already been used. Request a fresh one below.";
     case null:
       return null;
     default:
@@ -127,6 +133,14 @@ function LoginContent() {
           </a>
         </div>
 
+        <div className="flex items-center gap-3 text-xs text-zinc-500">
+          <div className="h-px bg-zinc-800 flex-1" />
+          <span>or</span>
+          <div className="h-px bg-zinc-800 flex-1" />
+        </div>
+
+        <MagicLinkForm returnTo={returnTo} />
+
         <div className="pt-2 text-center space-y-2">
           <p className="text-xs text-zinc-500">
             By signing in, you agree to our{" "}
@@ -149,6 +163,120 @@ function LoginContent() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Magic-link request form. Two terminal states:
+ *
+ * - Email belongs to an existing user → `{status: "sent"}` from the
+ *   gateway → we swap in a "check your inbox" confirmation.
+ * - Email does not exist → `{status: "new_user"}` → redirect to
+ *   /signup?email=X so the user can provide first/last name before we
+ *   issue the link.
+ */
+function MagicLinkForm({ returnTo }: { returnTo: string }) {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (sending) return;
+    setLocalError(null);
+
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed || !trimmed.includes("@")) {
+      setLocalError("Enter a valid email.");
+      return;
+    }
+
+    setSending(true);
+    try {
+      const res = await gatewayFetchRaw("/auth/magic-link/request", {
+        method: "POST",
+        body: JSON.stringify({ email: trimmed }),
+      });
+      if (res.status === 429) {
+        setLocalError("Too many requests for this email. Try again in a few minutes.");
+        return;
+      }
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setLocalError(body?.error?.message ?? "Something went wrong. Try again.");
+        return;
+      }
+      const data = (await res.json()) as { status: "sent" | "new_user" };
+      if (data.status === "new_user") {
+        const qs = new URLSearchParams({ email: trimmed });
+        if (returnTo && returnTo !== "/dashboard") qs.set("return", returnTo);
+        router.push(`/signup?${qs.toString()}`);
+        return;
+      }
+      setSentTo(trimmed);
+    } catch (err) {
+      setLocalError("Network error. Check your connection and try again.");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  if (sentTo) {
+    return (
+      <div className="rounded-lg border border-emerald-900/60 bg-emerald-950/30 px-4 py-4 text-sm text-emerald-200 space-y-2">
+        <p>
+          <strong className="text-emerald-100">Check your inbox.</strong> We sent a sign-in link to{" "}
+          <span className="font-mono text-emerald-50">{sentTo}</span>. The link expires in 15 minutes.
+        </p>
+        <p className="text-xs text-emerald-300/70">
+          Didn&apos;t get it?{" "}
+          <button
+            type="button"
+            onClick={() => {
+              setSentTo(null);
+              setEmail("");
+            }}
+            className="underline hover:text-emerald-100"
+          >
+            Try a different email
+          </button>
+          .
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-2">
+      <label htmlFor="magic-email" className="sr-only">
+        Email
+      </label>
+      <input
+        id="magic-email"
+        type="email"
+        autoComplete="email"
+        placeholder="you@example.com"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        disabled={sending}
+        className="w-full px-4 py-3 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:border-zinc-600"
+      />
+      {localError && (
+        <p className="text-xs text-red-400">{localError}</p>
+      )}
+      <button
+        type="submit"
+        disabled={sending}
+        className="flex items-center justify-center gap-3 w-full px-4 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-500 transition-colors disabled:opacity-60"
+      >
+        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+        </svg>
+        {sending ? "Sending…" : "Sign in with Magic Link"}
+      </button>
+    </form>
   );
 }
 
