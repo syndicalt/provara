@@ -126,6 +126,16 @@ export const requests = sqliteTable("requests", {
   tokensSavedOutput: integer("tokens_saved_output"),
   fallbackErrors: text("fallback_errors"),
   tenantId: text("tenant_id"),
+  /**
+   * Attribution for spend intelligence (#219). Populated at ingest from
+   * the authenticated request context; nullable for historical rows and
+   * for request paths that don't resolve a user or token (system /
+   * scheduled callers). User and token are not mutually exclusive in
+   * principle, but in practice dashboard calls set userId and bearer-
+   * token calls set apiTokenId.
+   */
+  userId: text("user_id"),
+  apiTokenId: text("api_token_id"),
   abTestId: text("ab_test_id").references(() => abTests.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -682,10 +692,20 @@ export const costLogs = sqliteTable("cost_logs", {
   inputTokens: integer("input_tokens").notNull(),
   outputTokens: integer("output_tokens").notNull(),
   cost: real("cost").notNull(),
+  /**
+   * Denormalized attribution for spend-intelligence aggregations (#219).
+   * Mirrors the parent `requests` row so per-user / per-token spend
+   * queries hit `cost_logs` alone with a covering index, without a join.
+   */
+  userId: text("user_id"),
+  apiTokenId: text("api_token_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
-});
+}, (table) => [
+  index("cost_logs_tenant_user_created_idx").on(table.tenantId, table.userId, table.createdAt),
+  index("cost_logs_tenant_token_created_idx").on(table.tenantId, table.apiTokenId, table.createdAt),
+]);
 
 /**
  * Audit log (#210). Append-only record of security- and admin-relevant
