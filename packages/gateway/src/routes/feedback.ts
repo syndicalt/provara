@@ -4,7 +4,7 @@ import { feedback, requests } from "@provara/db";
 import { eq, desc, sql, and, gte } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTokenInfo } from "../auth/middleware.js";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import { getJudgeConfig, setJudgeConfig } from "../routing/judge.js";
 import type { AdaptiveRouter } from "../routing/adaptive/index.js";
 
@@ -35,7 +35,11 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
     }
 
     // Verify request exists (scoped to tenant)
-    const request = await db.select().from(requests).where(tenantId ? and(eq(requests.id, body.requestId), eq(requests.tenantId, tenantId)) : eq(requests.id, body.requestId)).get();
+    const tenantClause = tenantFilter(requests.tenantId, tenantId);
+    const requestWhere = tenantClause
+      ? and(eq(requests.id, body.requestId), tenantClause)
+      : eq(requests.id, body.requestId);
+    const request = await db.select().from(requests).where(requestWhere).get();
     if (!request) {
       return c.json(
         { error: { message: "Request not found", type: "not_found" } },
@@ -118,7 +122,7 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
       })
       .from(feedback)
       .leftJoin(requests, eq(feedback.requestId, requests.id))
-      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
+      .where(tenantFilter(feedback.tenantId, tenantId))
       .orderBy(desc(feedback.createdAt))
       .limit(limit)
       .all();
@@ -140,7 +144,7 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
       })
       .from(feedback)
       .innerJoin(requests, eq(feedback.requestId, requests.id))
-      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
+      .where(tenantFilter(feedback.tenantId, tenantId))
       .groupBy(requests.provider, requests.model, requests.taskType, requests.complexity)
       .all();
 
@@ -161,7 +165,7 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
       })
       .from(feedback)
       .innerJoin(requests, eq(feedback.requestId, requests.id))
-      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
+      .where(tenantFilter(feedback.tenantId, tenantId))
       .groupBy(requests.provider, requests.model)
       .all();
 
@@ -176,8 +180,9 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
     const since = new Date(Date.now() - rangeMs);
     const fmt = range === "24h" ? "%Y-%m-%d %H:00" : "%Y-%m-%d";
 
+    const tenantClauseTrend = tenantFilter(feedback.tenantId, tenantId);
     const conditions = [gte(feedback.createdAt, since)];
-    if (tenantId) conditions.push(eq(feedback.tenantId, tenantId));
+    if (tenantClauseTrend) conditions.push(tenantClauseTrend);
 
     const rows = await db
       .select({

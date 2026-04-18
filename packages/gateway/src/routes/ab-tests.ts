@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { abTests, abTestVariants, requests, feedback, costLogs } from "@provara/db";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 
 export function createAbTestRoutes(db: Db) {
   const app = new Hono();
@@ -11,7 +11,7 @@ export function createAbTestRoutes(db: Db) {
   // List all A/B tests
   app.get("/", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const tests = await db.select().from(abTests).where(tenantId ? eq(abTests.tenantId, tenantId) : undefined).all();
+    const tests = await db.select().from(abTests).where(tenantFilter(abTests.tenantId, tenantId)).all();
     return c.json({ tests });
   });
 
@@ -20,7 +20,7 @@ export function createAbTestRoutes(db: Db) {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
-    const test = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where((() => { const tc = tenantFilter(abTests.tenantId, tenantId); return tc ? and(eq(abTests.id, id), tc) : eq(abTests.id, id); })()).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
@@ -182,7 +182,7 @@ export function createAbTestRoutes(db: Db) {
       description?: string;
     }>();
 
-    const test = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where((() => { const tc = tenantFilter(abTests.tenantId, tenantId); return tc ? and(eq(abTests.id, id), tc) : eq(abTests.id, id); })()).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
@@ -193,10 +193,10 @@ export function createAbTestRoutes(db: Db) {
     if (body.description !== undefined) updates.description = body.description;
 
     if (Object.keys(updates).length > 0) {
-      await db.update(abTests).set(updates).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).run();
+      await db.update(abTests).set(updates).where((() => { const tc = tenantFilter(abTests.tenantId, tenantId); return tc ? and(eq(abTests.id, id), tc) : eq(abTests.id, id); })()).run();
     }
 
-    const updated = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
+    const updated = await db.select().from(abTests).where((() => { const tc = tenantFilter(abTests.tenantId, tenantId); return tc ? and(eq(abTests.id, id), tc) : eq(abTests.id, id); })()).get();
     return c.json({ test: updated });
   });
 
@@ -205,13 +205,13 @@ export function createAbTestRoutes(db: Db) {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
-    const test = await db.select().from(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).get();
+    const test = await db.select().from(abTests).where((() => { const tc = tenantFilter(abTests.tenantId, tenantId); return tc ? and(eq(abTests.id, id), tc) : eq(abTests.id, id); })()).get();
     if (!test) {
       return c.json({ error: { message: "A/B test not found", type: "not_found" } }, 404);
     }
 
     await db.delete(abTestVariants).where(eq(abTestVariants.abTestId, id)).run();
-    await db.delete(abTests).where(tenantId ? and(eq(abTests.id, id), eq(abTests.tenantId, tenantId)) : eq(abTests.id, id)).run();
+    await db.delete(abTests).where((() => { const tc = tenantFilter(abTests.tenantId, tenantId); return tc ? and(eq(abTests.id, id), tc) : eq(abTests.id, id); })()).run();
 
     return c.json({ deleted: true });
   });

@@ -205,7 +205,17 @@ async function upsertUser(
     .get();
 
   if (existingUser) {
-    // Link new OAuth provider to existing user
+    // Link new OAuth provider to existing user (#178). This merges two
+    // different OAuth accounts (different providerAccountId, same email)
+    // under the same user row → same tenantId. Intentional for
+    // "link my Google and GitHub" flows but risky when two people
+    // legitimately share an email. Logging every merge so operators
+    // can audit if cross-account data unexpectedly appears.
+    console.warn(
+      `[auth] OAuth merge: ${provider} account ${profile.id} linked to existing user ${existingUser.id} ` +
+      `(email=${profile.email}, tenant=${existingUser.tenantId}). If this user did not explicitly intend to ` +
+      `link accounts, investigate.`,
+    );
     await db.insert(oauthAccounts).values({
       id: nanoid(),
       userId: existingUser.id,

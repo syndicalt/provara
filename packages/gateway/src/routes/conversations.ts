@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { conversations } from "@provara/db";
 import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 
 const DEFAULT_LIMIT = 50;
 const MAX_TITLE_LENGTH = 60;
@@ -30,7 +30,6 @@ export function createConversationRoutes(db: Db) {
   app.get("/", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const limit = Math.min(parseInt(c.req.query("limit") || String(DEFAULT_LIMIT)), 200);
-    const where = tenantId ? eq(conversations.tenantId, tenantId) : undefined;
     const rows = await db
       .select({
         id: conversations.id,
@@ -39,7 +38,7 @@ export function createConversationRoutes(db: Db) {
         updatedAt: conversations.updatedAt,
       })
       .from(conversations)
-      .where(where)
+      .where(tenantFilter(conversations.tenantId, tenantId))
       .orderBy(desc(conversations.updatedAt))
       .limit(limit)
       .all();
@@ -69,9 +68,8 @@ export function createConversationRoutes(db: Db) {
   app.get("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const id = c.req.param("id");
-    const where = tenantId
-      ? and(eq(conversations.id, id), eq(conversations.tenantId, tenantId))
-      : eq(conversations.id, id);
+    const tenantClause = tenantFilter(conversations.tenantId, tenantId);
+    const where = tenantClause ? and(eq(conversations.id, id), tenantClause) : eq(conversations.id, id);
     const row = await db.select().from(conversations).where(where).get();
     if (!row) return c.json({ error: { message: "Not found", type: "not_found" } }, 404);
     let messages: unknown = [];
@@ -90,9 +88,8 @@ export function createConversationRoutes(db: Db) {
   app.patch("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const id = c.req.param("id");
-    const where = tenantId
-      ? and(eq(conversations.id, id), eq(conversations.tenantId, tenantId))
-      : eq(conversations.id, id);
+    const tenantClause = tenantFilter(conversations.tenantId, tenantId);
+    const where = tenantClause ? and(eq(conversations.id, id), tenantClause) : eq(conversations.id, id);
 
     const existing = await db.select().from(conversations).where(where).get();
     if (!existing) return c.json({ error: { message: "Not found", type: "not_found" } }, 404);
@@ -109,9 +106,8 @@ export function createConversationRoutes(db: Db) {
   app.delete("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const id = c.req.param("id");
-    const where = tenantId
-      ? and(eq(conversations.id, id), eq(conversations.tenantId, tenantId))
-      : eq(conversations.id, id);
+    const tenantClause = tenantFilter(conversations.tenantId, tenantId);
+    const where = tenantClause ? and(eq(conversations.id, id), tenantClause) : eq(conversations.id, id);
     await db.delete(conversations).where(where).run();
     return c.json({ deleted: true });
   });

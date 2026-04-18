@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { promptTemplates, promptVersions } from "@provara/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 
 export function createPromptRoutes(db: Db) {
   const app = new Hono();
@@ -14,7 +14,7 @@ export function createPromptRoutes(db: Db) {
     const templates = await db
       .select()
       .from(promptTemplates)
-      .where(tenantId ? eq(promptTemplates.tenantId, tenantId) : undefined)
+      .where(tenantFilter(promptTemplates.tenantId, tenantId))
       .orderBy(desc(promptTemplates.updatedAt))
       .all();
 
@@ -44,7 +44,8 @@ export function createPromptRoutes(db: Db) {
   app.get("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const where = tenantId ? and(eq(promptTemplates.id, id), eq(promptTemplates.tenantId, tenantId)) : eq(promptTemplates.id, id);
+    const tenantClause = tenantFilter(promptTemplates.tenantId, tenantId);
+    const where = tenantClause ? and(eq(promptTemplates.id, id), tenantClause) : eq(promptTemplates.id, id);
     const template = await db.select().from(promptTemplates).where(where).get();
     if (!template) {
       return c.json({ error: { message: "Template not found", type: "not_found" } }, 404);
@@ -103,7 +104,8 @@ export function createPromptRoutes(db: Db) {
   app.post("/:id/versions", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const where = tenantId ? and(eq(promptTemplates.id, id), eq(promptTemplates.tenantId, tenantId)) : eq(promptTemplates.id, id);
+    const tenantClause = tenantFilter(promptTemplates.tenantId, tenantId);
+    const where = tenantClause ? and(eq(promptTemplates.id, id), tenantClause) : eq(promptTemplates.id, id);
     const template = await db.select().from(promptTemplates).where(where).get();
     if (!template) {
       return c.json({ error: { message: "Template not found", type: "not_found" } }, 404);
@@ -154,7 +156,8 @@ export function createPromptRoutes(db: Db) {
   app.post("/:id/publish/:versionId", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id, versionId } = c.req.param();
-    const where = tenantId ? and(eq(promptTemplates.id, id), eq(promptTemplates.tenantId, tenantId)) : eq(promptTemplates.id, id);
+    const tenantClause = tenantFilter(promptTemplates.tenantId, tenantId);
+    const where = tenantClause ? and(eq(promptTemplates.id, id), tenantClause) : eq(promptTemplates.id, id);
 
     const version = await db.select().from(promptVersions)
       .where(and(eq(promptVersions.id, versionId), eq(promptVersions.templateId, id)))
@@ -175,7 +178,8 @@ export function createPromptRoutes(db: Db) {
   app.delete("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const where = tenantId ? and(eq(promptTemplates.id, id), eq(promptTemplates.tenantId, tenantId)) : eq(promptTemplates.id, id);
+    const tenantClause = tenantFilter(promptTemplates.tenantId, tenantId);
+    const where = tenantClause ? and(eq(promptTemplates.id, id), tenantClause) : eq(promptTemplates.id, id);
     const template = await db.select().from(promptTemplates).where(where).get();
     if (!template) {
       return c.json({ error: { message: "Template not found", type: "not_found" } }, 404);
