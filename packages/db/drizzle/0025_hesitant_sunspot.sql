@@ -1,0 +1,1 @@
+ALTER TABLE `usage_reports` ADD `finalized_at` integer;

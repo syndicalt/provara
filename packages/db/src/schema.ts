@@ -530,6 +530,15 @@ export const usageReports = sqliteTable("usage_reports", {
   reportedAt: integer("reported_at", { mode: "timestamp" }),
   /** Most recent meter event identifier sent to Stripe — for dedupe audit. */
   lastEventIdentifier: text("last_event_identifier"),
+  /**
+   * When the period this row covers was fully reconciled — i.e. a
+   * final-delta meter event was pushed to Stripe with a timestamp
+   * inside the closed period. Null while the period is still open
+   * (current billing cycle) or was never flushed. Self-healing
+   * rollover logic reads this to decide whether an old period row
+   * needs a final push.
+   */
+  finalizedAt: integer("finalized_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

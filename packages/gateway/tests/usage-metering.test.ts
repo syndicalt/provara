@@ -323,3 +323,97 @@ describe("TIER_QUOTAS constants", () => {
     expect(TIER_QUOTAS.team).toBe(500_000);
   });
 });
+
+describe("rollover self-heal flush", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("flushes prior-period overage with a timestamp inside the old period", async () => {
+    await db.insert(users).values({ id: "u1", email: "t@x.com", tenantId: "t-1", role: "owner", createdAt: new Date() }).run();
+    await grantIntelligenceAccess(db, "t-1", { tier: "pro" });
+    const sub = (await db.select().from(subscriptions).where(eq(subscriptions.tenantId, "t-1")).get())!;
+
+    // Simulate the prior period: insert a usage_reports row for an older
+    // period with some overage already reported, and seed requests inside
+    // that window that push the real overage higher (the missed delta).
+    const oldStart = new Date(sub.currentPeriodStart.getTime() - 30 * 86400_000);
+    const oldEnd = sub.currentPeriodStart;
+    await db.insert(usageReports).values({
+      id: "old",
+      stripeSubscriptionId: sub.stripeSubscriptionId,
+      tenantId: sub.tenantId,
+      periodStart: oldStart,
+      periodEnd: oldEnd,
+      reportedOverageCount: 5_000,
+      totalPushedUsd: 2.5,
+    }).run();
+    // Seed 115k requests in the old period → 15k overage → 10k delta
+    await seedRequests(db, "t-1", 115_000, new Date(oldStart.getTime() + 86400_000));
+
+    const pushes: MeterPush[] = [];
+    const stats = await runUsageReportCycle(db, mockStripe(pushes));
+
+    expect(stats.reportsWritten).toBeGreaterThanOrEqual(1);
+    const flush = pushes.find((p) => p.identifier.endsWith(":final"));
+    expect(flush).toBeTruthy();
+    expect(flush!.payload.value).toBe("10000");
+
+    // Row is now marked finalized so subsequent cycles skip it.
+    const after = await db.select().from(usageReports).where(eq(usageReports.id, "old")).get();
+    expect(after?.finalizedAt).toBeTruthy();
+    expect(after?.reportedOverageCount).toBe(15_000);
+  });
+
+  it("marks a prior period finalized with no push when no delta exists", async () => {
+    await db.insert(users).values({ id: "u1", email: "t@x.com", tenantId: "t-1", role: "owner", createdAt: new Date() }).run();
+    await grantIntelligenceAccess(db, "t-1", { tier: "pro" });
+    const sub = (await db.select().from(subscriptions).where(eq(subscriptions.tenantId, "t-1")).get())!;
+
+    const oldStart = new Date(sub.currentPeriodStart.getTime() - 30 * 86400_000);
+    await db.insert(usageReports).values({
+      id: "old",
+      stripeSubscriptionId: sub.stripeSubscriptionId,
+      tenantId: sub.tenantId,
+      periodStart: oldStart,
+      periodEnd: sub.currentPeriodStart,
+      // Already fully reconciled — no new requests in the old window
+      reportedOverageCount: 0,
+      totalPushedUsd: 0,
+    }).run();
+
+    const pushes: MeterPush[] = [];
+    await runUsageReportCycle(db, mockStripe(pushes));
+
+    // No final push, but the row is finalized so we don't re-check.
+    expect(pushes.filter((p) => p.identifier.endsWith(":final"))).toHaveLength(0);
+    const after = await db.select().from(usageReports).where(eq(usageReports.id, "old")).get();
+    expect(after?.finalizedAt).toBeTruthy();
+  });
+
+  it("ignores already-finalized prior periods on subsequent cycles", async () => {
+    await db.insert(users).values({ id: "u1", email: "t@x.com", tenantId: "t-1", role: "owner", createdAt: new Date() }).run();
+    await grantIntelligenceAccess(db, "t-1", { tier: "pro" });
+    const sub = (await db.select().from(subscriptions).where(eq(subscriptions.tenantId, "t-1")).get())!;
+
+    const oldStart = new Date(sub.currentPeriodStart.getTime() - 30 * 86400_000);
+    await db.insert(usageReports).values({
+      id: "old",
+      stripeSubscriptionId: sub.stripeSubscriptionId,
+      tenantId: sub.tenantId,
+      periodStart: oldStart,
+      periodEnd: sub.currentPeriodStart,
+      reportedOverageCount: 20_000,
+      totalPushedUsd: 10,
+      finalizedAt: new Date(),
+    }).run();
+
+    const pushes: MeterPush[] = [];
+    await runUsageReportCycle(db, mockStripe(pushes));
+    expect(pushes).toHaveLength(0);
+  });
+});
+

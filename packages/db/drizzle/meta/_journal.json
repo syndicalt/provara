@@ -176,6 +176,13 @@
       "when": 1776475283245,
       "tag": "0024_easy_sauron",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1776477625151,
+      "tag": "0025_hesitant_sunspot",
+      "breakpoints": true
     }
   ]
 }

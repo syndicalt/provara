@@ -1,6 +1,6 @@
 import type { Db } from "@provara/db";
 import { requests, subscriptions, usageReports, users } from "@provara/db";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, isNull, ne, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type Stripe from "stripe";
 import { getOperatorEmails } from "../config.js";
@@ -65,6 +65,31 @@ export async function countRequestsInPeriod(
   return row?.count ?? 0;
 }
 
+/**
+ * Count requests for a tenant strictly within a bounded window. Used
+ * by the rollover-flush path where we need the OLD period's final
+ * count (not "everything since period start").
+ */
+export async function countRequestsInPeriodRange(
+  db: Db,
+  tenantId: string,
+  periodStart: Date,
+  periodEnd: Date,
+): Promise<number> {
+  const row = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(requests)
+    .where(
+      and(
+        eq(requests.tenantId, tenantId),
+        gte(requests.createdAt, periodStart),
+        sql`${requests.createdAt} < ${Math.floor(periodEnd.getTime() / 1000)}`,
+      ),
+    )
+    .get();
+  return row?.count ?? 0;
+}
+
 /** How many of `usage` requests are over the quota for `tier`. Floors at zero. */
 export function calculateOverage(usage: number, tier: string): number {
   const quota = TIER_QUOTAS[tier] ?? TIER_QUOTAS.free;
@@ -116,18 +141,62 @@ async function pushMeterEvent(
   stripeCustomerId: string,
   deltaCount: number,
   identifier: string,
+  timestamp?: Date,
 ): Promise<void> {
+  const payload: Record<string, string> = {
+    stripe_customer_id: stripeCustomerId,
+    value: String(deltaCount),
+  };
   await stripe.billing.meterEvents.create({
     event_name: METER_EVENT_NAME,
     identifier,
-    // Stripe docs require the payload fields to be strings, not numbers.
-    payload: {
-      stripe_customer_id: stripeCustomerId,
-      value: String(deltaCount),
-    },
-    // Timestamp defaults to "now" if omitted; letting Stripe stamp it
-    // avoids clock-skew issues between our server and theirs.
+    // Stripe docs require payload fields to be strings, not numbers.
+    payload,
+    // Timestamp pins the event to a specific billing period. Omit for
+    // in-period pushes (Stripe stamps "now"). Set explicitly for rollover
+    // flushes so late-arriving events still land in the correct closed
+    // period rather than the next one.
+    ...(timestamp ? { timestamp: Math.floor(timestamp.getTime() / 1000) } : {}),
   });
+}
+
+/**
+ * Optimistic UPDATE — only succeeds if the high-water mark hasn't
+ * moved since we read it. Prevents stale writes in the (currently
+ * prevented via PROVARA_SCHEDULER_ROLE=leader, but still worth
+ * defending against) multi-replica case where two schedulers could
+ * read the same value and race each other's updates.
+ *
+ * Returns true when the update succeeded, false when another writer
+ * beat us to it (caller should back off and retry).
+ */
+async function updateReportOptimistically(
+  db: Db,
+  reportId: string,
+  expectedPrevCount: number,
+  next: {
+    reportedOverageCount: number;
+    totalPushedUsd: number;
+    reportedAt: Date;
+    lastEventIdentifier: string;
+    finalizedAt?: Date | null;
+  },
+): Promise<boolean> {
+  const result = await db
+    .update(usageReports)
+    .set(next)
+    .where(
+      and(
+        eq(usageReports.id, reportId),
+        eq(usageReports.reportedOverageCount, expectedPrevCount),
+      ),
+    )
+    .run();
+  // libSQL returns rowsAffected in `.changes`
+  const affected = (result as unknown as { rowsAffected?: number; changes?: number }).rowsAffected
+    ?? (result as unknown as { changes?: number }).changes
+    ?? 0;
+  return affected > 0;
 }
 
 /**
@@ -176,6 +245,81 @@ export async function runUsageReportCycle(
         continue;
       }
 
+      // --- Rollover self-heal pass ---
+      // If the most-recent unfinalized report row on this subscription
+      // covers an OLD period (period_start != sub.currentPeriodStart),
+      // the subscription rolled over since our last cycle. Flush any
+      // remaining delta for that old period with a timestamp pinned
+      // inside the period so Stripe puts it on the correct invoice
+      // even if the push arrives late. Then mark the row finalized.
+      const stalePrev = await db
+        .select()
+        .from(usageReports)
+        .where(
+          and(
+            eq(usageReports.stripeSubscriptionId, sub.stripeSubscriptionId),
+            ne(usageReports.periodStart, sub.currentPeriodStart),
+            isNull(usageReports.finalizedAt),
+          ),
+        )
+        .orderBy(sql`${usageReports.periodStart} DESC`)
+        .limit(1)
+        .get();
+
+      if (stalePrev) {
+        const prevCount = await countRequestsInPeriodRange(
+          db,
+          sub.tenantId,
+          stalePrev.periodStart,
+          stalePrev.periodEnd,
+        );
+        const prevOverage = calculateOverage(prevCount, sub.tier);
+        const prevDelta = prevOverage - stalePrev.reportedOverageCount;
+        if (prevDelta > 0) {
+          const flushIdentifier = `usage:${sub.stripeSubscriptionId}:${Math.floor(
+            stalePrev.periodStart.getTime() / 1000,
+          )}:${prevOverage}:final`;
+          // Timestamp = 1s before period end so the event lands in the
+          // closed period regardless of how late this push arrives.
+          const flushTs = new Date(stalePrev.periodEnd.getTime() - 1000);
+          await pushMeterEvent(
+            stripe,
+            sub.stripeCustomerId,
+            prevDelta,
+            flushIdentifier,
+            flushTs,
+          );
+          const flushUsd = (prevDelta / 1000) * OVERAGE_RATE_PER_1K;
+          const updated = await updateReportOptimistically(db, stalePrev.id, stalePrev.reportedOverageCount, {
+            reportedOverageCount: prevOverage,
+            totalPushedUsd: stalePrev.totalPushedUsd + flushUsd,
+            reportedAt: new Date(),
+            lastEventIdentifier: flushIdentifier,
+            finalizedAt: new Date(),
+          });
+          if (!updated) {
+            console.warn(
+              `[usage] optimistic update lost race for rollover flush on ${sub.stripeSubscriptionId}; skipping this cycle`,
+            );
+            continue;
+          }
+          stats.reportsWritten++;
+          stats.deltaRequestsReported += prevDelta;
+          console.log(
+            `[usage] flushed +${prevDelta} final-period overage for ${sub.tier} sub ${sub.stripeSubscriptionId} (prior period)`,
+          );
+        } else {
+          // No new overage on the old period; just mark it finalized
+          // so we don't re-check on every cycle.
+          await db
+            .update(usageReports)
+            .set({ finalizedAt: new Date() })
+            .where(eq(usageReports.id, stalePrev.id))
+            .run();
+        }
+      }
+
+      // --- Current-period pass ---
       const currentUsage = await countRequestsInPeriod(db, sub.tenantId, sub.currentPeriodStart);
       const currentOverage = calculateOverage(currentUsage, sub.tier);
 
@@ -198,16 +342,20 @@ export async function runUsageReportCycle(
       await pushMeterEvent(stripe, sub.stripeCustomerId, delta, identifier);
 
       const deltaUsd = (delta / 1000) * OVERAGE_RATE_PER_1K;
-      await db
-        .update(usageReports)
-        .set({
-          reportedOverageCount: currentOverage,
-          totalPushedUsd: report.totalPushedUsd + deltaUsd,
-          reportedAt: new Date(),
-          lastEventIdentifier: identifier,
-        })
-        .where(eq(usageReports.id, report.id))
-        .run();
+      const updated = await updateReportOptimistically(db, report.id, alreadyReported, {
+        reportedOverageCount: currentOverage,
+        totalPushedUsd: report.totalPushedUsd + deltaUsd,
+        reportedAt: new Date(),
+        lastEventIdentifier: identifier,
+      });
+      if (!updated) {
+        // Another cycle beat us to it — that's fine, Stripe's identifier
+        // dedupe protects against double-bill. Next cycle will resume.
+        console.warn(
+          `[usage] optimistic update lost race on ${sub.stripeSubscriptionId} (current period); skipping`,
+        );
+        continue;
+      }
 
       stats.reportsWritten++;
       stats.deltaRequestsReported += delta;
