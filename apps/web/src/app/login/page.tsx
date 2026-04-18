@@ -38,6 +38,10 @@ function errorMessage(code: string | null): string | null {
       return "Your identity provider didn't return an email address. Contact your admin.";
     case "sso_email_on_other_tenant":
       return "That email is already registered to another Provara workspace. Contact your admin to resolve this.";
+    case "sso_tier_revoked":
+      return "SSO is not available for this workspace. Contact your admin — an Enterprise subscription is required.";
+    case "sso_missing_tenant":
+      return "SSO sign-in URL was malformed. Contact your admin.";
     case null:
       return null;
     default:
