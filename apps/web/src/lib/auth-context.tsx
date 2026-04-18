@@ -24,13 +24,53 @@ const AuthContext = createContext<AuthContextValue>({
   logout: async () => {},
 });
 
+/**
+ * Client-side playground state lives in sessionStorage under `pg:*` keys
+ * (see `use-chat-session.ts`, `use-session-persist.ts`). sessionStorage
+ * is scoped to the browser origin, not to the signed-in user — which
+ * means switching accounts in the same tab used to leak the previous
+ * user's chat history + settings into the new account's Playground.
+ *
+ * We guard against this in two places:
+ *   1. Explicit logout() clears all pg:* keys before redirecting.
+ *   2. AuthProvider compares the signed-in user's id to a stashed
+ *      `pg:user_id` on each load. A mismatch means either the server
+ *      expired one user's session and they re-signed-in as someone
+ *      else, or a tab inherited sessionStorage across a user switch.
+ *      Either way, purge before rendering.
+ */
+function clearPlaygroundState() {
+  if (typeof window === "undefined") return;
+  const keysToDrop: string[] = [];
+  for (let i = 0; i < sessionStorage.length; i++) {
+    const k = sessionStorage.key(i);
+    if (k && k.startsWith("pg:")) keysToDrop.push(k);
+  }
+  keysToDrop.forEach((k) => sessionStorage.removeItem(k));
+}
+
+const PG_USER_KEY = "pg:user_id";
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     gatewayClientFetch<{ user: User | null }>("/auth/me")
-      .then((data) => setUser(data.user))
+      .then((data) => {
+        if (typeof window !== "undefined") {
+          const stashedId = sessionStorage.getItem(PG_USER_KEY);
+          if (data.user) {
+            if (stashedId && stashedId !== data.user.id) {
+              clearPlaygroundState();
+            }
+            sessionStorage.setItem(PG_USER_KEY, data.user.id);
+          } else if (stashedId) {
+            clearPlaygroundState();
+          }
+        }
+        setUser(data.user);
+      })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
   }, []);
@@ -41,6 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       // ignore
     }
+    clearPlaygroundState();
     setUser(null);
     window.location.href = "/login";
   }
