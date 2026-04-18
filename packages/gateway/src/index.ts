@@ -167,6 +167,28 @@ if (cloudDeployment) {
   });
 }
 
+// Audit-log retention purge (#210). Deletes rows older than the per-
+// tier retention window (90d Free/Pro, 365d Team, 730d Enterprise).
+// Daily by default; overridable via env for testing.
+const AUDIT_RETENTION_INTERVAL_MS = parseInt(
+  process.env.PROVARA_AUDIT_RETENTION_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
+  10,
+);
+await scheduler.schedule({
+  name: "audit-retention",
+  intervalMs: AUDIT_RETENTION_INTERVAL_MS,
+  initialDelayMs: 180_000,
+  handler: async () => {
+    const { runAuditRetentionCycle } = await import("./scheduler/audit-retention.js");
+    const stats = await runAuditRetentionCycle(db);
+    if (stats.rowsDeleted > 0) {
+      console.log(
+        `[audit-retention] cycle complete: tenants=${stats.tenantsScanned} affected=${stats.tenantsDeleted} deleted=${stats.rowsDeleted}`,
+      );
+    }
+  },
+});
+
 scheduler.start();
 
 // Discover available models from each provider's API at startup
