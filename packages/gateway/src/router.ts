@@ -37,6 +37,7 @@ import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
 import { createRegressionRoutes } from "./routes/regression.js";
 import { createMigrationRoutes } from "./routes/migrations.js";
 import { createWebhookRoutes } from "./routes/webhooks.js";
+import { createBillingRoutes } from "./routes/billing.js";
 import { requireIntelligenceTier } from "./auth/tier.js";
 
 interface RouterContext {
@@ -128,6 +129,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/providers/*", adminAuth);
   app.use("/v1/cache/*", adminAuth);
   app.use("/v1/routing/*", adminAuth);
+  app.use("/v1/billing/*", adminAuth);
 
   // Role-based access — owner-only routes (after adminAuth attaches user)
   app.use("/v1/admin/*", requireRole("owner"));
@@ -138,6 +140,7 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
+  app.route("/v1/billing", createBillingRoutes(ctx.db));
 
   // Intelligence-tier routes (#168): gate behind PROVARA_CLOUD + subscription
   // tier check. Self-host deployments get a 402 with an explanation. Cloud
