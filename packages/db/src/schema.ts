@@ -501,6 +501,44 @@ export const stripeWebhookEvents = sqliteTable("stripe_webhook_events", {
 });
 
 /**
+ * Usage report high-water marks (#170). One row per
+ * (stripe_subscription_id, period_start) — tracks how much overage has
+ * already been pushed to Stripe's metered billing so nightly cycles
+ * only report the delta. Primary-key on (sub, period_start) so period
+ * rollover automatically produces a fresh row without interfering with
+ * the previous period's auditable record.
+ *
+ * `reported_overage_count` is the cumulative total we've reported to
+ * Stripe for this subscription during this period. The delta sent on
+ * any given night is `(current_overage - reported_overage_count)`.
+ * Stripe dedupes its own side via our `stripe_event_id` (the meter
+ * event identifier we set per push).
+ *
+ * Safe to run the cycle twice: if `current_overage <= reported_count`,
+ * no push happens.
+ */
+export const usageReports = sqliteTable("usage_reports", {
+  id: text("id").primaryKey(),
+  stripeSubscriptionId: text("stripe_subscription_id").notNull(),
+  tenantId: text("tenant_id").notNull(),
+  periodStart: integer("period_start", { mode: "timestamp" }).notNull(),
+  periodEnd: integer("period_end", { mode: "timestamp" }).notNull(),
+  /** Cumulative overage requests reported to Stripe this period (high-water mark). */
+  reportedOverageCount: integer("reported_overage_count").notNull().default(0),
+  /** Cumulative billable overage delta pushed to Stripe. Sanity-check field. */
+  totalPushedUsd: real("total_pushed_usd").notNull().default(0),
+  reportedAt: integer("reported_at", { mode: "timestamp" }),
+  /** Most recent meter event identifier sent to Stripe — for dedupe audit. */
+  lastEventIdentifier: text("last_event_identifier"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  uniqueIndex("usage_reports_sub_period_idx").on(table.stripeSubscriptionId, table.periodStart),
+  uniqueIndex("usage_reports_tenant_period_idx").on(table.tenantId, table.periodStart),
+]);
+
+/**
  * Persistent state for the in-process scheduler. One row per named job.
  * Survives restart so re-scheduled jobs can resume their cadence and the
  * UI can surface last-run telemetry. The scheduler itself still lives

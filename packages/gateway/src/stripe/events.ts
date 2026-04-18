@@ -6,6 +6,7 @@ import {
   setSubscriptionStatus,
   upsertSubscription,
 } from "./subscriptions.js";
+import { invalidateQuotaCache } from "../auth/quota.js";
 
 /**
  * Resolve the Product a Subscription's first item points to, expanding
@@ -55,6 +56,9 @@ export async function handleCheckoutSessionCompleted(
   const product = await resolveProductForSubscription(stripe, subscription);
 
   await upsertSubscription(db, subscription, tenantId, product);
+  // Refresh quota cache so the tenant's next chat request sees the
+  // new tier immediately instead of waiting for the 60s TTL (#170).
+  invalidateQuotaCache(tenantId);
   console.log(`[stripe] subscription ${subscription.id} linked to tenant ${tenantId} (${product.name})`);
 }
 
@@ -75,6 +79,7 @@ export async function handleSubscriptionUpdated(
   }
   const product = await resolveProductForSubscription(stripe, subscription);
   await upsertSubscription(db, subscription, tenantId, product);
+  invalidateQuotaCache(tenantId);
 }
 
 /**
@@ -86,7 +91,9 @@ export async function handleSubscriptionDeleted(
   db: Db,
   subscription: Stripe.Subscription,
 ): Promise<void> {
+  const tenantId = await getTenantForSubscription(db, subscription.id);
   await markSubscriptionCanceled(db, subscription.id);
+  if (tenantId) invalidateQuotaCache(tenantId);
 }
 
 /**
@@ -101,7 +108,9 @@ export async function handleInvoicePaymentFailed(
 ): Promise<void> {
   const subscriptionId = getSubscriptionIdFromInvoice(invoice);
   if (!subscriptionId) return;
+  const tenantId = await getTenantForSubscription(db, subscriptionId);
   await setSubscriptionStatus(db, subscriptionId, "past_due");
+  if (tenantId) invalidateQuotaCache(tenantId);
 }
 
 /**
@@ -114,7 +123,9 @@ export async function handleInvoicePaid(
 ): Promise<void> {
   const subscriptionId = getSubscriptionIdFromInvoice(invoice);
   if (!subscriptionId) return;
+  const tenantId = await getTenantForSubscription(db, subscriptionId);
   await setSubscriptionStatus(db, subscriptionId, "active");
+  if (tenantId) invalidateQuotaCache(tenantId);
 }
 
 function getSubscriptionIdFromInvoice(invoice: Stripe.Invoice): string | null {

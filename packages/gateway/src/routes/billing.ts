@@ -7,6 +7,7 @@ import { getSubscriptionForTenant } from "../stripe/subscriptions.js";
 import { getStripe } from "../stripe/index.js";
 import { getOperatorEmails } from "../config.js";
 import { users } from "@provara/db";
+import { listRecentUsageReports } from "../billing/usage.js";
 
 /**
  * Billing routes (#169). Dashboard-facing endpoints for reading the
@@ -239,6 +240,22 @@ export function createBillingRoutes(db: Db) {
     });
 
     return c.json({ url: session.url });
+  });
+
+  /**
+   * Audit log of recent usage reports for the caller's tenant (#170).
+   * Customer-facing: "prove the overage charge on my invoice" workflow.
+   * Tenant-scoped; no privileged access required beyond being signed in
+   * as a member of the tenant. Returns up to 50 most-recent periods
+   * (subscription + legacy rows).
+   */
+  app.get("/usage-reports", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    if (!tenantId) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    const reports = await listRecentUsageReports(db, tenantId);
+    return c.json({ reports });
   });
 
   return app;
