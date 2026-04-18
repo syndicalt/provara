@@ -22,6 +22,7 @@ import { createRoutingIsolationRoutes } from "./routes/routing-isolation.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
 import { createSamlAuthRoutes } from "./routes/auth-saml.js";
+import { createAuditRoutes } from "./routes/audit.js";
 import { createTeamRoutes } from "./routes/team.js";
 import { createModelRoutes } from "./routes/models.js";
 import { createGuardrailRoutes } from "./routes/guardrails.js";
@@ -134,6 +135,8 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/cache/*", adminAuth);
   app.use("/v1/routing/*", adminAuth);
   app.use("/v1/billing/*", adminAuth);
+  app.use("/v1/audit-logs", adminAuth);
+  app.use("/v1/audit-logs/*", adminAuth);
 
   // Role-based access — owner-only routes (after adminAuth attaches user)
   app.use("/v1/admin/*", requireRole("owner"));
@@ -145,6 +148,7 @@ export async function createRouter(ctx: RouterContext) {
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
   app.route("/v1/billing", createBillingRoutes(ctx.db));
+  app.route("/v1/audit-logs", createAuditRoutes(ctx.db));
 
   // Intelligence-tier routes (#168): gate behind PROVARA_CLOUD + subscription
   // tier check. Self-host deployments get a 402 with an explanation. Cloud

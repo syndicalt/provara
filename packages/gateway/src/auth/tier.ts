@@ -275,6 +275,27 @@ export function requireEnterpriseTier(db: Db) {
 }
 
 /**
+ * Non-middleware tier check for Team+ features (#210 audit logs is the
+ * first such feature — basic audit visibility is table-stakes for Team;
+ * longer retention / SIEM export remain Enterprise-tier differentiators).
+ *
+ * Returns true for Team, Enterprise, Self-Hosted Enterprise, operator
+ * tenants, and self-host deployments. Free and Pro get false.
+ */
+export async function tenantHasTeamAccess(
+  db: Db,
+  tenantId: string | null | undefined,
+): Promise<boolean> {
+  if (!tenantId) return false;
+  if (await isOperatorTenant(db, tenantId)) return true;
+  if (!isCloudDeployment()) return true;
+  const sub = await getSubscriptionForTenant(db, tenantId);
+  if (!sub) return false;
+  if (!ACTIVE_STATUSES.has(sub.status)) return false;
+  return sub.tier === "team" || sub.tier === "enterprise" || sub.tier === "selfhost_enterprise";
+}
+
+/**
  * Non-middleware variant of `requireEnterpriseTier` for callers that
  * already know the tenantId (most importantly the SAML ACS handler,
  * where the caller is mid-login and has no session to derive a tenant
