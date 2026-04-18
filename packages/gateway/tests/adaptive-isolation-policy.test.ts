@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { modelScores, adaptiveIsolationPreferencesLog } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
-import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
+import { grantIntelligenceAccess, resetTierEnv, seedOperatorUser } from "./_setup/tier.js";
 import { POOL_KEY } from "../src/routing/adaptive/score-store.js";
 import { getTenantIsolationPolicy } from "../src/routing/adaptive/isolation-policy.js";
 import { updateIsolationPreferences, getIsolationPreferences } from "../src/routing/adaptive/isolation-preferences.js";
@@ -68,6 +68,30 @@ describe("adaptive isolation policy — C2", () => {
         readsTenantRow: true,
         readsPool: false,
       });
+    });
+
+    it("treats operator tenants as Enterprise-equivalent even without a subscription", async () => {
+      const db = await makeTestDb();
+      process.env.PROVARA_CLOUD = "true";
+      await seedOperatorUser(db, "t-op", "ops@provara.xyz");
+      const policy = await getTenantIsolationPolicy(db, "t-op");
+      expect(policy.tier).toBe("enterprise");
+      expect(policy).toMatchObject({
+        writesTenantRow: true,
+        readsTenantRow: true,
+        writesPool: false,
+        readsPool: false,
+      });
+    });
+
+    it("operator tenant's toggles still apply on top of the Enterprise baseline", async () => {
+      const db = await makeTestDb();
+      process.env.PROVARA_CLOUD = "true";
+      await seedOperatorUser(db, "t-op", "ops@provara.xyz");
+      await updateIsolationPreferences(db, "t-op", { consumesPool: true }, "self");
+      const policy = await getTenantIsolationPolicy(db, "t-op");
+      expect(policy.readsPool).toBe(true);
+      expect(policy.writesPool).toBe(false);
     });
 
     it("returns isolated Enterprise policy by default", async () => {

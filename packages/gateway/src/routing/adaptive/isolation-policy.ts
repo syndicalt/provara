@@ -3,6 +3,7 @@ import { subscriptions, tenantAdaptiveIsolation } from "@provara/db";
 import { eq, inArray } from "drizzle-orm";
 import { isCloudDeployment } from "../../config.js";
 import { getSubscriptionForTenant } from "../../stripe/subscriptions.js";
+import { isOperatorTenant } from "../../auth/tier.js";
 
 /**
  * Tier-aware adaptive isolation policy per #176/#195. Four fields:
@@ -69,6 +70,11 @@ function normalizeTier(raw: string | null | undefined): Tier {
  * the worst case (subscription + preferences), both indexed on
  * tenantId. Not cached yet — see #195 comment; add TTL caching if
  * latency shows up in hot-path tracing.
+ *
+ * Operator bypass (#173): tenants on the PROVARA_OPERATOR_EMAILS
+ * allowlist are treated as Enterprise-equivalent regardless of
+ * subscription. Mirrors `tenantHasIntelligenceAccess` — operators
+ * are "us", they see every feature we ship.
  */
 export async function getTenantIsolationPolicy(
   db: Db,
@@ -79,6 +85,22 @@ export async function getTenantIsolationPolicy(
 
   // Unauthenticated / anonymous: pool-only, like Free. No tenant row exists.
   if (!tenantId) return FREE_POLICY;
+
+  const operator = await isOperatorTenant(db, tenantId);
+  if (operator) {
+    const prefs = await db
+      .select()
+      .from(tenantAdaptiveIsolation)
+      .where(eq(tenantAdaptiveIsolation.tenantId, tenantId))
+      .get();
+    return {
+      tier: "enterprise",
+      writesTenantRow: true,
+      readsTenantRow: true,
+      writesPool: prefs?.contributesPool ?? false,
+      readsPool: prefs?.consumesPool ?? false,
+    };
+  }
 
   const sub = await getSubscriptionForTenant(db, tenantId);
   const tier = sub && ACTIVE_STATUSES.has(sub.status) ? normalizeTier(sub.tier) : "free";
