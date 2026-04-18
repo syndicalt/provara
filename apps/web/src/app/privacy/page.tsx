@@ -6,13 +6,16 @@ export default function PrivacyPage() {
       <PublicNav />
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
-        <p className="text-sm text-zinc-500 mb-12">Last updated: April 15, 2026</p>
+        <p className="text-sm text-zinc-500 mb-12">Last updated: April 17, 2026</p>
 
         <div className="prose prose-invert prose-sm prose-zinc max-w-none space-y-8">
           <section>
             <h2 className="text-lg font-semibold mb-3">Overview</h2>
             <p className="text-zinc-400 leading-relaxed">
               Provara is an LLM gateway that routes requests to AI providers on your behalf. We take your privacy seriously. This policy explains what data we collect, how we use it, and your rights regarding that data.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              The Provara managed service is operated by <strong>CoreLumen, LLC</strong> ("CoreLumen," "we," "us," "our"), which is the data controller for information collected through provara.xyz.
             </p>
             <p className="text-zinc-400 leading-relaxed mt-3">
               <strong className="text-zinc-300">Self-hosted users:</strong> If you deploy Provara on your own infrastructure, your data never touches our servers. This policy applies only to users of the managed service at provara.xyz.
@@ -59,10 +62,26 @@ export default function PrivacyPage() {
             <ul className="list-disc list-inside text-zinc-400 space-y-2">
               <li>We do not sell your data to third parties</li>
               <li>We do not use your prompts or responses to train AI models</li>
-              <li>We do not share your data with other Provara users</li>
+              <li>We do not share your prompts, responses, or API keys with other Provara users</li>
               <li>We do not collect telemetry or analytics from self-hosted instances</li>
               <li>We do not access your provider API keys in plaintext</li>
             </ul>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold mb-3">Aggregated Routing Signal</h2>
+            <p className="text-zinc-400 leading-relaxed">
+              Provara&apos;s adaptive router learns from quality scores — user ratings you submit and optional LLM-judge scores — to pick the best model for each task type. On the managed Cloud service, these scores flow into a pooled routing matrix shared across Free and Pro tenants. The benefit: small tenants get quality-based routing from day one instead of waiting weeks to accumulate enough ratings on their own traffic.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              What IS pooled: numeric quality scores per (task type, complexity, model) cell, and regression-detection signals derived from those scores. Nothing else.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              What is NOT pooled: your prompts, responses, API keys, tenant identity, feedback comments, or any personally identifiable information. Scores are aggregated as numbers, never as content.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              <strong className="text-zinc-300">Team and Enterprise plans</strong> can opt into a private routing matrix that isolates quality signal to your tenant alone. Available as a per-tenant setting once you subscribe.
+            </p>
           </section>
 
           <section>
@@ -89,7 +108,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-lg font-semibold mb-3">Your Rights</h2>
             <p className="text-zinc-400 leading-relaxed">
-              You can access, export, or delete your data at any time. To request data deletion or if you have questions about this policy, contact us at{" "}
+              You can access, export, or delete your data at any time. To request data deletion or if you have questions about this policy, contact CoreLumen, LLC at{" "}
               <a href="mailto:privacy@provara.xyz" className="text-blue-400 hover:text-blue-300">privacy@provara.xyz</a>.
             </p>
           </section>

@@ -6,13 +6,16 @@ export default function TermsPage() {
       <PublicNav />
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-3xl font-bold mb-2">Terms of Service</h1>
-        <p className="text-sm text-zinc-500 mb-12">Last updated: April 15, 2026</p>
+        <p className="text-sm text-zinc-500 mb-12">Last updated: April 17, 2026</p>
 
         <div className="prose prose-invert prose-sm prose-zinc max-w-none space-y-8">
           <section>
             <h2 className="text-lg font-semibold mb-3">1. What Provara Is</h2>
             <p className="text-zinc-400 leading-relaxed">
               Provara is an LLM gateway service that routes requests to third-party AI providers. We provide the routing, analytics, and management layer. We do not provide the underlying AI models — you bring your own API keys (BYOK) and are responsible for your relationship with each provider.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              The Provara managed service is operated by <strong>CoreLumen, LLC</strong> ("CoreLumen," "we," "us," "our"). References to "Provara" in these terms mean the managed service at provara.xyz operated by CoreLumen, LLC. Self-hosted deployments of the open-source code are covered separately — see Section 9.
             </p>
           </section>
 
@@ -73,10 +76,10 @@ export default function TermsPage() {
           <section>
             <h2 className="text-lg font-semibold mb-3">8. Limitation of Liability</h2>
             <p className="text-zinc-400 leading-relaxed">
-              To the maximum extent permitted by law, Provara and its operators shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or business opportunities, arising from your use of the service.
+              To the maximum extent permitted by law, CoreLumen, LLC and its affiliates, officers, employees, and agents shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, or business opportunities, arising from your use of the service.
             </p>
             <p className="text-zinc-400 leading-relaxed mt-3">
-              Our total liability for any claim arising from or related to the service shall not exceed the amount you paid to Provara in the 12 months preceding the claim, or $100, whichever is greater.
+              Our total liability for any claim arising from or related to the service shall not exceed the amount you paid to CoreLumen, LLC in the 12 months preceding the claim, or $100, whichever is greater.
             </p>
           </section>
 
@@ -100,7 +103,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-lg font-semibold mb-3">11. Contact</h2>
             <p className="text-zinc-400 leading-relaxed">
-              Questions about these terms? Contact us at{" "}
+              Questions about these terms? Contact CoreLumen, LLC at{" "}
               <a href="mailto:legal@provara.xyz" className="text-blue-400 hover:text-blue-300">legal@provara.xyz</a>.
             </p>
           </section>
