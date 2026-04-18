@@ -12,25 +12,21 @@ function deriveKey(secret: string): Buffer {
   return createHash("sha256").update(secret).digest();
 }
 
-function getKey(): Buffer {
-  const key = process.env.PROVARA_MASTER_KEY;
-  if (!key) {
-    throw new Error(
-      "PROVARA_MASTER_KEY is required for API key encryption. " +
-      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
-    );
-  }
-  return deriveKey(key);
-}
-
 export interface EncryptedData {
   encrypted: string; // hex
   iv: string; // hex
   authTag: string; // hex
 }
 
-export function encrypt(plaintext: string): EncryptedData {
-  const key = getKey();
+/**
+ * Encrypt with an explicit master-key secret. Used by the rotation CLI
+ * (#190) which has to operate on two keys — the old one to decrypt
+ * stored rows, and the new one to re-encrypt them — without touching
+ * the process env. Production paths should prefer `encrypt()` which
+ * reads from `PROVARA_MASTER_KEY`.
+ */
+export function encryptWithKey(plaintext: string, secret: string): EncryptedData {
+  const key = deriveKey(secret);
   const iv = randomBytes(IV_LENGTH);
   const cipher = createCipheriv(ALGORITHM, key, iv);
 
@@ -45,8 +41,9 @@ export function encrypt(plaintext: string): EncryptedData {
   };
 }
 
-export function decrypt(data: EncryptedData): string {
-  const key = getKey();
+/** See `encryptWithKey`. */
+export function decryptWithKey(data: EncryptedData, secret: string): string {
+  const key = deriveKey(secret);
   const iv = Buffer.from(data.iv, "hex");
   const authTag = Buffer.from(data.authTag, "hex");
   const decipher = createDecipheriv(ALGORITHM, key, iv);
@@ -56,6 +53,25 @@ export function decrypt(data: EncryptedData): string {
   decrypted += decipher.final("utf8");
 
   return decrypted;
+}
+
+export function encrypt(plaintext: string): EncryptedData {
+  return encryptWithKey(plaintext, requireEnvKey());
+}
+
+export function decrypt(data: EncryptedData): string {
+  return decryptWithKey(data, requireEnvKey());
+}
+
+function requireEnvKey(): string {
+  const key = process.env.PROVARA_MASTER_KEY;
+  if (!key) {
+    throw new Error(
+      "PROVARA_MASTER_KEY is required for API key encryption. " +
+      "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
+    );
+  }
+  return key;
 }
 
 /**
