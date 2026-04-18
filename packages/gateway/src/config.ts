@@ -18,3 +18,27 @@ export function getMode(): ProvaraMode {
 export function isCloudDeployment(): boolean {
   return process.env.PROVARA_CLOUD === "true";
 }
+
+/**
+ * Operator email allowlist (#173). CoreLumen employees / contractors with
+ * production access whose tenants should bypass subscription checks so
+ * they can use Intelligence features without a paying Stripe subscription.
+ *
+ * Failure mode is bounded: a misconfigured env var locks operators out
+ * briefly until it's fixed. Customer access is unaffected — the bypass
+ * only *grants*, never *revokes*.
+ */
+export function getOperatorEmails(): string[] {
+  const raw = process.env.PROVARA_OPERATOR_EMAILS || "";
+  return raw
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isOperatorEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return false;
+  return getOperatorEmails().includes(normalized);
+}

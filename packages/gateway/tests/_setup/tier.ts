@@ -1,5 +1,6 @@
 import type { Db } from "@provara/db";
-import { subscriptions } from "@provara/db";
+import { subscriptions, users } from "@provara/db";
+import { nanoid } from "nanoid";
 
 /**
  * Seed an Intelligence-tier subscription for a test tenant so code paths
@@ -42,4 +43,36 @@ export async function grantIntelligenceAccess(
 /** Reset env vars between tests to avoid leaking PROVARA_CLOUD. */
 export function resetTierEnv(): void {
   delete process.env.PROVARA_CLOUD;
+  delete process.env.PROVARA_OPERATOR_EMAILS;
+}
+
+/**
+ * Seed an operator user on the given tenant (#173). Does NOT set
+ * PROVARA_CLOUD — operator bypass works regardless of deployment flag,
+ * which is by design (operators can test self-host preview deploys).
+ * Caller sets PROVARA_OPERATOR_EMAILS separately or via this helper's
+ * `registerInAllowlist` option.
+ */
+export async function seedOperatorUser(
+  db: Db,
+  tenantId: string,
+  email: string,
+  options: { registerInAllowlist?: boolean } = {},
+): Promise<void> {
+  await db
+    .insert(users)
+    .values({
+      id: nanoid(),
+      email,
+      tenantId,
+      role: "owner",
+      createdAt: new Date(),
+    })
+    .run();
+  if (options.registerInAllowlist ?? true) {
+    const existing = process.env.PROVARA_OPERATOR_EMAILS || "";
+    const set = new Set(existing.split(",").map((e) => e.trim()).filter(Boolean));
+    set.add(email);
+    process.env.PROVARA_OPERATOR_EMAILS = Array.from(set).join(",");
+  }
 }

@@ -1,8 +1,42 @@
 import type { Context, Next } from "hono";
 import type { Db } from "@provara/db";
-import { isCloudDeployment } from "../config.js";
+import { users } from "@provara/db";
+import { eq, and, sql } from "drizzle-orm";
+import { getOperatorEmails, isCloudDeployment } from "../config.js";
 import { getTenantId } from "./tenant.js";
 import { getSubscriptionForTenant } from "../stripe/subscriptions.js";
+
+/**
+ * Operator bypass lookup (#173). A tenant is an "operator tenant" if any
+ * of its users has an email on the PROVARA_OPERATOR_EMAILS allowlist.
+ * Returns true → the tenant bypasses subscription checks at both the
+ * HTTP middleware and the scheduler cycle layer. Tiny DB hit per gate
+ * check; acceptable because Intelligence routes are not on the hot path
+ * for chat completions.
+ */
+async function isOperatorTenant(db: Db, tenantId: string | null | undefined): Promise<boolean> {
+  if (!tenantId) return false;
+  const allowlist = getOperatorEmails();
+  if (allowlist.length === 0) return false;
+  // Case-insensitive comparison — OAuth providers return inconsistent
+  // casings (Google preserves the user's preferred casing, GitHub
+  // lowercases), so we compare on LOWER(email). The allowlist is
+  // already lowercased by getOperatorEmails.
+  const row = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(
+      and(
+        eq(users.tenantId, tenantId),
+        sql`LOWER(${users.email}) IN (${sql.join(
+          allowlist.map((e) => sql`${e}`),
+          sql`, `,
+        )})`,
+      ),
+    )
+    .get();
+  return Boolean(row);
+}
 
 /**
  * Subscription statuses that grant feature access to the tenant's tier.
@@ -43,6 +77,16 @@ export interface TierGateFailure {
  */
 export function requireIntelligenceTier(db: Db) {
   return async (c: Context, next: Next) => {
+    const tenantId = getTenantId(c.req.raw);
+
+    // Operator bypass (#173) runs before any other gate so CoreLumen's own
+    // team can use Intelligence features in all environments — including
+    // self-host preview deploys — without needing a Stripe subscription
+    // seeded for their tenant.
+    if (tenantId && (await isOperatorTenant(db, tenantId))) {
+      return next();
+    }
+
     if (!isCloudDeployment()) {
       return c.json(
         {
@@ -60,7 +104,6 @@ export function requireIntelligenceTier(db: Db) {
       );
     }
 
-    const tenantId = getTenantId(c.req.raw);
     if (!tenantId) {
       // Multi_tenant mode without a tenant means unauthenticated — the
       // admin/auth middleware upstream should have caught this. Belt-and-
@@ -133,14 +176,18 @@ export function requireIntelligenceTier(db: Db) {
 /**
  * Non-middleware variant for server-side callers (scheduler cycles) that
  * need to decide per-tenant whether to process. Mirrors the middleware
- * logic exactly so the gates are consistent.
+ * logic exactly so the gates are consistent, including the operator
+ * allowlist bypass (#173).
  */
 export async function tenantHasIntelligenceAccess(
   db: Db,
   tenantId: string | null,
 ): Promise<boolean> {
-  if (!isCloudDeployment()) return false;
   if (!tenantId) return false;
+  // Operator bypass takes precedence so CoreLumen's own scheduler cycles
+  // process operator tenants even in self-host preview environments.
+  if (await isOperatorTenant(db, tenantId)) return true;
+  if (!isCloudDeployment()) return false;
   const sub = await getSubscriptionForTenant(db, tenantId);
   if (!sub) return false;
   if (!ACTIVE_STATUSES.has(sub.status)) return false;
