@@ -7,6 +7,12 @@ import { getAuthUser } from "../auth/admin.js";
 import { getSeatStatus } from "../billing/seats.js";
 import { sendEmail } from "../email/index.js";
 import { inviteEmail } from "../email/templates.js";
+import { emitAudit } from "../audit/emit.js";
+import {
+  AUDIT_USER_INVITED,
+  AUDIT_USER_REMOVED,
+  AUDIT_USER_ROLE_CHANGED,
+} from "../audit/actions.js";
 
 // Default invite lifetime — 7 days. Long enough to survive weekends,
 // short enough that forgotten invites don't pollute the seat count
@@ -71,6 +77,18 @@ export function createTeamRoutes(db: Db) {
     await db.update(users).set({ role: body.role as "owner" | "member" }).where(eq(users.id, targetId)).run();
 
     const updated = await db.select().from(users).where(eq(users.id, targetId)).get();
+    emitAudit(db, {
+      tenantId: authUser.tenantId,
+      actorUserId: authUser.id,
+      action: AUDIT_USER_ROLE_CHANGED,
+      resourceType: "user",
+      resourceId: targetId,
+      metadata: {
+        target_email: target.email,
+        from: target.role,
+        to: body.role,
+      },
+    });
     return c.json({ member: updated });
   });
 
@@ -119,6 +137,14 @@ export function createTeamRoutes(db: Db) {
     await db.delete(sessions).where(eq(sessions.userId, targetId)).run();
     await db.delete(users).where(eq(users.id, targetId)).run();
 
+    emitAudit(db, {
+      tenantId: authUser.tenantId,
+      actorUserId: authUser.id,
+      action: AUDIT_USER_REMOVED,
+      resourceType: "user",
+      resourceId: targetId,
+      metadata: { target_email: target.email },
+    });
     return c.json({ deleted: true });
   });
 
@@ -242,6 +268,15 @@ export function createTeamRoutes(db: Db) {
         expiresAt,
       })
       .run();
+
+    emitAudit(db, {
+      tenantId: authUser.tenantId,
+      actorUserId: authUser.id,
+      action: AUDIT_USER_INVITED,
+      resourceType: "team_invite",
+      resourceId: token,
+      metadata: { invited_email: email, invited_role: role },
+    });
 
     const inviteUrl = `${dashboardOrigin(c)}/invite/${token}`;
 

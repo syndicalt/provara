@@ -14,6 +14,8 @@ import {
 } from "../auth/saml.js";
 import { createSession, setSessionCookie } from "../auth/session.js";
 import { tenantHasEnterpriseAccess } from "../auth/tier.js";
+import { emitAudit } from "../audit/emit.js";
+import { AUDIT_AUTH_LOGIN_SUCCESS } from "../audit/actions.js";
 
 /**
  * SAML SSO routes (#209). Mounted at `/auth/saml`. Per-tenant flow:
@@ -140,6 +142,13 @@ export function createSamlAuthRoutes(db: Db) {
 
     const sessionId = await createSession(db, result.user.id);
     setSessionCookie(c, sessionId);
+    emitAudit(db, {
+      tenantId: result.user.tenantId,
+      actorUserId: result.user.id,
+      actorEmail: result.user.email,
+      action: AUDIT_AUTH_LOGIN_SUCCESS,
+      metadata: { method: "saml", jit: result.kind === "created" },
+    });
     return c.redirect(`${DASHBOARD_URL()}/dashboard`);
   });
 
