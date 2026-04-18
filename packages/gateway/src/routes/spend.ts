@@ -301,6 +301,113 @@ async function resolveLabels(
   return labels;
 }
 
+async function buildSpendRows(
+  db: Db,
+  tenantId: string,
+  dim: SpendDim,
+  window: WindowBounds,
+  comparison: WindowBounds | null,
+): Promise<SpendRow[]> {
+  const [current, prior, judgeScores] = await Promise.all([
+    aggregateSpend(db, tenantId, dim, window),
+    comparison ? aggregateSpend(db, tenantId, dim, comparison) : Promise.resolve(new Map()),
+    aggregateJudgeScores(db, tenantId, dim, window),
+  ]);
+
+  const labels = await resolveLabels(db, tenantId, dim, Array.from(current.keys()));
+
+  const rows: SpendRow[] = [];
+  for (const [key, spend] of current.entries()) {
+    const scores = (judgeScores.get(key) ?? []).slice().sort((a, b) => a - b);
+    const median = percentile(scores, 0.5);
+    const p25 = percentile(scores, 0.25);
+    const p75 = percentile(scores, 0.75);
+    const cppq = median != null && median > 0 ? spend.cost / median : null;
+
+    const priorCost = prior.get(key)?.cost ?? 0;
+    const deltaUsd = comparison ? spend.cost - priorCost : null;
+    const deltaPct = comparison
+      ? priorCost > 0 ? (spend.cost - priorCost) / priorCost : null
+      : null;
+
+    rows.push({
+      key,
+      label: labels.get(key) ?? key,
+      cost_usd: spend.cost,
+      requests: spend.requests,
+      judged_requests: scores.length,
+      quality_median: median,
+      quality_p25: p25,
+      quality_p75: p75,
+      cost_per_quality_point: cppq,
+      delta_usd: deltaUsd,
+      delta_pct: deltaPct,
+      ...(dim === "category"
+        ? { task_type: spend.taskType, complexity: spend.complexity }
+        : {}),
+    });
+  }
+
+  rows.sort((a, b) => b.cost_usd - a.cost_usd);
+  return rows;
+}
+
+/**
+ * CSV serialization for `/v1/spend/export` (#219/T8). Finance-friendly:
+ * header row, one line per attribution key, explicit `currency` column
+ * set to USD on every row. Empty string for null numeric cells; a
+ * deleted user / revoked token still renders by its fallback label.
+ */
+export function spendRowsToCsv(dim: SpendDim, rows: SpendRow[]): string {
+  const headers = [
+    "dim",
+    "key",
+    "label",
+    "cost_usd",
+    "currency",
+    "requests",
+    "judged_requests",
+    "quality_median",
+    "quality_p25",
+    "quality_p75",
+    "cost_per_quality_point",
+    "delta_usd",
+    "delta_pct",
+    ...(dim === "category" ? ["task_type", "complexity"] : []),
+  ];
+
+  const esc = (v: unknown): string => {
+    if (v === null || v === undefined) return "";
+    const s = typeof v === "number" ? String(v) : String(v);
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+
+  const lines = [headers.join(",")];
+  for (const r of rows) {
+    const base = [
+      dim,
+      r.key,
+      r.label,
+      r.cost_usd,
+      "USD",
+      r.requests,
+      r.judged_requests,
+      r.quality_median,
+      r.quality_p25,
+      r.quality_p75,
+      r.cost_per_quality_point,
+      r.delta_usd,
+      r.delta_pct,
+    ];
+    if (dim === "category") {
+      base.push(r.task_type ?? "", r.complexity ?? "");
+    }
+    lines.push(base.map(esc).join(","));
+  }
+  return lines.join("\n") + (rows.length > 0 ? "\n" : "");
+}
+
 export function createSpendRoutes(db: Db) {
   const app = new Hono();
 
@@ -342,47 +449,7 @@ export function createSpendRoutes(db: Db) {
       compareMode === "prior" ? priorWindow(window) :
       null;
 
-    const [current, prior, judgeScores] = await Promise.all([
-      aggregateSpend(db, authUser.tenantId, rawDim, window),
-      comparison ? aggregateSpend(db, authUser.tenantId, rawDim, comparison) : Promise.resolve(new Map()),
-      aggregateJudgeScores(db, authUser.tenantId, rawDim, window),
-    ]);
-
-    const labels = await resolveLabels(db, authUser.tenantId, rawDim, Array.from(current.keys()));
-
-    const rows: SpendRow[] = [];
-    for (const [key, spend] of current.entries()) {
-      const scores = (judgeScores.get(key) ?? []).slice().sort((a, b) => a - b);
-      const median = percentile(scores, 0.5);
-      const p25 = percentile(scores, 0.25);
-      const p75 = percentile(scores, 0.75);
-      const cppq = median != null && median > 0 ? spend.cost / median : null;
-
-      const priorCost = prior.get(key)?.cost ?? 0;
-      const deltaUsd = comparison ? spend.cost - priorCost : null;
-      const deltaPct = comparison
-        ? priorCost > 0 ? (spend.cost - priorCost) / priorCost : null
-        : null;
-
-      rows.push({
-        key,
-        label: labels.get(key) ?? key,
-        cost_usd: spend.cost,
-        requests: spend.requests,
-        judged_requests: scores.length,
-        quality_median: median,
-        quality_p25: p25,
-        quality_p75: p75,
-        cost_per_quality_point: cppq,
-        delta_usd: deltaUsd,
-        delta_pct: deltaPct,
-        ...(rawDim === "category"
-          ? { task_type: spend.taskType, complexity: spend.complexity }
-          : {}),
-      });
-    }
-
-    rows.sort((a, b) => b.cost_usd - a.cost_usd);
+    const rows = await buildSpendRows(db, authUser.tenantId, rawDim, window, comparison);
     const limited = rows.slice(0, MAX_ROWS);
 
     return c.json({
@@ -393,6 +460,66 @@ export function createSpendRoutes(db: Db) {
         : null,
       rows: limited,
       truncated: rows.length > MAX_ROWS,
+    });
+  });
+
+  /**
+   * GET /v1/spend/export?dim=...&from=...&to=...&compare=prior|yoy
+   *
+   * CSV export with the same filters as /v1/spend/by. Tier gate is the
+   * same as /by — Team+ for provider/model/category, Enterprise for
+   * user/token. Filename encodes tenant + date range so finance doesn't
+   * end up with a folder of `export(1).csv ... export(17).csv`.
+   */
+  app.get("/export", async (c) => {
+    const authUser = getAuthUser(c.req.raw);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+
+    const rawDim = (c.req.query("dim") ?? "provider") as SpendDim;
+    if (!SPEND_DIMS.includes(rawDim)) {
+      return c.json(
+        { error: { message: `Invalid dim. Expected one of: ${SPEND_DIMS.join(", ")}`, type: "invalid_request" } },
+        400,
+      );
+    }
+
+    const hasTier = ENTERPRISE_DIMS.has(rawDim)
+      ? await tenantHasEnterpriseAccess(db, authUser.tenantId)
+      : await tenantHasTeamAccess(db, authUser.tenantId);
+    if (!hasTier) {
+      return c.json(
+        {
+          error: {
+            message: ENTERPRISE_DIMS.has(rawDim)
+              ? "Per-user and per-token spend export are available on the Enterprise plan."
+              : "Spend export is available on Team and Enterprise plans.",
+            type: "insufficient_tier",
+          },
+        },
+        402,
+      );
+    }
+
+    const window = parseWindow(c.req.query("from"), c.req.query("to"));
+    const compareMode = (c.req.query("compare") ?? "prior").toLowerCase();
+    const comparison =
+      compareMode === "yoy" ? yoyWindow(window) :
+      compareMode === "prior" ? priorWindow(window) :
+      null;
+
+    const rows = await buildSpendRows(db, authUser.tenantId, rawDim, window, comparison);
+    const limited = rows.slice(0, MAX_ROWS);
+
+    const fromLabel = window.from.toISOString().slice(0, 10);
+    const toLabel = window.to.toISOString().slice(0, 10);
+    const filename = `spend-${authUser.tenantId}-${rawDim}-${fromLabel}-${toLabel}.csv`;
+
+    const csv = spendRowsToCsv(rawDim, limited);
+    return c.body(csv, 200, {
+      "content-type": "text/csv; charset=utf-8",
+      "content-disposition": `attachment; filename="${filename}"`,
     });
   });
 

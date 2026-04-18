@@ -265,6 +265,100 @@ describe("GET /v1/spend/by (#219/T3)", () => {
   });
 });
 
+describe("GET /v1/spend/export (#219/T8)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 401 without auth", async () => {
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=provider");
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 402 for Pro tenants", async () => {
+    const owner = await seedOwner(db, "t-pro", "pro");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns 402 on dim=user for Team tenants", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=user", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns a CSV file with the expected headers and filename", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    await seedRequestAndCost(db, "e1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.23, judgeScore: 4 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=provider", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("text/csv; charset=utf-8");
+    const disp = res.headers.get("content-disposition") ?? "";
+    expect(disp).toMatch(/^attachment; filename="spend-t-team-provider-\d{4}-\d{2}-\d{2}-\d{4}-\d{2}-\d{2}\.csv"$/);
+
+    const body = await res.text();
+    const lines = body.trim().split("\n");
+    expect(lines[0]).toBe(
+      "dim,key,label,cost_usd,currency,requests,judged_requests,quality_median,quality_p25,quality_p75,cost_per_quality_point,delta_usd,delta_pct",
+    );
+    expect(lines).toHaveLength(2); // header + openai row
+    const cells = lines[1].split(",");
+    expect(cells[0]).toBe("provider");
+    expect(cells[1]).toBe("openai");
+    expect(cells[4]).toBe("USD");
+  });
+
+  it("emits category-specific columns when dim=category", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    await seedRequestAndCost(db, "cat1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", taskType: "coding", complexity: "hard", cost: 3.0 });
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/export?dim=category", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    const body = await res.text();
+    const lines = body.trim().split("\n");
+    expect(lines[0].endsWith("task_type,complexity")).toBe(true);
+    const cells = lines[1].split(",");
+    expect(cells[cells.length - 2]).toBe("coding");
+    expect(cells[cells.length - 1]).toBe("hard");
+  });
+
+  it("escapes labels containing commas and quotes", async () => {
+    const { spendRowsToCsv } = await import("../src/routes/spend.js");
+    const csv = spendRowsToCsv("provider", [
+      {
+        key: "openai",
+        label: 'Foo, "Bar", Baz',
+        cost_usd: 1.5,
+        requests: 3,
+        judged_requests: 0,
+        quality_median: null,
+        quality_p25: null,
+        quality_p75: null,
+        cost_per_quality_point: null,
+        delta_usd: null,
+        delta_pct: null,
+      },
+    ]);
+    expect(csv).toContain('"Foo, ""Bar"", Baz"');
+  });
+});
+
 describe("/v1/spend/budgets (#219/T7)", () => {
   let db: Db;
   beforeEach(async () => {
