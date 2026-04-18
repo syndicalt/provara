@@ -14,7 +14,7 @@ import { getSubscriptionForTenant } from "../stripe/subscriptions.js";
  * check; acceptable because Intelligence routes are not on the hot path
  * for chat completions.
  */
-async function isOperatorTenant(db: Db, tenantId: string | null | undefined): Promise<boolean> {
+export async function isOperatorTenant(db: Db, tenantId: string | null | undefined): Promise<boolean> {
   if (!tenantId) return false;
   const allowlist = getOperatorEmails();
   if (allowlist.length === 0) return false;
