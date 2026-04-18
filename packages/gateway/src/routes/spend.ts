@@ -14,6 +14,10 @@ import {
   computeDriftEvents,
   DEFAULT_ATTRIBUTION_WINDOW_DAYS,
 } from "../billing/drift.js";
+import {
+  computeRecommendations,
+  QUALITY_DELTA_THRESHOLD,
+} from "../routing/recommendations.js";
 
 /**
  * Spend intelligence API (#219). All endpoints under `/v1/spend/*` are
@@ -769,6 +773,39 @@ export function createSpendRoutes(db: Db) {
       period: { from: window.from.toISOString(), to: window.to.toISOString() },
       attribution_window_days: attributionWindowDays,
       events,
+    });
+  });
+
+  /**
+   * GET /v1/spend/recommendations
+   *
+   * Enterprise-only. Scans this tenant's (task_type, complexity) cells
+   * over the last 30 days, picks the high-volume winner in each cell,
+   * and ranks quality-comparable alternates by estimated monthly
+   * savings. Answers "where is my money buying answers I could get
+   * cheaper without losing quality".
+   */
+  app.get("/recommendations", async (c) => {
+    const authUser = getAuthUser(c.req.raw);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+    if (!(await tenantHasEnterpriseAccess(db, authUser.tenantId))) {
+      return c.json(
+        {
+          error: {
+            message: "Savings recommendations are available on the Enterprise plan.",
+            type: "insufficient_tier",
+          },
+        },
+        402,
+      );
+    }
+
+    const recs = await computeRecommendations(db, authUser.tenantId);
+    return c.json({
+      quality_delta_threshold: QUALITY_DELTA_THRESHOLD,
+      recommendations: recs,
     });
   });
 

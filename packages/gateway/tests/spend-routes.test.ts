@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { apiTokens, costLogs, feedback, requests, routingWeightSnapshots, users } from "@provara/db";
+import { apiTokens, costLogs, feedback, modelScores, requests, routingWeightSnapshots, users } from "@provara/db";
 import { nanoid } from "nanoid";
 import { makeTestDb } from "./_setup/db.js";
 import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
@@ -399,6 +399,76 @@ describe("GET /v1/spend/drift (#219/T5)", () => {
     const body = await res.json();
     expect(body.events).toHaveLength(1);
     expect(body.events[0].deltas.cost).toBeCloseTo(0.3, 2);
+  });
+});
+
+describe("GET /v1/spend/recommendations (#219/T6)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("returns 402 for Team tenants (Enterprise gate)", async () => {
+    const owner = await seedOwner(db, "t-team", "team");
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/recommendations", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(402);
+  });
+
+  it("returns the configured threshold and a recommendations array for Enterprise", async () => {
+    const owner = await seedOwner(db, "t-ent", "enterprise");
+
+    // Seed enough volume + scores for one recommendation.
+    for (let i = 0; i < 50; i++) {
+      const id = `e-${i}`;
+      await db.insert(requests).values({
+        id,
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        prompt: "[]",
+        taskType: "coding",
+        complexity: "hard",
+        inputTokens: 200,
+        outputTokens: 300,
+        tenantId: "t-ent",
+        createdAt: new Date(Date.now() - i * 60_000),
+      }).run();
+      await db.insert(costLogs).values({
+        id: `cl-e-${i}`,
+        requestId: id,
+        tenantId: "t-ent",
+        provider: "anthropic",
+        model: "claude-sonnet-4-6",
+        inputTokens: 200,
+        outputTokens: 300,
+        cost: 0.02,
+        createdAt: new Date(Date.now() - i * 60_000),
+      }).run();
+    }
+    await db.insert(modelScores).values({
+      tenantId: "t-ent", taskType: "coding", complexity: "hard",
+      provider: "anthropic", model: "claude-sonnet-4-6",
+      qualityScore: 0.76, sampleCount: 40, updatedAt: new Date(),
+    }).run();
+    await db.insert(modelScores).values({
+      tenantId: "t-ent", taskType: "coding", complexity: "hard",
+      provider: "openai", model: "gpt-4.1-mini",
+      qualityScore: 0.74, sampleCount: 30, updatedAt: new Date(),
+    }).run();
+
+    const app = buildApp(db);
+    const res = await app.request("/v1/spend/recommendations", {
+      headers: { "x-test-user": authHeader(owner) },
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty("quality_delta_threshold");
+    expect(body.recommendations.length).toBeGreaterThan(0);
+    expect(body.recommendations[0].to_model).toBe("gpt-4.1-mini");
   });
 });
 
