@@ -4,7 +4,7 @@ import type { RouteTarget } from "../types.js";
 import { EMA_ALPHA, ema, getQualityAlpha } from "./ema.js";
 import { MIN_SAMPLES, computeRouteScore, getModelCost, resolveWeights } from "./scoring.js";
 import { isStaleTimestamp, pickExploration } from "./exploration.js";
-import { createScoreStore, type ScoreStore } from "./score-store.js";
+import { POOL_KEY, createScoreStore, type ScoreStore } from "./score-store.js";
 import { loadScoresFromDb, persistScore } from "./persistence.js";
 import type { FeedbackSource, ModelScore, RoutingProfile, RoutingWeights } from "./types.js";
 
@@ -31,6 +31,11 @@ export interface AdaptiveRouterOptions {
  * The in-memory score store is hydrated at construction time and stays in
  * sync via `updateScore` / `updateLatency`. Single-process constraints
  * apply — see `score-store.ts` for the horizontal-scaling note.
+ *
+ * Tenant scoping added by #194 (C1 of #176). All public methods accept an
+ * optional trailing `tenantId`; omitting it (or passing `null`/`undefined`)
+ * operates on the shared pool — identical to pre-#176 behavior. Call sites
+ * that actually want tenant-aware routing live in C2 (#195).
  */
 export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOptions = {}) {
   const store: ScoreStore = createScoreStore();
@@ -44,9 +49,10 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     model: string,
     newScore: number,
     source: FeedbackSource,
+    tenantId?: string | null,
   ): Promise<void> {
     const alpha = getQualityAlpha(source);
-    const existing = store.get(taskType, complexity, provider, model);
+    const existing = store.get(taskType, complexity, provider, model, tenantId);
     const now = new Date();
 
     let qualityScore: number;
@@ -60,18 +66,32 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     } else {
       qualityScore = newScore;
       sampleCount = 1;
-      store.set(taskType, complexity, {
-        provider,
-        model,
-        qualityScore,
-        sampleCount,
-        costPer1M: getModelCost(model),
-        avgLatencyMs: 0,
-        updatedAt: now,
-      });
+      store.set(
+        taskType,
+        complexity,
+        {
+          provider,
+          model,
+          qualityScore,
+          sampleCount,
+          costPer1M: getModelCost(model),
+          avgLatencyMs: 0,
+          updatedAt: now,
+        },
+        tenantId,
+      );
     }
 
-    await persistScore(db, taskType, complexity, provider, model, qualityScore, sampleCount);
+    await persistScore(
+      db,
+      taskType,
+      complexity,
+      provider,
+      model,
+      qualityScore,
+      sampleCount,
+      tenantId ?? POOL_KEY,
+    );
   }
 
   function updateLatency(
@@ -80,8 +100,9 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     provider: string,
     model: string,
     latencyMs: number,
+    tenantId?: string | null,
   ): void {
-    const existing = store.get(taskType, complexity, provider, model);
+    const existing = store.get(taskType, complexity, provider, model, tenantId);
     if (existing) {
       existing.avgLatencyMs = ema(existing.avgLatencyMs, latencyMs, EMA_ALPHA);
     }
@@ -105,8 +126,9 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     availableProviders: Set<string>,
     allCandidates: RouteTarget[],
     customWeights?: RoutingWeights,
+    tenantId?: string | null,
   ): { target: RouteTarget; via: "adaptive" | "exploration" } | null {
-    const cellMap = store.getCellMap(taskType, complexity);
+    const cellMap = store.getCellMap(taskType, complexity, tenantId);
     const stale = isCellStale(cellMap);
     const regressed = isCellRegressing(taskType, complexity);
     const exploration = pickExploration(allCandidates, availableProviders, { stale, regressed });
@@ -143,12 +165,18 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     return best ? { target: best.target, via: "adaptive" } : null;
   }
 
-  function getCellScores(taskType: string, complexity: string): ModelScore[] {
-    return store.getCellScores(taskType, complexity);
+  function getCellScores(
+    taskType: string,
+    complexity: string,
+    tenantId?: string | null,
+  ): ModelScore[] {
+    return store.getCellScores(taskType, complexity, tenantId);
   }
 
-  function getAllScores(): { taskType: string; complexity: string; scores: ModelScore[] }[] {
-    return store.getAllScores();
+  function getAllScores(
+    tenantId?: string | null,
+  ): { taskType: string; complexity: string; scores: ModelScore[] }[] {
+    return store.getAllScores(tenantId);
   }
 
   /**
@@ -173,13 +201,17 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
   }
 
   /** Public read for analytics/UI: is this cell past the stale threshold? */
-  function isStale(taskType: string, complexity: string): boolean {
-    return isCellStale(store.getCellMap(taskType, complexity));
+  function isStale(taskType: string, complexity: string, tenantId?: string | null): boolean {
+    return isCellStale(store.getCellMap(taskType, complexity, tenantId));
   }
 
   /** Public read for analytics/UI: the cell's most-recent updatedAt. */
-  function lastUpdated(taskType: string, complexity: string): Date | null {
-    return cellLastUpdated(store.getCellMap(taskType, complexity));
+  function lastUpdated(
+    taskType: string,
+    complexity: string,
+    tenantId?: string | null,
+  ): Date | null {
+    return cellLastUpdated(store.getCellMap(taskType, complexity, tenantId));
   }
 
   await loadScoresFromDb(db, store);

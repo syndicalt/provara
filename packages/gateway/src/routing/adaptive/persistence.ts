@@ -2,16 +2,23 @@ import type { Db } from "@provara/db";
 import { feedback, modelScores, requests } from "@provara/db";
 import { eq, sql } from "drizzle-orm";
 import { getModelCost } from "./scoring.js";
-import type { ScoreStore } from "./score-store.js";
+import { POOL_KEY, type ScoreStore } from "./score-store.js";
 
 /**
  * Hydrate the in-memory score store from the DB. Precedence:
  *
  *   1. `model_scores` rows — authoritative live EMA persisted across restarts.
+ *      Rows are keyed by (tenantId, taskType, complexity, provider, model).
+ *      Pool rows have `tenantId = POOL_KEY` ("") — see score-store.ts for why.
  *   2. `feedback` aggregation — seed for cells that have feedback history
  *      but no `model_scores` row yet (first boot after the table was added,
  *      or cells that predate live learning). Once `updateScore` fires for
  *      a cell, step 2 no longer applies to it.
+ *
+ * Feedback + latency aggregations remain pool-scoped in C1. Per-tenant
+ * feedback hydration is a C2 concern (#195) — adding it here would change
+ * pool behavior because the aggregate over all `requests` is what the
+ * pool has always used.
  *
  * Latency EMA is seeded from the rolling average of logged requests, since
  * it's never written to `model_scores`.
@@ -19,6 +26,7 @@ import type { ScoreStore } from "./score-store.js";
 export async function loadScoresFromDb(db: Db, store: ScoreStore): Promise<void> {
   const persisted = await db
     .select({
+      tenantId: modelScores.tenantId,
       taskType: modelScores.taskType,
       complexity: modelScores.complexity,
       provider: modelScores.provider,
@@ -31,7 +39,7 @@ export async function loadScoresFromDb(db: Db, store: ScoreStore): Promise<void>
     .all();
 
   for (const row of persisted) {
-    const cell = store.ensureCell(row.taskType, row.complexity);
+    const cell = store.ensureCell(row.taskType, row.complexity, row.tenantId);
     cell.set(`${row.provider}:${row.model}`, {
       provider: row.provider,
       model: row.model,
@@ -96,8 +104,11 @@ export async function loadScoresFromDb(db: Db, store: ScoreStore): Promise<void>
 
 /**
  * Upsert a single `model_scores` row. Composite primary key is
- * (taskType, complexity, provider, model) — conflict on any of those
+ * (tenantId, taskType, complexity, provider, model) — conflict on any of those
  * updates the score in place rather than inserting a duplicate.
+ *
+ * `tenantId` defaults to `POOL_KEY` ("") so existing pool-scoped callers
+ * (pre-#176/C2) behave identically.
  */
 export async function persistScore(
   db: Db,
@@ -107,13 +118,20 @@ export async function persistScore(
   model: string,
   qualityScore: number,
   sampleCount: number,
+  tenantId: string = POOL_KEY,
 ): Promise<void> {
   const updatedAt = new Date();
   await db
     .insert(modelScores)
-    .values({ taskType, complexity, provider, model, qualityScore, sampleCount, updatedAt })
+    .values({ tenantId, taskType, complexity, provider, model, qualityScore, sampleCount, updatedAt })
     .onConflictDoUpdate({
-      target: [modelScores.taskType, modelScores.complexity, modelScores.provider, modelScores.model],
+      target: [
+        modelScores.tenantId,
+        modelScores.taskType,
+        modelScores.complexity,
+        modelScores.provider,
+        modelScores.model,
+      ],
       set: { qualityScore, sampleCount, updatedAt },
     })
     .run();
