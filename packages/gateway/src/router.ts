@@ -21,6 +21,7 @@ import { createRoutingConfigRoutes } from "./routes/routing-config.js";
 import { createRoutingIsolationRoutes } from "./routes/routing-isolation.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
+import { createSamlAuthRoutes } from "./routes/auth-saml.js";
 import { createTeamRoutes } from "./routes/team.js";
 import { createModelRoutes } from "./routes/models.js";
 import { createGuardrailRoutes } from "./routes/guardrails.js";
@@ -98,6 +99,7 @@ export async function createRouter(ctx: RouterContext) {
   // Mount OAuth routes (public, only in multi_tenant mode)
   if (getMode() === "multi_tenant") {
     app.route("/auth", createAuthRoutes(ctx.db));
+    app.route("/auth/saml", createSamlAuthRoutes(ctx.db));
   }
 
   // Public share read — uses a distinct path (/v1/shared/:token, past tense)
