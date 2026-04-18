@@ -447,6 +447,35 @@ export const costMigrations = sqliteTable("cost_migrations", {
 });
 
 /**
+ * Pending team invites (#177). One row per invite; token is the PK
+ * and doubles as the shareable-link secret — treat with care. When
+ * an OAuth signin's email matches an unconsumed, unexpired row, the
+ * signup lands in the invite's tenant instead of a fresh one.
+ *
+ * Atomic claim: `consumed_at` is the lock. The OAuth handler uses
+ * UPDATE ... WHERE consumed_at IS NULL so two simultaneous claims of
+ * the same invite can't both win.
+ *
+ * Email matching is case-insensitive (LOWER(email) comparison) since
+ * OAuth providers return inconsistent casings.
+ */
+export const teamInvites = sqliteTable("team_invites", {
+  token: text("token").primaryKey(),
+  tenantId: text("tenant_id").notNull(),
+  invitedEmail: text("invited_email").notNull(),
+  invitedRole: text("invited_role", { enum: ["owner", "member"] }).notNull().default("member"),
+  invitedByUserId: text("invited_by_user_id").notNull().references(() => users.id),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp" }),
+  consumedByUserId: text("consumed_by_user_id").references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  uniqueIndex("team_invites_tenant_email_idx").on(table.tenantId, table.invitedEmail),
+]);
+
+/**
  * Subscription state mirror for Stripe (#167). The `subscriptions` table
  * is not a source of truth — Stripe is. This table caches enough state
  * for the gateway's feature-gate middleware to answer "what tier is this
