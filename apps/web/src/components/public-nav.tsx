@@ -16,6 +16,9 @@ export function PublicNav() {
             Provara
           </Link>
           <div className="flex gap-6 text-sm text-zinc-400 ml-auto items-center">
+            <Link href="/pricing" className="hover:text-zinc-100 transition-colors">
+              Pricing
+            </Link>
             <Link href="/models" className="hover:text-zinc-100 transition-colors">
               Models
             </Link>
