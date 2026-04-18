@@ -49,7 +49,7 @@ export default function TeamPage() {
     setLoading(true);
     try {
       const [teamRes, invitesRes] = await Promise.all([
-        gatewayClientFetch<{ members: Member[]; seats: Seats }>("/v1/admin/team/"),
+        gatewayClientFetch<{ members: Member[]; seats: Seats }>("/v1/admin/team"),
         gatewayClientFetch<{ invites: Invite[] }>("/v1/admin/team/invites"),
       ]);
       setMembers(teamRes.members);
