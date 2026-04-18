@@ -47,6 +47,12 @@ export const AUDIT_BILLING_SUBSCRIPTION_UPDATED = "billing.subscription.updated"
 export const AUDIT_BILLING_SUBSCRIPTION_CANCELED = "billing.subscription.canceled";
 export const AUDIT_BILLING_CHECKOUT_STARTED = "billing.checkout.started";
 
+// Abuse / security signals (#192). Emitted only when the blocked caller
+// has a resolvable tenant (bearer token or session); unauthenticated
+// rate-limit hits log to stdout and stay out of audit_logs to keep the
+// compliance view uncluttered.
+export const AUDIT_RATE_LIMIT_EXCEEDED = "rate_limit.exceeded";
+
 /**
  * Convenience union of every canonical action. Runtime validators can
  * use this via `Object.values(AUDIT_ACTIONS).includes(x)`.
@@ -75,6 +81,7 @@ export const AUDIT_ACTIONS = {
   AUDIT_BILLING_SUBSCRIPTION_UPDATED,
   AUDIT_BILLING_SUBSCRIPTION_CANCELED,
   AUDIT_BILLING_CHECKOUT_STARTED,
+  AUDIT_RATE_LIMIT_EXCEEDED,
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
