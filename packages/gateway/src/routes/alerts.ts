@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { alertRules, alertLogs, requests, costLogs } from "@provara/db";
 import { eq, and, sql, gte, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 
 /**
  * Validate a webhook URL before storing/invoking it. Guards against SSRF:
@@ -72,7 +72,7 @@ export function createAlertRoutes(db: Db) {
     const rules = await db
       .select()
       .from(alertRules)
-      .where(tenantId ? eq(alertRules.tenantId, tenantId) : undefined)
+      .where(tenantFilter(alertRules.tenantId, tenantId))
       .all();
     return c.json({ rules });
   });
@@ -128,7 +128,8 @@ export function createAlertRoutes(db: Db) {
       enabled?: boolean;
     }>();
 
-    const ruleWhere = tenantId ? and(eq(alertRules.id, id), eq(alertRules.tenantId, tenantId)) : eq(alertRules.id, id);
+    const ruleTenantClause = tenantFilter(alertRules.tenantId, tenantId);
+    const ruleWhere = ruleTenantClause ? and(eq(alertRules.id, id), ruleTenantClause) : eq(alertRules.id, id);
     const rule = await db.select().from(alertRules).where(ruleWhere).get();
     if (!rule) {
       return c.json({ error: { message: "Rule not found", type: "not_found" } }, 404);
@@ -158,7 +159,8 @@ export function createAlertRoutes(db: Db) {
   app.delete("/rules/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const ruleWhere = tenantId ? and(eq(alertRules.id, id), eq(alertRules.tenantId, tenantId)) : eq(alertRules.id, id);
+    const ruleTenantClause = tenantFilter(alertRules.tenantId, tenantId);
+    const ruleWhere = ruleTenantClause ? and(eq(alertRules.id, id), ruleTenantClause) : eq(alertRules.id, id);
     const rule = await db.select().from(alertRules).where(ruleWhere).get();
     if (!rule) {
       return c.json({ error: { message: "Rule not found", type: "not_found" } }, 404);
@@ -186,7 +188,7 @@ export function createAlertRoutes(db: Db) {
       })
       .from(alertLogs)
       .leftJoin(alertRules, eq(alertLogs.ruleId, alertRules.id))
-      .where(tenantId ? eq(alertRules.tenantId, tenantId) : undefined)
+      .where(tenantFilter(alertRules.tenantId, tenantId))
       .orderBy(desc(alertLogs.createdAt))
       .limit(limit)
       .all();
@@ -200,7 +202,10 @@ export function createAlertRoutes(db: Db) {
     const rules = await db
       .select()
       .from(alertRules)
-      .where(and(eq(alertRules.enabled, true), tenantId ? eq(alertRules.tenantId, tenantId) : undefined))
+      .where((() => {
+        const tc = tenantFilter(alertRules.tenantId, tenantId);
+        return tc ? and(eq(alertRules.enabled, true), tc) : eq(alertRules.enabled, true);
+      })())
       .all();
 
     const fired: string[] = [];
@@ -283,8 +288,8 @@ function checkCondition(value: number, condition: string, threshold: number): bo
 
 async function evaluateMetric(db: Db, metric: string, window: string, tenantId: string | null): Promise<number | null> {
   const since = new Date(Date.now() - parseWindow(window));
-  const tenantCondition = tenantId ? eq(requests.tenantId, tenantId) : undefined;
-  const costTenantCondition = tenantId ? eq(costLogs.tenantId, tenantId) : undefined;
+  const tenantCondition = tenantFilter(requests.tenantId, tenantId);
+  const costTenantCondition = tenantFilter(costLogs.tenantId, tenantId);
 
   switch (metric) {
     case "spend": {

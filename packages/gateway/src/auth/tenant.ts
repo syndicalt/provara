@@ -1,5 +1,7 @@
 import type { Context, Next } from "hono";
 import type { Db } from "@provara/db";
+import { SQL, sql, eq } from "drizzle-orm";
+import type { Column } from "drizzle-orm";
 import { getMode } from "../config.js";
 import { getSessionFromCookie, validateSession } from "./session.js";
 import { getTokenInfo } from "./middleware.js";
@@ -9,6 +11,62 @@ const tenantMap = new WeakMap<Request, string>();
 
 export function getTenantId(req: Request): string | null {
   return tenantMap.get(req) || null;
+}
+
+/** Testing-only helper — sets the tenant on a Request for unit tests that
+ *  don't want to wire up the full session/bearer auth chain. Never call
+ *  from production code. */
+export function __testSetTenant(req: Request, tenantId: string): void {
+  tenantMap.set(req, tenantId);
+}
+
+/**
+ * Fail-safe tenant filter for database queries (#178). Replaces the
+ * previous `tenantId ? eq(col, tenantId) : undefined` pattern which
+ * was unsafe in multi-tenant mode — `undefined` where clause = "return
+ * everything" which is a cross-tenant leak waiting to happen.
+ *
+ * Behavior:
+ *   - tenantId is set        → `eq(col, tenantId)` (filter to that tenant)
+ *   - tenantId null/undefined in multi-tenant mode → `sql\`0 = 1\`` (zero rows,
+ *                              never leak cross-tenant)
+ *   - tenantId null/undefined in self_hosted mode  → undefined (no filter,
+ *                              legacy single-tenant behavior)
+ *
+ * Why the mode split: self_hosted has no tenant concept and existing data
+ * may have `tenantId = NULL` that we still want to return. Multi-tenant
+ * requires a tenant — the tenant middleware already enforces this at the
+ * HTTP layer, but queries should be safe if the middleware is ever bypassed.
+ */
+export function tenantFilter(
+  column: Column,
+  tenantId: string | null | undefined,
+): SQL | undefined {
+  if (tenantId) return eq(column, tenantId);
+  if (getMode() === "multi_tenant") {
+    return sql`0 = 1`;
+  }
+  return undefined;
+}
+
+/**
+ * Variant that combines the tenant check with an additional scope — e.g.
+ * "this row AND owned by this tenant". Same mode-aware semantics as
+ * `tenantFilter`. Useful for `WHERE id = ? AND tenant_id = ?` patterns.
+ */
+export function tenantScoped(
+  column: Column,
+  tenantId: string | null | undefined,
+  additional: SQL,
+): SQL | undefined {
+  if (tenantId) {
+    const filter = eq(column, tenantId);
+    return sql`${additional} AND ${filter}`;
+  }
+  if (getMode() === "multi_tenant") {
+    return sql`0 = 1`;
+  }
+  return additional;
 }
 
 /**

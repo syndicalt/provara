@@ -4,7 +4,7 @@ import { apiKeys } from "@provara/db";
 import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { encrypt, decrypt, maskKey, hasMasterKey } from "../crypto/index.js";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 
 export function createApiKeyRoutes(db: Db) {
   const app = new Hono();
@@ -21,7 +21,7 @@ export function createApiKeyRoutes(db: Db) {
     }
 
     const tenantId = getTenantId(c.req.raw);
-    const keys = await db.select().from(apiKeys).where(tenantId ? eq(apiKeys.tenantId, tenantId) : undefined).all();
+    const keys = await db.select().from(apiKeys).where(tenantFilter(apiKeys.tenantId, tenantId)).all();
     return c.json({
       keys: keys.map((k) => {
         let maskedValue: string;
@@ -73,7 +73,10 @@ export function createApiKeyRoutes(db: Db) {
     const existing = await db
       .select()
       .from(apiKeys)
-      .where(tenantId ? and(eq(apiKeys.name, body.name), eq(apiKeys.tenantId, tenantId)) : eq(apiKeys.name, body.name))
+      .where((() => {
+        const tc = tenantFilter(apiKeys.tenantId, tenantId);
+        return tc ? and(eq(apiKeys.name, body.name), tc) : eq(apiKeys.name, body.name);
+      })())
       .get();
 
     if (existing) {
@@ -131,7 +134,8 @@ export function createApiKeyRoutes(db: Db) {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
-    const whereClause = tenantId ? and(eq(apiKeys.id, id), eq(apiKeys.tenantId, tenantId)) : eq(apiKeys.id, id);
+    const tenantClause = tenantFilter(apiKeys.tenantId, tenantId);
+    const whereClause = tenantClause ? and(eq(apiKeys.id, id), tenantClause) : eq(apiKeys.id, id);
     const key = await db.select().from(apiKeys).where(whereClause).get();
     if (!key) {
       return c.json({ error: { message: "API key not found", type: "not_found" } }, 404);

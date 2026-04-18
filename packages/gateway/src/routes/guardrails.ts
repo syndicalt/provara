@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { guardrailRules, guardrailLogs } from "@provara/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import { ensureBuiltInRules } from "../guardrails/engine.js";
 
 export function createGuardrailRoutes(db: Db) {
@@ -17,7 +17,7 @@ export function createGuardrailRoutes(db: Db) {
     const rules = await db
       .select()
       .from(guardrailRules)
-      .where(tenantId ? eq(guardrailRules.tenantId, tenantId) : undefined)
+      .where(tenantFilter(guardrailRules.tenantId, tenantId))
       .all();
 
     return c.json({ rules });
@@ -68,8 +68,9 @@ export function createGuardrailRoutes(db: Db) {
     const { id } = c.req.param();
     const body = await c.req.json<{ enabled?: boolean; action?: string }>();
 
+    const tenantClausePatch = tenantFilter(guardrailRules.tenantId, tenantId);
     const rule = await db.select().from(guardrailRules).where(
-      tenantId ? and(eq(guardrailRules.id, id), eq(guardrailRules.tenantId, tenantId)) : eq(guardrailRules.id, id)
+      tenantClausePatch ? and(eq(guardrailRules.id, id), tenantClausePatch) : eq(guardrailRules.id, id)
     ).get();
 
     if (!rule) {
@@ -91,8 +92,9 @@ export function createGuardrailRoutes(db: Db) {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
 
+    const tenantClauseDelete = tenantFilter(guardrailRules.tenantId, tenantId);
     const rule = await db.select().from(guardrailRules).where(
-      tenantId ? and(eq(guardrailRules.id, id), eq(guardrailRules.tenantId, tenantId)) : eq(guardrailRules.id, id)
+      tenantClauseDelete ? and(eq(guardrailRules.id, id), tenantClauseDelete) : eq(guardrailRules.id, id)
     ).get();
 
     if (!rule) {
@@ -115,7 +117,7 @@ export function createGuardrailRoutes(db: Db) {
     const logs = await db
       .select()
       .from(guardrailLogs)
-      .where(tenantId ? eq(guardrailLogs.tenantId, tenantId) : undefined)
+      .where(tenantFilter(guardrailLogs.tenantId, tenantId))
       .orderBy(desc(guardrailLogs.createdAt))
       .limit(limit)
       .all();

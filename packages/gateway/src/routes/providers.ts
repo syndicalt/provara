@@ -5,7 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { discoverModels, validateCompatibility } from "../providers/openai-compatible.js";
 import { getDecryptedKeys } from "./api-keys.js";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 
 export function createProviderCrudRoutes(db: Db) {
   const app = new Hono();
@@ -13,7 +13,7 @@ export function createProviderCrudRoutes(db: Db) {
   // List custom providers
   app.get("/", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const providers = await db.select().from(customProviders).where(tenantId ? eq(customProviders.tenantId, tenantId) : undefined).all();
+    const providers = await db.select().from(customProviders).where(tenantFilter(customProviders.tenantId, tenantId)).all();
     return c.json({
       providers: providers.map((p) => ({
         ...p,
@@ -26,7 +26,7 @@ export function createProviderCrudRoutes(db: Db) {
   app.get("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const provider = await db.select().from(customProviders).where(tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where((() => { const tc = tenantFilter(customProviders.tenantId, tenantId); return tc ? and(eq(customProviders.id, id), tc) : eq(customProviders.id, id); })()).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }
@@ -52,7 +52,10 @@ export function createProviderCrudRoutes(db: Db) {
     }
 
     // Check for duplicate name (scoped to tenant)
-    const existing = await db.select().from(customProviders).where(tenantId ? and(eq(customProviders.name, body.name), eq(customProviders.tenantId, tenantId)) : eq(customProviders.name, body.name)).get();
+    const existing = await db.select().from(customProviders).where((() => {
+      const tc = tenantFilter(customProviders.tenantId, tenantId);
+      return tc ? and(eq(customProviders.name, body.name), tc) : eq(customProviders.name, body.name);
+    })()).get();
     if (existing) {
       return c.json(
         { error: { message: `Provider "${body.name}" already exists`, type: "validation_error" } },
@@ -137,7 +140,7 @@ export function createProviderCrudRoutes(db: Db) {
       enabled?: boolean;
     }>();
 
-    const whereClause = tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id);
+    const whereClause = (() => { const tc = tenantFilter(customProviders.tenantId, tenantId); return tc ? and(eq(customProviders.id, id), tc) : eq(customProviders.id, id); })();
     const provider = await db.select().from(customProviders).where(whereClause).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
@@ -162,7 +165,7 @@ export function createProviderCrudRoutes(db: Db) {
   app.delete("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const whereClause = tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id);
+    const whereClause = (() => { const tc = tenantFilter(customProviders.tenantId, tenantId); return tc ? and(eq(customProviders.id, id), tc) : eq(customProviders.id, id); })();
     const provider = await db.select().from(customProviders).where(whereClause).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
@@ -176,7 +179,7 @@ export function createProviderCrudRoutes(db: Db) {
   app.post("/:id/discover", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const provider = await db.select().from(customProviders).where(tenantId ? and(eq(customProviders.id, id), eq(customProviders.tenantId, tenantId)) : eq(customProviders.id, id)).get();
+    const provider = await db.select().from(customProviders).where((() => { const tc = tenantFilter(customProviders.tenantId, tenantId); return tc ? and(eq(customProviders.id, id), tc) : eq(customProviders.id, id); })()).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
     }

@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import { replayBank } from "@provara/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import {
   REPLAY_WEEKLY_BUDGET_USD,
   getBudgetStatus,
@@ -23,7 +23,7 @@ export function createRegressionRoutes(db: Db, regressionCellTable?: RegressionC
     const bankCount = await db
       .select({ count: sql<number>`count(*)` })
       .from(replayBank)
-      .where(tenantId ? eq(replayBank.tenantId, tenantId) : isNull(replayBank.tenantId))
+      .where(tenantFilter(replayBank.tenantId, tenantId) ?? isNull(replayBank.tenantId))
       .get();
     return c.json({
       enabled,

@@ -4,7 +4,7 @@ import { apiTokens, costLogs, requests } from "@provara/db";
 import { eq, and, gte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { generateToken, hashToken, maskToken } from "../auth/tokens.js";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import { getAuthUser } from "../auth/admin.js";
 import { invalidateAuthCache } from "./../auth/middleware.js";
 
@@ -14,7 +14,7 @@ export function createTokenRoutes(db: Db) {
   // List all tokens (masked)
   app.get("/", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const tokens = await db.select().from(apiTokens).where(tenantId ? eq(apiTokens.tenant, tenantId) : undefined).all();
+    const tokens = await db.select().from(apiTokens).where(tenantFilter(apiTokens.tenant, tenantId)).all();
     return c.json({
       tokens: tokens.map((t) => ({
         id: t.id,
@@ -36,7 +36,9 @@ export function createTokenRoutes(db: Db) {
   app.get("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const token = await db.select().from(apiTokens).where(tenantId ? and(eq(apiTokens.id, id), eq(apiTokens.tenant, tenantId)) : eq(apiTokens.id, id)).get();
+    const tenantClause = tenantFilter(apiTokens.tenant, tenantId);
+    const tokenWhere = tenantClause ? and(eq(apiTokens.id, id), tenantClause) : eq(apiTokens.id, id);
+    const token = await db.select().from(apiTokens).where(tokenWhere).get();
 
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
@@ -176,7 +178,8 @@ export function createTokenRoutes(db: Db) {
       expiresAt?: string | null;
     }>();
 
-    const tokenWhere = tenantId ? and(eq(apiTokens.id, id), eq(apiTokens.tenant, tenantId)) : eq(apiTokens.id, id);
+    const tenantClause = tenantFilter(apiTokens.tenant, tenantId);
+    const tokenWhere = tenantClause ? and(eq(apiTokens.id, id), tenantClause) : eq(apiTokens.id, id);
     const token = await db.select().from(apiTokens).where(tokenWhere).get();
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
@@ -209,7 +212,8 @@ export function createTokenRoutes(db: Db) {
   app.delete("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const tokenWhere = tenantId ? and(eq(apiTokens.id, id), eq(apiTokens.tenant, tenantId)) : eq(apiTokens.id, id);
+    const tenantClause = tenantFilter(apiTokens.tenant, tenantId);
+    const tokenWhere = tenantClause ? and(eq(apiTokens.id, id), tenantClause) : eq(apiTokens.id, id);
     const token = await db.select().from(apiTokens).where(tokenWhere).get();
 
     if (!token) {
@@ -231,7 +235,7 @@ export function createTokenRoutes(db: Db) {
         requestCount: sql<number>`count(*)`,
       })
       .from(costLogs)
-      .where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined)
+      .where(tenantFilter(costLogs.tenantId, tenantId))
       .groupBy(costLogs.tenantId)
       .all();
 

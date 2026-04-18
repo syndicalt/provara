@@ -3,7 +3,7 @@ import type { Db } from "@provara/db";
 import { requests, costLogs, abTests, feedback } from "@provara/db";
 import { desc, asc, sql, eq, and, gte } from "drizzle-orm";
 import type { SQLWrapper } from "drizzle-orm";
-import { getTenantId } from "../auth/tenant.js";
+import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import type { ProviderRegistry } from "../providers/index.js";
 
 /**
@@ -59,7 +59,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
     // sliced window happen to match. The old behavior also meant `total`
     // didn't reflect the filtered count, so page navigation was wrong.
     const conditions = [
-      tenantId ? eq(requests.tenantId, tenantId) : undefined,
+      tenantFilter(requests.tenantId, tenantId),
       provider ? eq(requests.provider, provider) : undefined,
       model ? eq(requests.model, model) : undefined,
       taskType ? eq(requests.taskType, taskType) : undefined,
@@ -132,7 +132,10 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
       })
       .from(requests)
       .leftJoin(costLogs, eq(requests.id, costLogs.requestId))
-      .where(tenantId ? and(eq(requests.id, id), eq(requests.tenantId, tenantId)) : eq(requests.id, id))
+      .where((() => {
+        const tc = tenantFilter(requests.tenantId, tenantId);
+        return tc ? and(eq(requests.id, id), tc) : eq(requests.id, id);
+      })())
       .get();
 
     if (!row) {
@@ -169,7 +172,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         requestCount: sql<number>`count(*)`,
       })
       .from(costLogs)
-      .where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined)
+      .where(tenantFilter(costLogs.tenantId, tenantId))
       .groupBy(costLogs.provider)
       .all();
 
@@ -190,7 +193,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         avgCost: sql<number>`avg(${costLogs.cost})`,
       })
       .from(costLogs)
-      .where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined)
+      .where(tenantFilter(costLogs.tenantId, tenantId))
       .groupBy(costLogs.provider, costLogs.model)
       .all();
 
@@ -211,7 +214,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         avgLatency: sql<number>`avg(${requests.latencyMs})`,
       })
       .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(tenantFilter(requests.tenantId, tenantId))
       .groupBy(requests.taskType, requests.complexity, requests.routedBy, requests.provider, requests.model)
       .all();
 
@@ -227,7 +230,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         count: sql<number>`count(*)`,
       })
       .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(tenantFilter(requests.tenantId, tenantId))
       .groupBy(requests.taskType)
       .all();
 
@@ -237,7 +240,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         count: sql<number>`count(*)`,
       })
       .from(requests)
-      .where(tenantId ? eq(requests.tenantId, tenantId) : undefined)
+      .where(tenantFilter(requests.tenantId, tenantId))
       .groupBy(requests.complexity)
       .all();
 
@@ -247,9 +250,9 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
   // Overview stats
   app.get("/overview", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const totalRequests = await db.select({ count: sql<number>`count(*)` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
-    const totalCost = await db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).where(tenantId ? eq(costLogs.tenantId, tenantId) : undefined).get();
-    const avgLatency = await db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).where(tenantId ? eq(requests.tenantId, tenantId) : undefined).get();
+    const totalRequests = await db.select({ count: sql<number>`count(*)` }).from(requests).where(tenantFilter(requests.tenantId, tenantId)).get();
+    const totalCost = await db.select({ total: sql<number>`sum(${costLogs.cost})` }).from(costLogs).where(tenantFilter(costLogs.tenantId, tenantId)).get();
+    const avgLatency = await db.select({ avg: sql<number>`avg(${requests.latencyMs})` }).from(requests).where(tenantFilter(requests.tenantId, tenantId)).get();
 
     // Authoritative source for "active providers" is the registry, not the
     // requests table — historical distinct-count conflated "ever routed
@@ -268,7 +271,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
   // of cache hits (exact + semantic). This is the advertisable number.
   app.get("/cache/savings", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const tenantFilter = tenantId ? eq(requests.tenantId, tenantId) : undefined;
+    const tenantWhere = tenantFilter(requests.tenantId, tenantId);
 
     const totals = await db
       .select({
@@ -277,7 +280,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         totalRequests: sql<number>`count(*)`,
       })
       .from(requests)
-      .where(tenantFilter)
+      .where(tenantWhere)
       .get();
 
     const hitCounts = await db
@@ -287,8 +290,8 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
       })
       .from(requests)
       .where(
-        tenantFilter
-          ? and(tenantFilter, eq(requests.cached, true))
+        tenantWhere
+          ? and(tenantWhere, eq(requests.cached, true))
           : eq(requests.cached, true),
       )
       .groupBy(requests.cacheSource)
@@ -304,8 +307,8 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
       })
       .from(requests)
       .where(
-        tenantFilter
-          ? and(tenantFilter, eq(requests.cached, true))
+        tenantWhere
+          ? and(tenantWhere, eq(requests.cached, true))
           : eq(requests.cached, true),
       )
       .groupBy(requests.provider, requests.model)
@@ -329,7 +332,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
   // Pipeline stage stats — per-stage request counts and latency
   app.get("/pipeline", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const tenantFilter = tenantId ? eq(requests.tenantId, tenantId) : undefined;
+    const tenantWhere = tenantFilter(requests.tenantId, tenantId);
 
     // Requests by routing method
     const byRoutedBy = await db
@@ -339,7 +342,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
         avgLatency: sql<number>`avg(${requests.latencyMs})`,
       })
       .from(requests)
-      .where(tenantFilter)
+      .where(tenantWhere)
       .groupBy(requests.routedBy)
       .all();
 
@@ -351,8 +354,8 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
       })
       .from(requests)
       .where(
-        tenantFilter
-          ? and(tenantFilter, eq(requests.usedFallback, true))
+        tenantWhere
+          ? and(tenantWhere, eq(requests.usedFallback, true))
           : eq(requests.usedFallback, true)
       )
       .get();
@@ -361,14 +364,17 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
     const activeAbTests = await db
       .select({ count: sql<number>`count(*)` })
       .from(abTests)
-      .where(tenantId ? and(eq(abTests.status, "active"), eq(abTests.tenantId, tenantId)) : eq(abTests.status, "active"))
+      .where((() => {
+        const tc = tenantFilter(abTests.tenantId, tenantId);
+        return tc ? and(eq(abTests.status, "active"), tc) : eq(abTests.status, "active");
+      })())
       .get();
 
     // Total feedback count
     const feedbackCount = await db
       .select({ count: sql<number>`count(*)` })
       .from(feedback)
-      .where(tenantId ? eq(feedback.tenantId, tenantId) : undefined)
+      .where(tenantFilter(feedback.tenantId, tenantId))
       .get();
 
     // Active provider count — registry is authoritative (see #157).
@@ -378,7 +384,7 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
     const totalRequests = await db
       .select({ count: sql<number>`count(*)` })
       .from(requests)
-      .where(tenantFilter)
+      .where(tenantWhere)
       .get();
 
     const routedByMap: Record<string, { count: number; avgLatency: number }> = {};
@@ -596,7 +602,13 @@ export function createAnalyticsRoutes(db: Db, registry?: ProviderRegistry) {
       })
       .from(feedback)
       .innerJoin(requests, eq(feedback.requestId, requests.id))
-      .where(and(...[gte(feedback.createdAt, since), ...(tenantId ? [eq(feedback.tenantId, tenantId)] : [])]))
+      .where(and(
+        gte(feedback.createdAt, since),
+        ...(() => {
+          const tc = tenantFilter(feedback.tenantId, tenantId);
+          return tc ? [tc] : [];
+        })(),
+      ))
       .groupBy(requests.provider, requests.model)
       .all();
 
