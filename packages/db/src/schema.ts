@@ -686,3 +686,34 @@ export const costLogs = sqliteTable("cost_logs", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * SAML SSO configuration per tenant (#209). Ops-managed in v1 — seeded
+ * by operators via a CLI per Enterprise deal, not self-serve in the
+ * dashboard. Exactly one row per tenant (PK on tenant_id).
+ *
+ * When a row exists with status="active", members of that tenant are
+ * forced through the SSO flow and refused magic-link / Google OAuth
+ * logins for any email domain in `email_domains`. Operator accounts
+ * (PROVARA_OPERATOR_EMAILS) always bypass this gate.
+ *
+ * `idp_cert` is the IdP's X.509 signing certificate in PEM format
+ * (full `-----BEGIN CERTIFICATE-----` block, including newlines).
+ * `email_domains` is JSON-encoded `string[]` — e.g. ["acme.com"].
+ */
+export const ssoConfigs = sqliteTable("sso_configs", {
+  tenantId: text("tenant_id").primaryKey(),
+  idpEntityId: text("idp_entity_id").notNull(),
+  idpSsoUrl: text("idp_sso_url").notNull(),
+  idpCert: text("idp_cert").notNull(),
+  spEntityId: text("sp_entity_id").notNull(),
+  emailDomains: text("email_domains", { mode: "json" }).$type<string[]>().notNull(),
+  requireEncryption: integer("require_encryption", { mode: "boolean" }).notNull().default(false),
+  status: text("status", { enum: ["active", "disabled"] }).notNull().default("active"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
