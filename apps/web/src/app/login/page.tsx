@@ -19,6 +19,8 @@ function errorMessage(code: string | null): string | null {
       return "Sign-in failed. Please try again — if this keeps happening, the OAuth provider may be down.";
     case "invalid_state":
       return "The sign-in link expired mid-flow. Please start again.";
+    case "email_unverified":
+      return "That email is already registered with another sign-in method, and the provider you used did not verify email ownership. Please sign in with your original provider.";
     case null:
       return null;
     default:
