@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PublicNav } from "../../components/public-nav";
 
 export default function PrivacyPage() {
@@ -6,7 +7,7 @@ export default function PrivacyPage() {
       <PublicNav />
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
         <h1 className="text-3xl font-bold mb-2">Privacy Policy</h1>
-        <p className="text-sm text-zinc-500 mb-12">Last updated: April 17, 2026</p>
+        <p className="text-sm text-zinc-500 mb-12">Last updated: April 18, 2026</p>
 
         <div className="prose prose-invert prose-sm prose-zinc max-w-none space-y-8">
           <section>
@@ -69,18 +70,56 @@ export default function PrivacyPage() {
           </section>
 
           <section>
-            <h2 className="text-lg font-semibold mb-3">Aggregated Routing Signal</h2>
+            <h2 className="text-lg font-semibold mb-3">Adaptive Routing Signal</h2>
             <p className="text-zinc-400 leading-relaxed">
-              Provara&apos;s adaptive router learns from quality scores — user ratings you submit and optional LLM-judge scores — to pick the best model for each task type. On the managed Cloud service, these scores flow into a pooled routing matrix shared across Free and Pro tenants. The benefit: small tenants get quality-based routing from day one instead of waiting weeks to accumulate enough ratings on their own traffic.
+              Provara&apos;s adaptive router learns from quality scores — user ratings you submit and optional LLM-judge scores — to pick the best model for each task type. How those scores flow depends on your subscription tier.
+            </p>
+
+            <h3 className="text-sm font-semibold text-zinc-300 mt-5 mb-2">What is the shared routing pool?</h3>
+            <p className="text-zinc-400 leading-relaxed">
+              The &quot;pool&quot; is a set of aggregate numeric quality scores, one per (task type, complexity, model) cell, maintained as an exponentially-weighted moving average of ratings. Pooling benefits small tenants: they get quality-based routing from day one instead of waiting weeks to accumulate enough ratings on their own traffic.
             </p>
             <p className="text-zinc-400 leading-relaxed mt-3">
-              What IS pooled: numeric quality scores per (task type, complexity, model) cell, and regression-detection signals derived from those scores. Nothing else.
+              <strong className="text-zinc-300">What IS pooled:</strong> numeric quality scores per (task type, complexity, model) cell, and regression-detection signals derived from those scores. Nothing else.
             </p>
             <p className="text-zinc-400 leading-relaxed mt-3">
-              What is NOT pooled: your prompts, responses, API keys, tenant identity, feedback comments, or any personally identifiable information. Scores are aggregated as numbers, never as content.
+              <strong className="text-zinc-300">What is NOT pooled:</strong> your prompts, responses, API keys, tenant identity, feedback comments, or any personally identifiable information. Scores are aggregated as numbers, never as content.
+            </p>
+
+            <h3 className="text-sm font-semibold text-zinc-300 mt-5 mb-2">Per-tier defaults</h3>
+            <ul className="list-disc list-inside text-zinc-400 space-y-2">
+              <li>
+                <strong className="text-zinc-300">Free, Pro:</strong> your tenant participates in the shared pool for both reads (your router consults pooled scores) and writes (your ratings update the pool). This is how the free and entry tiers get cold-start routing quality.
+              </li>
+              <li>
+                <strong className="text-zinc-300">Team:</strong> your routing is isolated by default. Your router consults only your tenant&apos;s scores, and your ratings update only your tenant&apos;s matrix. Two opt-in toggles let you consume the pool, contribute to the pool, or both.
+              </li>
+              <li>
+                <strong className="text-zinc-300">Enterprise:</strong> same isolation defaults as Team, backed by contractual commitments. See the{" "}
+                <Link href="/enterprise-data-handling" className="text-blue-400 hover:text-blue-300">
+                  Enterprise Data Handling Addendum
+                </Link>
+                .
+              </li>
+            </ul>
+
+            <h3 className="text-sm font-semibold text-zinc-300 mt-5 mb-2">How the toggles behave</h3>
+            <p className="text-zinc-400 leading-relaxed">
+              <strong className="text-zinc-300">Use pooled routing signal (read):</strong> when on, the router consults the shared pool as a fallback for cells where your tenant&apos;s matrix is empty or sparse. Pool data is consulted at decision time only and is never copied into your tenant&apos;s matrix. Turning the toggle off is instant — future routing decisions use only your own data.
             </p>
             <p className="text-zinc-400 leading-relaxed mt-3">
-              <strong className="text-zinc-300">Team and Enterprise plans</strong> can opt into a private routing matrix that isolates quality signal to your tenant alone. Available as a per-tenant setting once you subscribe.
+              <strong className="text-zinc-300">Contribute ratings to pooled signal (write):</strong> when on, your ratings update the shared pool in addition to your tenant&apos;s matrix.{" "}
+              <strong className="text-amber-300">Contributions to the pool merge into a statistical model and cannot be retroactively removed.</strong> Turning the toggle off stops future contributions; past contributions remain in the pool. If you need clean data lineage, leave this toggle off from day one.
+            </p>
+
+            <h3 className="text-sm font-semibold text-zinc-300 mt-5 mb-2">Audit log</h3>
+            <p className="text-zinc-400 leading-relaxed">
+              Every change to your routing isolation toggles is logged with a timestamp and the actor who made the change. Enterprise customers can request toggle-history reports; see the addendum linked above.
+            </p>
+
+            <h3 className="text-sm font-semibold text-zinc-300 mt-5 mb-2">Current rollout</h3>
+            <p className="text-zinc-400 leading-relaxed">
+              The tier-based isolation described here is being rolled out in stages. The schema and routing engine support tenant-scoped data as of April 18, 2026; the per-tenant toggles and full isolation enforcement ship shortly after. Until the full rollout is complete, the Provara product team will apply the defaults above on your behalf for Team and Enterprise tenants.
             </p>
           </section>
 
@@ -118,6 +157,15 @@ export default function PrivacyPage() {
             <p className="text-zinc-400 leading-relaxed">
               We may update this policy as the product evolves. Significant changes will be communicated through the dashboard or via email. Continued use of the service after changes constitutes acceptance of the updated policy.
             </p>
+            <h3 className="text-sm font-semibold text-zinc-300 mt-4 mb-2">Changelog</h3>
+            <ul className="list-disc list-inside text-zinc-400 space-y-1 text-sm">
+              <li>
+                <strong className="text-zinc-300">April 18, 2026:</strong> Rewrote the Adaptive Routing Signal section to describe per-tier defaults, the read/write toggle split, the irreversibility of pool contributions, and the audit log. Published the Enterprise Data Handling Addendum.
+              </li>
+              <li>
+                <strong className="text-zinc-300">April 17, 2026:</strong> Initial publication.
+              </li>
+            </ul>
           </section>
         </div>
       </div>
