@@ -237,7 +237,8 @@ export function createJudge(registry: ProviderRegistry, db: Db, adaptive: Adapti
           ctx.provider,
           ctx.model,
           result.average,
-          "judge"
+          "judge",
+          ctx.tenantId,
         );
       }
     } catch (err) {

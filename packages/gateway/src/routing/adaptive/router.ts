@@ -6,6 +6,7 @@ import { MIN_SAMPLES, computeRouteScore, getModelCost, resolveWeights } from "./
 import { isStaleTimestamp, pickExploration } from "./exploration.js";
 import { POOL_KEY, createScoreStore, type ScoreStore } from "./score-store.js";
 import { loadScoresFromDb, persistScore } from "./persistence.js";
+import { getTenantIsolationPolicy, type IsolationPolicy } from "./isolation-policy.js";
 import type { FeedbackSource, ModelScore, RoutingProfile, RoutingWeights } from "./types.js";
 
 export type AdaptiveRouter = Awaited<ReturnType<typeof createAdaptiveRouter>>;
@@ -32,29 +33,28 @@ export interface AdaptiveRouterOptions {
  * sync via `updateScore` / `updateLatency`. Single-process constraints
  * apply — see `score-store.ts` for the horizontal-scaling note.
  *
- * Tenant scoping added by #194 (C1 of #176). All public methods accept an
- * optional trailing `tenantId`; omitting it (or passing `null`/`undefined`)
- * operates on the shared pool — identical to pre-#176 behavior. Call sites
- * that actually want tenant-aware routing live in C2 (#195).
+ * Tenant scoping plumbing landed in #194 (C1). Tier-aware read fallback
+ * and tier-gated writes land here (#195 / C2). Policy is resolved per
+ * call via `getTenantIsolationPolicy(db, tenantId)` — no TTL cache yet;
+ * see #195 discussion.
  */
 export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOptions = {}) {
   const store: ScoreStore = createScoreStore();
   const getScoreBoost = options.getScoreBoost ?? (() => 0);
   const isCellRegressing = options.isCellRegressing ?? (() => false);
 
-  async function updateScore(
+  /** Apply an EMA update to a single (tenantKey, cell) slot — memory + DB. */
+  async function applyUpdateTo(
+    tenantKey: string | null,
     taskType: string,
     complexity: string,
     provider: string,
     model: string,
     newScore: number,
-    source: FeedbackSource,
-    tenantId?: string | null,
+    alpha: number,
+    now: Date,
   ): Promise<void> {
-    const alpha = getQualityAlpha(source);
-    const existing = store.get(taskType, complexity, provider, model, tenantId);
-    const now = new Date();
-
+    const existing = store.get(taskType, complexity, provider, model, tenantKey);
     let qualityScore: number;
     let sampleCount: number;
     if (existing) {
@@ -78,10 +78,9 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
           avgLatencyMs: 0,
           updatedAt: now,
         },
-        tenantId,
+        tenantKey,
       );
     }
-
     await persistScore(
       db,
       taskType,
@@ -90,8 +89,35 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
       model,
       qualityScore,
       sampleCount,
-      tenantId ?? POOL_KEY,
+      tenantKey ?? POOL_KEY,
     );
+  }
+
+  /**
+   * Feedback-driven EMA update. Routes the update to the tenant row,
+   * the pool row, or both, per the tenant's isolation policy. An
+   * omitted / nullish `tenantId` is treated as an anonymous caller
+   * (pool-only). Self-host and unauthenticated paths also end up here.
+   */
+  async function updateScore(
+    taskType: string,
+    complexity: string,
+    provider: string,
+    model: string,
+    newScore: number,
+    source: FeedbackSource,
+    tenantId?: string | null,
+  ): Promise<void> {
+    const policy = await getTenantIsolationPolicy(db, tenantId);
+    const alpha = getQualityAlpha(source);
+    const now = new Date();
+
+    if (policy.writesTenantRow && tenantId) {
+      await applyUpdateTo(tenantId, taskType, complexity, provider, model, newScore, alpha, now);
+    }
+    if (policy.writesPool) {
+      await applyUpdateTo(null, taskType, complexity, provider, model, newScore, alpha, now);
+    }
   }
 
   function updateLatency(
@@ -102,42 +128,32 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     latencyMs: number,
     tenantId?: string | null,
   ): void {
-    const existing = store.get(taskType, complexity, provider, model, tenantId);
-    if (existing) {
-      existing.avgLatencyMs = ema(existing.avgLatencyMs, latencyMs, EMA_ALPHA);
+    // Latency is an in-memory signal, not persisted. Update wherever the
+    // request's routing decision was sourced from — see getBestModel's
+    // policy gating. For simplicity, update both dimensions if they
+    // exist; a stale latency in an unused dimension is harmless.
+    const tenantExisting = tenantId
+      ? store.get(taskType, complexity, provider, model, tenantId)
+      : undefined;
+    if (tenantExisting) {
+      tenantExisting.avgLatencyMs = ema(tenantExisting.avgLatencyMs, latencyMs, EMA_ALPHA);
+    }
+    const poolExisting = store.get(taskType, complexity, provider, model);
+    if (poolExisting) {
+      poolExisting.avgLatencyMs = ema(poolExisting.avgLatencyMs, latencyMs, EMA_ALPHA);
     }
   }
 
-  /**
-   * Pick the best model for a cell. Returns `via: "exploration"` when the
-   * ε-greedy branch fired (uniform-random from allCandidates, ignoring EMA)
-   * and `via: "adaptive"` when the EMA-scoring branch picked the winner.
-   * Returns null when no adaptive candidate qualifies and exploration
-   * didn't fire — caller falls through to cheapest-first.
-   *
-   * Cells whose most-recent update is older than the stale threshold get
-   * a boosted exploration rate so their stored EMA doesn't drift further
-   * from current truth. See #148.
-   */
-  function getBestModel(
-    taskType: TaskType,
-    complexity: Complexity,
-    profile: RoutingProfile,
+  /** Pure pick-from-a-single-cell, reused for tenant and pool paths. */
+  function pickBestFromCell(
+    cellMap: Map<string, ModelScore> | undefined,
     availableProviders: Set<string>,
-    allCandidates: RouteTarget[],
-    customWeights?: RoutingWeights,
-    tenantId?: string | null,
-  ): { target: RouteTarget; via: "adaptive" | "exploration" } | null {
-    const cellMap = store.getCellMap(taskType, complexity, tenantId);
-    const stale = isCellStale(cellMap);
-    const regressed = isCellRegressing(taskType, complexity);
-    const exploration = pickExploration(allCandidates, availableProviders, { stale, regressed });
-    if (exploration) {
-      return { target: exploration, via: "exploration" };
-    }
-
+    taskType: string,
+    complexity: string,
+    profile: RoutingProfile,
+    customWeights: RoutingWeights | undefined,
+  ): RouteTarget | null {
     if (!cellMap || cellMap.size === 0) return null;
-
     const candidates = Array.from(cellMap.values()).filter(
       (s) => s.sampleCount >= MIN_SAMPLES && availableProviders.has(s.provider),
     );
@@ -145,11 +161,7 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
 
     const weights = resolveWeights(profile, customWeights);
     let best: { target: RouteTarget; score: number } | null = null;
-
     for (const candidate of candidates) {
-      // Grace boost (#153) nudges migration targets up during their window
-      // without mutating the underlying EMA — normal routing wins back if
-      // the migration picked wrong once the boost expires.
       const boost = getScoreBoost(taskType, complexity, candidate.provider, candidate.model);
       const score = computeRouteScore(
         candidate.qualityScore + boost,
@@ -161,8 +173,54 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
         best = { target: { provider: candidate.provider, model: candidate.model }, score };
       }
     }
+    return best?.target ?? null;
+  }
 
-    return best ? { target: best.target, via: "adaptive" } : null;
+  /**
+   * Pick the best model for a cell. Returns `via: "exploration"` when the
+   * ε-greedy branch fired (uniform-random from allCandidates, ignoring EMA)
+   * and `via: "adaptive"` when the EMA-scoring branch picked the winner.
+   * Returns null when no adaptive candidate qualifies and exploration
+   * didn't fire — caller falls through to cheapest-first.
+   *
+   * Tier-aware fallback: consults the tenant row first (when policy
+   * allows), then the pool row (when policy allows). Cells whose
+   * most-recent update is older than the stale threshold get a boosted
+   * exploration rate so their stored EMA doesn't drift further from
+   * current truth (#148).
+   */
+  async function getBestModel(
+    taskType: TaskType,
+    complexity: Complexity,
+    profile: RoutingProfile,
+    availableProviders: Set<string>,
+    allCandidates: RouteTarget[],
+    customWeights?: RoutingWeights,
+    tenantId?: string | null,
+  ): Promise<{ target: RouteTarget; via: "adaptive" | "exploration" } | null> {
+    const policy = await getTenantIsolationPolicy(db, tenantId);
+    const tenantCell =
+      policy.readsTenantRow && tenantId ? store.getCellMap(taskType, complexity, tenantId) : undefined;
+    const poolCell = policy.readsPool ? store.getCellMap(taskType, complexity) : undefined;
+
+    // Stale/exploration decision uses whichever cell the router will
+    // actually consult first. If the tenant row exists with data, it's
+    // primary; else the pool row (if the tenant can read it).
+    const primaryCell = tenantCell && tenantCell.size > 0 ? tenantCell : poolCell;
+    const stale = isCellStale(primaryCell);
+    const regressed = isCellRegressing(taskType, complexity);
+    const exploration = pickExploration(allCandidates, availableProviders, { stale, regressed });
+    if (exploration) {
+      return { target: exploration, via: "exploration" };
+    }
+
+    const tenantPick = pickBestFromCell(tenantCell, availableProviders, taskType, complexity, profile, customWeights);
+    if (tenantPick) return { target: tenantPick, via: "adaptive" };
+
+    const poolPick = pickBestFromCell(poolCell, availableProviders, taskType, complexity, profile, customWeights);
+    if (poolPick) return { target: poolPick, via: "adaptive" };
+
+    return null;
   }
 
   function getCellScores(
@@ -177,6 +235,13 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     tenantId?: string | null,
   ): { taskType: string; complexity: string; scores: ModelScore[] }[] {
     return store.getAllScores(tenantId);
+  }
+
+  /** Resolve the live tier + toggle policy for a tenant. */
+  async function getIsolationPolicy(
+    tenantId?: string | null,
+  ): Promise<IsolationPolicy> {
+    return getTenantIsolationPolicy(db, tenantId);
   }
 
   /**
@@ -222,6 +287,7 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     getBestModel,
     getCellScores,
     getAllScores,
+    getIsolationPolicy,
     isStale,
     lastUpdated,
     loadScoresFromDb: () => loadScoresFromDb(db, store),

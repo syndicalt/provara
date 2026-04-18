@@ -96,6 +96,7 @@ export function createFeedbackRoutes(db: Db, adaptive: AdaptiveRouter) {
         request.model,
         body.score,
         "user",
+        resolvedTenant,
       );
     }
 
