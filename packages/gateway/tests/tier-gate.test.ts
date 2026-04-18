@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { subscriptions } from "@provara/db";
 import type { Db } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
-import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
+import { grantIntelligenceAccess, resetTierEnv, seedOperatorUser } from "./_setup/tier.js";
 
 // Mock the tenant module so our unit test can control tenant resolution
 // via a test header rather than wiring up full session/bearer auth.
@@ -167,5 +167,76 @@ describe("tenantHasIntelligenceAccess", () => {
     await grantIntelligenceAccess(db, "tenant-1");
     await db.update(subscriptions).set({ status: "canceled" }).run();
     expect(await tenantHasIntelligenceAccess(db, "tenant-1")).toBe(false);
+  });
+});
+
+describe("operator allowlist bypass (#173)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("HTTP middleware returns 200 for operator tenant even without PROVARA_CLOUD", async () => {
+    await seedOperatorUser(db, "op-tenant", "ops@corelumen.com");
+    // Note: PROVARA_CLOUD is NOT set — operator bypass takes precedence
+    const app = buildApp(db);
+    const res = await app.request("/gated", { headers: { "x-test-tenant": "op-tenant" } });
+    expect(res.status).toBe(200);
+  });
+
+  it("HTTP middleware returns 200 for operator tenant even without a subscription", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await seedOperatorUser(db, "op-tenant", "ops@corelumen.com");
+    const app = buildApp(db);
+    const res = await app.request("/gated", { headers: { "x-test-tenant": "op-tenant" } });
+    expect(res.status).toBe(200);
+  });
+
+  it("email comparison is case-insensitive", async () => {
+    await seedOperatorUser(db, "op-tenant", "Ops@CoreLumen.com", { registerInAllowlist: false });
+    process.env.PROVARA_OPERATOR_EMAILS = "ops@corelumen.com";
+    const app = buildApp(db);
+    const res = await app.request("/gated", { headers: { "x-test-tenant": "op-tenant" } });
+    expect(res.status).toBe(200);
+  });
+
+  it("non-operator users on the same tenant flow don't accidentally bypass", async () => {
+    // Seed an operator email that's NOT on tenant-customer, so the allowlist
+    // exists but doesn't cover this tenant.
+    process.env.PROVARA_OPERATOR_EMAILS = "ops@corelumen.com";
+    process.env.PROVARA_CLOUD = "true";
+    const app = buildApp(db);
+    const res = await app.request("/gated", { headers: { "x-test-tenant": "tenant-customer" } });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.gate.reason).toBe("no_subscription");
+  });
+
+  it("empty PROVARA_OPERATOR_EMAILS env var is treated as no allowlist", async () => {
+    process.env.PROVARA_OPERATOR_EMAILS = "";
+    process.env.PROVARA_CLOUD = "true";
+    const app = buildApp(db);
+    const res = await app.request("/gated", { headers: { "x-test-tenant": "tenant-1" } });
+    expect(res.status).toBe(402);
+  });
+
+  it("tenantHasIntelligenceAccess returns true for operator tenant on non-cloud deployment", async () => {
+    await seedOperatorUser(db, "op-tenant", "ops@corelumen.com");
+    expect(await tenantHasIntelligenceAccess(db, "op-tenant")).toBe(true);
+  });
+
+  it("tenantHasIntelligenceAccess returns true for operator tenant even without subscription", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await seedOperatorUser(db, "op-tenant", "ops@corelumen.com");
+    expect(await tenantHasIntelligenceAccess(db, "op-tenant")).toBe(true);
+  });
+
+  it("tenantHasIntelligenceAccess returns false for non-operator tenant without sub, regardless of other operators existing", async () => {
+    await seedOperatorUser(db, "other-tenant", "ops@corelumen.com");
+    process.env.PROVARA_CLOUD = "true";
+    // Another tenant exists but this one is a customer without a sub
+    expect(await tenantHasIntelligenceAccess(db, "customer-tenant")).toBe(false);
   });
 });
