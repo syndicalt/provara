@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { formatCost, formatLatency, formatNumber, formatTokens } from "../../lib/format";
 import { DataTable, type Column } from "../../components/data-table";
 import { Badge } from "../../components/badge";
-import { gatewayClientFetch } from "../../lib/gateway-client";
+import { gatewayClientFetch, gatewayFetchRaw } from "../../lib/gateway-client";
+import { useAuth } from "../../lib/auth-context";
 
 interface Overview {
   totalRequests: number;
@@ -163,7 +165,58 @@ interface CacheSavings {
   hitRate: number;
 }
 
-export default function Dashboard() {
+/**
+ * Wrong-OAuth-account banner (#189). Rendered when the OAuth callback
+ * redirects with `invite_status=wrong_email&expected=<email>` — the
+ * user signed in with a Google/GitHub account whose email doesn't
+ * match the invite they came from, so they landed in their own fresh
+ * workspace instead of joining the inviting team. Non-dismissible;
+ * one-click sign-out + reload brings them back to /login with the
+ * invite still pending so they can try again with the right account.
+ */
+function InviteMismatchBanner() {
+  const searchParams = useSearchParams();
+  const { user } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
+
+  if (searchParams.get("invite_status") !== "wrong_email") return null;
+  const expected = searchParams.get("expected") ?? "";
+
+  async function signOutAndRetry() {
+    setSigningOut(true);
+    try {
+      await gatewayFetchRaw("/auth/logout", { method: "POST" });
+    } catch {
+      // Best-effort — fall through to the reload regardless.
+    }
+    window.location.href = "/login?reason=invite";
+  }
+
+  return (
+    <div className="border-b border-amber-900/60 bg-amber-950/40 text-amber-100">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="flex-1 text-sm">
+          <p className="font-medium text-amber-50">
+            You signed in{user?.email ? (<> as <span className="font-mono">{user.email}</span></>) : null},
+            but the invite was sent to <span className="font-mono text-amber-50">{expected}</span>.
+          </p>
+          <p className="text-amber-200/80 mt-1">
+            Sign out and sign back in with {expected ? <span className="font-mono">{expected}</span> : "the invited email"} to join that team.
+          </p>
+        </div>
+        <button
+          onClick={signOutAndRetry}
+          disabled={signingOut}
+          className="shrink-0 px-4 py-2 rounded-md text-sm font-medium bg-white text-zinc-900 hover:bg-zinc-100 disabled:opacity-60"
+        >
+          {signingOut ? "Signing out…" : "Sign out and retry"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DashboardContent() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [costsByModel, setCostsByModel] = useState<CostByModel[]>([]);
   const [recentRequests, setRecentRequests] = useState<RequestRow[]>([]);
@@ -233,13 +286,18 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <p className="text-zinc-400">Loading dashboard...</p>
-      </div>
+      <>
+        <InviteMismatchBanner />
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <p className="text-zinc-400">Loading dashboard...</p>
+        </div>
+      </>
     );
   }
 
   return (
+    <>
+    <InviteMismatchBanner />
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -326,5 +384,17 @@ export default function Dashboard() {
         </>
       )}
     </div>
+    </>
+  );
+}
+
+export default function Dashboard() {
+  // useSearchParams (inside InviteMismatchBanner) requires a Suspense
+  // boundary in Next 15 — without one the page opts into dynamic
+  // rendering for every request.
+  return (
+    <Suspense>
+      <DashboardContent />
+    </Suspense>
   );
 }

@@ -56,11 +56,18 @@ function LoginContent() {
   const error = searchParams.get("error");
   const reason = searchParams.get("reason");
   const returnTo = searchParams.get("return") || "/dashboard";
+  const inviteToken = searchParams.get("invite_token");
   const errorText = errorMessage(error);
   const isInvite = reason === "invite";
 
-  // Append the return path onto the OAuth start URL so the callback can honor it.
-  const oauthReturn = returnTo === "/dashboard" ? "" : `?return=${encodeURIComponent(returnTo)}`;
+  // Append the return path + invite token (if present) onto the OAuth
+  // start URL so the callback can honor the return and detect an email
+  // mismatch between the OAuth account and the invited email (#189).
+  const oauthParams = new URLSearchParams();
+  if (returnTo !== "/dashboard") oauthParams.set("return", returnTo);
+  if (inviteToken) oauthParams.set("invite_token", inviteToken);
+  const oauthQuery = oauthParams.toString();
+  const oauthReturn = oauthQuery ? `?${oauthQuery}` : "";
 
   useEffect(() => {
     // An already-signed-in user clicking an invite link is almost
