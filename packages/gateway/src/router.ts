@@ -30,6 +30,7 @@ import { createAlertRoutes } from "./routes/alerts.js";
 import { createPromptRoutes } from "./routes/prompts.js";
 import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
 import { getTenantId } from "./auth/tenant.js";
+import { getRequestAttribution } from "./auth/attribution.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
@@ -272,6 +273,9 @@ export async function createRouter(ctx: RouterContext) {
     // Route the request through the intelligent routing engine
     const tokenInfo = getTokenInfo(c.req.raw);
     const tenantId = tokenInfo?.tenant || getTenantId(c.req.raw) || null;
+    // Spend-attribution (#219): resolved once per request and threaded
+    // through every `requests` insert + cost-log write.
+    const attribution = getRequestAttribution(c.req.raw);
     const routingResult = await routingEngine.route({
       messages: request.messages,
       provider: providerName,
@@ -317,6 +321,8 @@ export async function createRouter(ctx: RouterContext) {
           tokensSavedInput: inputTokens,
           tokensSavedOutput: outputTokens,
           tenantId,
+          userId: attribution.userId,
+          apiTokenId: attribution.apiTokenId,
           abTestId: routingResult.abTestId || null,
         })
         .run();
@@ -510,6 +516,8 @@ export async function createRouter(ctx: RouterContext) {
                     usedFallback,
                     fallbackErrors: attemptErrors.length > 0 ? JSON.stringify(attemptErrors) : null,
                     tenantId,
+                    userId: attribution.userId,
+                    apiTokenId: attribution.apiTokenId,
                     abTestId: routingResult.abTestId || null,
                   })
                   .run();
@@ -531,6 +539,8 @@ export async function createRouter(ctx: RouterContext) {
                   inputTokens: usage.inputTokens,
                   outputTokens: usage.outputTokens,
                   tenantId,
+                  userId: attribution.userId,
+                  apiTokenId: attribution.apiTokenId,
                 }).catch(() => {});
 
                 if (!skipCache) {
@@ -663,6 +673,8 @@ export async function createRouter(ctx: RouterContext) {
         usedFallback,
         fallbackErrors: attemptErrors.length > 0 ? JSON.stringify(attemptErrors) : null,
         tenantId,
+        userId: attribution.userId,
+        apiTokenId: attribution.apiTokenId,
         abTestId: routingResult.abTestId || null,
       })
       .run();
@@ -684,6 +696,8 @@ export async function createRouter(ctx: RouterContext) {
       inputTokens: response.usage.inputTokens,
       outputTokens: response.usage.outputTokens,
       tenantId,
+      userId: attribution.userId,
+      apiTokenId: attribution.apiTokenId,
     });
 
     // Cache the response for future identical requests

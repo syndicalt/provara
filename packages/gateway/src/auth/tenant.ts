@@ -8,9 +8,17 @@ import { getTokenInfo } from "./middleware.js";
 
 // Store tenant ID on the request via a WeakMap
 const tenantMap = new WeakMap<Request, string>();
+// Store resolved session user id (dashboard callers) per request. Bearer-
+// token callers have no session user — their attribution comes from the
+// token via `getTokenInfo`.
+const sessionUserMap = new WeakMap<Request, string>();
 
 export function getTenantId(req: Request): string | null {
   return tenantMap.get(req) || null;
+}
+
+export function getSessionUserId(req: Request): string | null {
+  return sessionUserMap.get(req) || null;
 }
 
 /** Testing-only helper — sets the tenant on a Request for unit tests that
@@ -18,6 +26,11 @@ export function getTenantId(req: Request): string | null {
  *  from production code. */
 export function __testSetTenant(req: Request, tenantId: string): void {
   tenantMap.set(req, tenantId);
+}
+
+/** Testing-only helper — sets the session user id on a Request. */
+export function __testSetSessionUserId(req: Request, userId: string): void {
+  sessionUserMap.set(req, userId);
 }
 
 /**
@@ -91,6 +104,7 @@ export function createTenantMiddleware(db: Db) {
       const result = await validateSession(db, sessionId);
       if (result) {
         tenantMap.set(c.req.raw, result.user.tenantId);
+        sessionUserMap.set(c.req.raw, result.user.id);
         return next();
       }
     }
