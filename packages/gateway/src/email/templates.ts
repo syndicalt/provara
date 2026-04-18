@@ -105,6 +105,54 @@ export function inviteEmail(params: InviteEmailParams): { subject: string; html:
   return { subject, html: emailShell(subject, body), text };
 }
 
+export interface MagicLinkEmailParams {
+  verifyUrl: string;
+  email: string;
+  isNewUser: boolean;
+  expiresAt: Date;
+}
+
+export function magicLinkEmail(params: MagicLinkEmailParams): { subject: string; html: string; text: string } {
+  const expiresLabel = "15 minutes";
+  const subject = params.isNewUser
+    ? "Finish signing up for Provara"
+    : "Your Provara sign-in link";
+  const headline = params.isNewUser
+    ? "One click away from your new Provara account"
+    : "Sign in to Provara";
+  const intro = params.isNewUser
+    ? `Click the button below to finish creating your account on <strong style="color:#fafafa;">${escapeHtml(params.email)}</strong>. The link expires in ${expiresLabel}.`
+    : `Click the button below to sign in as <strong style="color:#fafafa;">${escapeHtml(params.email)}</strong>. The link expires in ${expiresLabel}.`;
+  const body = `
+    <p style="font-size:16px; color:#fafafa; margin:0 0 18px;">${headline}</p>
+    <p style="margin:0 0 22px;">${intro}</p>
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:0 0 24px;">
+      <tr>
+        <td style="background:#2563eb; border-radius:8px;">
+          <a href="${escapeHtml(params.verifyUrl)}" style="display:inline-block; padding:12px 22px; color:#ffffff; font-weight:600; text-decoration:none; font-size:14px;">${params.isNewUser ? "Finish signing up" : "Sign in"} &rarr;</a>
+        </td>
+      </tr>
+    </table>
+    <p style="margin:0 0 8px; color:#a1a1aa; font-size:13px;">Or paste this link into your browser:</p>
+    <p style="margin:0 0 20px; word-break:break-all; font-size:12px; color:#60a5fa;"><a href="${escapeHtml(params.verifyUrl)}" style="color:#60a5fa;">${escapeHtml(params.verifyUrl)}</a></p>
+    <p style="margin:0; font-size:12px; color:#71717a;">If you didn't request this, you can ignore this email — nothing happens until the link is clicked.</p>
+  `;
+  const text = [
+    headline,
+    "",
+    params.isNewUser
+      ? `Finish creating your Provara account for ${params.email}. Link expires in ${expiresLabel}.`
+      : `Sign in to Provara as ${params.email}. Link expires in ${expiresLabel}.`,
+    "",
+    params.verifyUrl,
+    "",
+    "If you didn't request this, ignore this email.",
+    "",
+    "Provara · operated by CoreLumen, LLC",
+  ].join("\n");
+  return { subject, html: emailShell(subject, body), text };
+}
+
 export interface WelcomeEmailParams {
   name: string;
   dashboardUrl: string;

@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
+import { createHash } from "node:crypto";
 import type { Db } from "@provara/db";
-import { users, oauthAccounts, teamInvites } from "@provara/db";
+import { users, oauthAccounts, teamInvites, magicLinkTokens } from "@provara/db";
 import { eq, and, gte, isNull, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
@@ -23,7 +24,7 @@ import {
   getSessionFromCookie,
 } from "../auth/session.js";
 import { sendEmail } from "../email/index.js";
-import { welcomeEmail } from "../email/templates.js";
+import { welcomeEmail, magicLinkEmail } from "../email/templates.js";
 
 const DASHBOARD_URL = () => process.env.DASHBOARD_URL || "http://localhost:3000";
 const STATE_COOKIE = "provara_oauth_state";
@@ -172,7 +173,287 @@ export function createAuthRoutes(db: Db) {
     });
   });
 
+  // --- Magic link (#204) ---
+
+  /**
+   * Request a magic link. Body: `{ email, firstName?, lastName? }`.
+   *
+   * - If a user with that email exists: generate + email a link,
+   *   return `{status: "sent"}`.
+   * - If no user and no names provided: return `{status: "new_user"}` so
+   *   the client can redirect to the signup form.
+   * - If no user but names provided: store the names on the token row
+   *   and email the link — verify-time endpoint will create the user
+   *   atomically on click.
+   *
+   * Rate limit: 3 outstanding (non-consumed, non-expired) tokens per
+   * email per 15-minute window.
+   */
+  app.post("/magic-link/request", async (c) => {
+    let body: { email?: unknown; firstName?: unknown; lastName?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: { message: "Invalid JSON body.", type: "validation_error" } }, 400);
+    }
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!isValidEmail(email)) {
+      return c.json({ error: { message: "A valid email is required.", type: "validation_error" } }, 400);
+    }
+
+    const firstName = typeof body.firstName === "string" ? body.firstName.trim() : "";
+    const lastName = typeof body.lastName === "string" ? body.lastName.trim() : "";
+
+    const existingUser = await db.select().from(users).where(eq(users.email, email)).get();
+
+    // No user + no names → tell the client to collect names first.
+    if (!existingUser && (!firstName || !lastName)) {
+      return c.json({ status: "new_user" });
+    }
+
+    // Rate limit: recent outstanding tokens for this email.
+    const windowStart = new Date(Date.now() - MAGIC_LINK_TTL_MS);
+    const outstanding = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(magicLinkTokens)
+      .where(
+        and(
+          eq(magicLinkTokens.email, email),
+          gte(magicLinkTokens.createdAt, windowStart),
+          isNull(magicLinkTokens.consumedAt),
+        ),
+      )
+      .get();
+    if ((outstanding?.count ?? 0) >= MAGIC_LINK_MAX_OUTSTANDING) {
+      return c.json(
+        {
+          error: {
+            message: "Too many magic-link requests for this email. Try again in a few minutes.",
+            type: "rate_limited",
+          },
+        },
+        429,
+      );
+    }
+
+    // Generate token, hash, persist.
+    const plainToken = nanoid(32);
+    const tokenHash = hashMagicToken(plainToken);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + MAGIC_LINK_TTL_MS);
+    await db.insert(magicLinkTokens).values({
+      id: nanoid(),
+      email,
+      tokenHash,
+      pendingFirstName: existingUser ? null : firstName,
+      pendingLastName: existingUser ? null : lastName,
+      createdAt: now,
+      expiresAt,
+    }).run();
+
+    // Send. Non-blocking failure logging — we still return 200 so the
+    // client shows a consistent "check your inbox" state; a delivery
+    // failure surfaces via the user not seeing the email.
+    try {
+      const verifyUrl = `${DASHBOARD_URL()}/auth/magic/verify?token=${encodeURIComponent(plainToken)}`;
+      const tmpl = magicLinkEmail({
+        verifyUrl,
+        email,
+        isNewUser: !existingUser,
+        expiresAt,
+      });
+      await sendEmail({
+        to: email,
+        subject: tmpl.subject,
+        html: tmpl.html,
+        text: tmpl.text,
+      });
+    } catch (err) {
+      console.warn("[auth] magic-link email send failed (non-blocking):", err);
+    }
+
+    return c.json({ status: "sent" });
+  });
+
+  /**
+   * Verify + consume a magic-link token. Routes to `/dashboard` on
+   * success with a session cookie set. On any validation failure the
+   * user is redirected back to `/login?error=<code>` so the reason
+   * surfaces in the login UI.
+   */
+  app.get("/magic/verify", async (c) => {
+    const plainToken = c.req.query("token");
+    if (!plainToken || typeof plainToken !== "string") {
+      return c.redirect(`${DASHBOARD_URL()}/login?error=magic_link_invalid`);
+    }
+    const tokenHash = hashMagicToken(plainToken);
+
+    const row = await db
+      .select()
+      .from(magicLinkTokens)
+      .where(eq(magicLinkTokens.tokenHash, tokenHash))
+      .get();
+
+    if (!row) {
+      return c.redirect(`${DASHBOARD_URL()}/login?error=magic_link_invalid`);
+    }
+    if (row.consumedAt) {
+      return c.redirect(`${DASHBOARD_URL()}/login?error=magic_link_used`);
+    }
+    if (row.expiresAt.getTime() < Date.now()) {
+      return c.redirect(`${DASHBOARD_URL()}/login?error=magic_link_expired`);
+    }
+
+    // Atomic consume: UPDATE ... WHERE consumed_at IS NULL so two
+    // simultaneous clicks can't both consume.
+    const claim = await db
+      .update(magicLinkTokens)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(magicLinkTokens.id, row.id), isNull(magicLinkTokens.consumedAt)))
+      .run();
+    const affected = (claim as unknown as { rowsAffected?: number; changes?: number }).rowsAffected
+      ?? (claim as unknown as { changes?: number }).changes
+      ?? 0;
+    if (affected === 0) {
+      return c.redirect(`${DASHBOARD_URL()}/login?error=magic_link_used`);
+    }
+
+    // Find or create the user.
+    const user = await upsertUserFromMagicLink(db, {
+      email: row.email,
+      pendingFirstName: row.pendingFirstName,
+      pendingLastName: row.pendingLastName,
+    });
+
+    const sessionId = await createSession(db, user.id);
+    setSessionCookie(c, sessionId);
+    return c.redirect(`${DASHBOARD_URL()}/dashboard`);
+  });
+
   return app;
+}
+
+const MAGIC_LINK_TTL_MS = 15 * 60 * 1000;
+const MAGIC_LINK_MAX_OUTSTANDING = 3;
+
+function hashMagicToken(plain: string): string {
+  return createHash("sha256").update(plain).digest("hex");
+}
+
+function isValidEmail(email: string): boolean {
+  // Deliberately permissive — we delegate real validation to whether
+  // the provider actually delivers. Block only the obviously-broken.
+  if (email.length < 3 || email.length > 254) return false;
+  const atIdx = email.indexOf("@");
+  return atIdx > 0 && atIdx < email.length - 1 && email.indexOf(" ") === -1;
+}
+
+/**
+ * Magic-link equivalent of `upsertUser`. Either returns the existing
+ * user row (email already in `users`) or inserts a fresh one using the
+ * pending names captured at request time. Mirrors the team-invite
+ * claim logic from `upsertUser` so a new signup via magic link lands
+ * in the inviter's tenant when applicable.
+ *
+ * Email is treated as verified because the user provably received and
+ * clicked the link — that's the whole point of the magic-link primitive.
+ */
+async function upsertUserFromMagicLink(
+  db: Db,
+  params: {
+    email: string;
+    pendingFirstName: string | null;
+    pendingLastName: string | null;
+  },
+) {
+  const existing = await db.select().from(users).where(eq(users.email, params.email)).get();
+  if (existing) return existing;
+
+  const firstName = params.pendingFirstName ?? "";
+  const lastName = params.pendingLastName ?? "";
+  const combinedName = [firstName, lastName].filter(Boolean).join(" ") || null;
+
+  const userId = nanoid();
+  let tenantId = nanoid(12);
+  let role: "owner" | "member" = "owner";
+  let claimedInviteToken: string | null = null;
+
+  const pending = await db
+    .select()
+    .from(teamInvites)
+    .where(
+      and(
+        sql`LOWER(${teamInvites.invitedEmail}) = ${params.email.toLowerCase()}`,
+        isNull(teamInvites.consumedAt),
+        gte(teamInvites.expiresAt, new Date()),
+      ),
+    )
+    .get();
+
+  if (pending) {
+    const claim = await db
+      .update(teamInvites)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(teamInvites.token, pending.token), isNull(teamInvites.consumedAt)))
+      .run();
+    const affected = (claim as unknown as { rowsAffected?: number; changes?: number }).rowsAffected
+      ?? (claim as unknown as { changes?: number }).changes
+      ?? 0;
+    if (affected > 0) {
+      tenantId = pending.tenantId;
+      role = pending.invitedRole;
+      claimedInviteToken = pending.token;
+      console.log(
+        `[auth] magic-link invite claimed — token=${pending.token} email=${params.email} tenant=${pending.tenantId} role=${pending.invitedRole}`,
+      );
+    }
+  }
+
+  await db.insert(users).values({
+    id: userId,
+    email: params.email,
+    name: combinedName,
+    firstName: firstName || null,
+    lastName: lastName || null,
+    avatarUrl: null,
+    tenantId,
+    role,
+  }).run();
+
+  if (claimedInviteToken) {
+    await db
+      .update(teamInvites)
+      .set({ consumedByUserId: userId })
+      .where(eq(teamInvites.token, claimedInviteToken))
+      .run();
+  }
+
+  if (!claimedInviteToken) {
+    try {
+      const dashboardUrl = process.env.DASHBOARD_URL || "https://www.provara.xyz/dashboard";
+      const tmpl = welcomeEmail({ name: combinedName ?? params.email, dashboardUrl });
+      await sendEmail({
+        to: params.email,
+        subject: tmpl.subject,
+        html: tmpl.html,
+        text: tmpl.text,
+      });
+    } catch (err) {
+      console.warn("[auth] welcome email failed (non-blocking):", err);
+    }
+  }
+
+  return {
+    id: userId,
+    email: params.email,
+    name: combinedName,
+    firstName: firstName || null,
+    lastName: lastName || null,
+    avatarUrl: null,
+    tenantId,
+    role,
+    createdAt: new Date(),
+  };
 }
 
 /**

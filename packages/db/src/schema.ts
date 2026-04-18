@@ -1,9 +1,15 @@
-import { sqliteTable, text, integer, real, blob, uniqueIndex, primaryKey } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, blob, uniqueIndex, index, primaryKey } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   email: text("email").notNull().unique(),
+  // `name` is kept for back-compat with OAuth flow reads; new code should
+  // read `firstName` / `lastName` and rely on server-side concatenation
+  // at insert time. Magic-link (#204) added the split fields; OAuth
+  // `upsertUser` still populates `name` the same way.
   name: text("name"),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
   avatarUrl: text("avatar_url"),
   tenantId: text("tenant_id").notNull(),
   role: text("role", { enum: ["owner", "member"] }).notNull().default("owner"),
@@ -37,6 +43,38 @@ export const sessions = sqliteTable("sessions", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * Magic-link sign-in / signup tokens (#204).
+ *
+ * Token lifecycle: created by POST /auth/magic-link/request, consumed by
+ * GET /auth/magic/verify. Single-use (consumedAt stamp) with a 15-minute
+ * TTL. SHA-256 hashed at rest — plain token only exists in the email.
+ *
+ * Signup carriers: when the request comes from an email with no existing
+ * user row, the client resubmits /request with firstName + lastName. We
+ * stash those on the token row so the verify endpoint has everything it
+ * needs to create the user atomically on click — no intermediate "pending
+ * signup" state anywhere else in the system.
+ *
+ * Rate limit: the request handler counts rows for a given email where
+ * createdAt > now - 15min; rejects at 3.
+ */
+export const magicLinkTokens = sqliteTable("magic_link_tokens", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  pendingFirstName: text("pending_first_name"),
+  pendingLastName: text("pending_last_name"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  consumedAt: integer("consumed_at", { mode: "timestamp" }),
+}, (t) => [
+  index("magic_link_tokens_email_idx").on(t.email),
+  index("magic_link_tokens_hash_idx").on(t.tokenHash),
+]);
 
 export const customProviders = sqliteTable("custom_providers", {
   id: text("id").primaryKey(),

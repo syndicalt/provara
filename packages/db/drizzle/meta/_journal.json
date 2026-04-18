@@ -204,6 +204,13 @@
       "when": 1776493737525,
       "tag": "0028_amazing_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1776510146882,
+      "tag": "0029_peaceful_night_thrasher",
+      "breakpoints": true
     }
   ]
 }
