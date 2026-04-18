@@ -13,7 +13,7 @@ import {
   validatePostResponse,
 } from "../auth/saml.js";
 import { createSession, setSessionCookie } from "../auth/session.js";
-import { requireEnterpriseTier } from "../auth/tier.js";
+import { tenantHasEnterpriseAccess } from "../auth/tier.js";
 
 /**
  * SAML SSO routes (#209). Mounted at `/auth/saml`. Per-tenant flow:
@@ -82,10 +82,20 @@ export function createSamlAuthRoutes(db: Db) {
    * tenant). Validates the response, JIT-provisions, issues a session,
    * redirects to the dashboard.
    */
-  app.post("/acs/:tenantId", requireEnterpriseTier(db), async (c) => {
+  app.post("/acs/:tenantId", async (c) => {
     const tenantId = c.req.param("tenantId");
     if (!tenantId) {
       return c.redirect(`${DASHBOARD_URL()}/login?error=sso_missing_tenant`);
+    }
+
+    // Tier gate uses the URL-path tenantId, NOT the caller's session —
+    // the caller is mid-login and has no session yet. This is the whole
+    // point of ACS. Check the tenant that owns the config row; refuse
+    // if they're not on Enterprise (defense in depth — ops shouldn't
+    // have seeded sso_configs for a non-Enterprise tenant, but if they
+    // did, we don't want the free account to be a back-door SSO bypass).
+    if (!(await tenantHasEnterpriseAccess(db, tenantId))) {
+      return c.redirect(`${DASHBOARD_URL()}/login?error=sso_tier_revoked`);
     }
 
     const form = await c.req.parseBody();
@@ -139,9 +149,14 @@ export function createSamlAuthRoutes(db: Db) {
    * tenant downgrades, metadata stops serving (also stops the IdP from
    * successfully POSTing to ACS since ACS is gated identically).
    */
-  app.get("/metadata/:tenantId", requireEnterpriseTier(db), async (c) => {
+  app.get("/metadata/:tenantId", async (c) => {
     const tenantId = c.req.param("tenantId");
     if (!tenantId) {
+      return c.json({ error: { message: "SSO not configured.", type: "not_configured" } }, 404);
+    }
+    // Tier gate on the URL-path tenant, same reasoning as ACS: the IdP
+    // fetches this endpoint without a Provara session.
+    if (!(await tenantHasEnterpriseAccess(db, tenantId))) {
       return c.json({ error: { message: "SSO not configured.", type: "not_configured" } }, 404);
     }
     const xml = await buildMetadataXml(db, tenantId, GATEWAY_PUBLIC_URL());

@@ -109,34 +109,76 @@ describe("GET /auth/saml/metadata/:tenantId", () => {
   });
   afterEach(() => resetTierEnv());
 
-  it("returns SP metadata XML for a Enterprise tenant with SSO configured", async () => {
+  it("returns SP metadata XML for an Enterprise tenant with SSO configured", async () => {
+    // Tier gate now reads the URL-path tenantId, so no mocked tenant
+    // header is needed — the IdP will POST to this URL without any
+    // Provara session. This is the whole point of the fix.
     await seedSso(db, "tenant-ent");
     await grantIntelligenceAccess(db, "tenant-ent", { tier: "enterprise" });
     const app = buildApp(db);
-    const res = await app.request("/auth/saml/metadata/tenant-ent", {
-      headers: { "x-test-tenant": "tenant-ent" },
-    });
-    // NB: the tier gate pulls tenantId from getTenantId which respects the
-    // mocked header (see the vi.mock in saml.test.ts patterns). If that
-    // mock isn't in scope for this file we accept 401 too — the metadata
-    // endpoint requires it for the gate.
-    expect([200, 401]).toContain(res.status);
-    if (res.status === 200) {
-      expect(res.headers.get("content-type")).toContain("samlmetadata+xml");
-      const xml = await res.text();
-      expect(xml).toContain("tenant-ent");
-    }
+    const res = await app.request("/auth/saml/metadata/tenant-ent");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("samlmetadata+xml");
+    const xml = await res.text();
+    expect(xml).toContain("tenant-ent");
   });
 
-  it("returns 402 for a non-Enterprise tenant", async () => {
+  it("returns 404 when the URL-path tenant is not on Enterprise", async () => {
     await seedSso(db, "tenant-pro");
     await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
-    // We can't hit the tier check without the tenant mock; just confirm
-    // the route refuses when tenant resolution fails (401) or the tier
-    // gate catches it (402). Either way, no metadata is served.
     const app = buildApp(db);
     const res = await app.request("/auth/saml/metadata/tenant-pro");
-    expect([401, 402]).toContain(res.status);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error.type).toBe("not_configured");
+  });
+
+  it("returns 404 when SSO is not configured at all", async () => {
+    await grantIntelligenceAccess(db, "tenant-ent", { tier: "enterprise" });
+    const app = buildApp(db);
+    const res = await app.request("/auth/saml/metadata/tenant-ent");
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("POST /auth/saml/acs/:tenantId (tier gate)", () => {
+  let db: Db;
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+  });
+  afterEach(() => resetTierEnv());
+
+  it("redirects to /login?error=sso_tier_revoked when the URL-path tenant is not Enterprise", async () => {
+    await seedSso(db, "tenant-pro");
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const form = new URLSearchParams({ SAMLResponse: "anything" });
+    const res = await app.request("/auth/saml/acs/tenant-pro", {
+      method: "POST",
+      body: form.toString(),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=sso_tier_revoked");
+  });
+
+  it("does NOT require a Provara session (unauthenticated IdP POST is the whole flow)", async () => {
+    // With the bug: the middleware would 401 here because no session →
+    // no getTenantId. With the fix: the URL-path tenant is what gates.
+    // The forged SAMLResponse will fail validation after the gate passes,
+    // so expect redirect to an sso_invalid_response error, not a 401.
+    await seedSso(db, "tenant-ent");
+    await grantIntelligenceAccess(db, "tenant-ent", { tier: "enterprise" });
+    const app = buildApp(db);
+    const form = new URLSearchParams({ SAMLResponse: "forged-not-a-real-response" });
+    const res = await app.request("/auth/saml/acs/tenant-ent", {
+      method: "POST",
+      body: form.toString(),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=sso_invalid_response");
   });
 });
 
