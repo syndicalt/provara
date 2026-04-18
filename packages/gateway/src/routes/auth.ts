@@ -97,6 +97,9 @@ export function createAuthRoutes(db: Db) {
       setSessionCookie(c, sessionId);
       return c.redirect(successRedirect(c));
     } catch (err) {
+      if (err instanceof OAuthMergeRefusedError) {
+        return c.redirect(loginRedirect("email_unverified"));
+      }
       console.error("Google OAuth error:", err);
       return c.redirect(loginRedirect("oauth_failed"));
     }
@@ -124,6 +127,9 @@ export function createAuthRoutes(db: Db) {
       setSessionCookie(c, sessionId);
       return c.redirect(successRedirect(c));
     } catch (err) {
+      if (err instanceof OAuthMergeRefusedError) {
+        return c.redirect(loginRedirect("email_unverified"));
+      }
       console.error("GitHub OAuth error:", err);
       return c.redirect(loginRedirect("oauth_failed"));
     }
@@ -167,9 +173,24 @@ export function createAuthRoutes(db: Db) {
   return app;
 }
 
+/**
+ * Raised by `upsertUser` when an incoming OAuth profile's email matches
+ * an existing user but the provider did not verify the email. The
+ * callback handlers catch this specifically and redirect the user to
+ * the login screen with an explanatory error code, avoiding a unique-
+ * constraint DB error and a confusing 500.
+ */
+export class OAuthMergeRefusedError extends Error {
+  constructor(public readonly email: string) {
+    super(`OAuth merge refused — provider did not verify email ${email}`);
+    this.name = "OAuthMergeRefusedError";
+  }
+}
+
 // --- Upsert user from OAuth profile ---
 
-async function upsertUser(
+/** Exported for tests; route callers consume it indirectly. */
+export async function upsertUser(
   db: Db,
   provider: "google" | "github",
   profile: OAuthProfile
@@ -205,25 +226,37 @@ async function upsertUser(
     .get();
 
   if (existingUser) {
-    // Link new OAuth provider to existing user (#178). This merges two
-    // different OAuth accounts (different providerAccountId, same email)
-    // under the same user row → same tenantId. Intentional for
-    // "link my Google and GitHub" flows but risky when two people
-    // legitimately share an email. Logging every merge so operators
-    // can audit if cross-account data unexpectedly appears.
-    console.warn(
-      `[auth] OAuth merge: ${provider} account ${profile.id} linked to existing user ${existingUser.id} ` +
-      `(email=${profile.email}, tenant=${existingUser.tenantId}). If this user did not explicitly intend to ` +
-      `link accounts, investigate.`,
-    );
-    await db.insert(oauthAccounts).values({
-      id: nanoid(),
-      userId: existingUser.id,
-      provider,
-      providerAccountId: profile.id,
-      email: profile.email,
-    }).run();
-    return existingUser;
+    // Merge gate (#182): only link a new OAuth provider to an existing
+    // user if the incoming provider explicitly verified the email. All
+    // current providers (Google, GitHub) verify — this gate is defense
+    // in depth for future providers that might not.
+    if (!profile.emailVerified) {
+      console.warn(
+        `[auth] OAuth merge REFUSED: ${provider} account ${profile.id} claimed email=${profile.email} ` +
+        `but the provider did not verify it. Existing user ${existingUser.id} was NOT linked. ` +
+        `Login refused — users.email has a unique constraint so we can't create a sidecar account.`,
+      );
+      throw new OAuthMergeRefusedError(profile.email);
+    } else {
+      // Link new OAuth provider to existing user (#178). Merges two
+      // different OAuth accounts (different providerAccountId, same
+      // verified email) under the same user row → same tenantId.
+      // Intentional for "link my Google and GitHub" flows. Logging
+      // every merge so operators can audit.
+      console.warn(
+        `[auth] OAuth merge: ${provider} account ${profile.id} linked to existing user ${existingUser.id} ` +
+        `(email=${profile.email}, tenant=${existingUser.tenantId}). If this user did not explicitly intend to ` +
+        `link accounts, investigate.`,
+      );
+      await db.insert(oauthAccounts).values({
+        id: nanoid(),
+        userId: existingUser.id,
+        provider,
+        providerAccountId: profile.id,
+        email: profile.email,
+      }).run();
+      return existingUser;
+    }
   }
 
   // Create new user with auto-generated tenant

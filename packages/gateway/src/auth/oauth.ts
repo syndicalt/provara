@@ -38,10 +38,20 @@ export async function getGoogleUser(accessToken: string): Promise<OAuthProfile> 
   const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  const data = await res.json() as { id: string; email: string; name: string; picture: string };
+  const data = await res.json() as {
+    id: string;
+    email: string;
+    verified_email?: boolean;
+    name: string;
+    picture: string;
+  };
   return {
     id: data.id,
     email: data.email,
+    // Google's v2 userinfo returns verified_email. Field is documented as
+    // present on every response but we default to false on absence rather
+    // than true — safer to under-trust than over-trust.
+    emailVerified: data.verified_email === true,
     name: data.name,
     avatarUrl: data.picture,
   };
@@ -90,11 +100,18 @@ export async function getGitHubUser(accessToken: string): Promise<OAuthProfile> 
 
   const user = await userRes.json() as { id: number; login: string; name: string; avatar_url: string };
   const emails = await emailsRes.json() as { email: string; primary: boolean; verified: boolean }[];
-  const primaryEmail = emails.find((e) => e.primary && e.verified)?.email || emails[0]?.email;
+  const primaryVerified = emails.find((e) => e.primary && e.verified);
+  const primaryEmail = primaryVerified?.email || emails[0]?.email;
 
   return {
     id: String(user.id),
     email: primaryEmail || "",
+    // Only mark verified when GitHub explicitly returned a primary AND
+    // verified row. The fallback to `emails[0]` covers the edge case
+    // where the user only has one email and it's unverified — in that
+    // case we still report the email but mark it not-verified, which
+    // the account-merge gate uses to refuse cross-provider linking.
+    emailVerified: Boolean(primaryVerified),
     name: user.name || user.login,
     avatarUrl: user.avatar_url,
   };
@@ -105,6 +122,9 @@ export async function getGitHubUser(accessToken: string): Promise<OAuthProfile> 
 export interface OAuthProfile {
   id: string;
   email: string;
+  /** Did the provider assert this email is verified to the user? Used to
+   *  decide whether account-merging by email is safe (#182). */
+  emailVerified: boolean;
   name: string;
   avatarUrl: string;
 }
