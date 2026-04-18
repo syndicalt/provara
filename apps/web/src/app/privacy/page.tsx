@@ -62,10 +62,26 @@ export default function PrivacyPage() {
             <ul className="list-disc list-inside text-zinc-400 space-y-2">
               <li>We do not sell your data to third parties</li>
               <li>We do not use your prompts or responses to train AI models</li>
-              <li>We do not share your data with other Provara users</li>
+              <li>We do not share your prompts, responses, or API keys with other Provara users</li>
               <li>We do not collect telemetry or analytics from self-hosted instances</li>
               <li>We do not access your provider API keys in plaintext</li>
             </ul>
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold mb-3">Aggregated Routing Signal</h2>
+            <p className="text-zinc-400 leading-relaxed">
+              Provara&apos;s adaptive router learns from quality scores — user ratings you submit and optional LLM-judge scores — to pick the best model for each task type. On the managed Cloud service, these scores flow into a pooled routing matrix shared across Free and Pro tenants. The benefit: small tenants get quality-based routing from day one instead of waiting weeks to accumulate enough ratings on their own traffic.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              What IS pooled: numeric quality scores per (task type, complexity, model) cell, and regression-detection signals derived from those scores. Nothing else.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              What is NOT pooled: your prompts, responses, API keys, tenant identity, feedback comments, or any personally identifiable information. Scores are aggregated as numbers, never as content.
+            </p>
+            <p className="text-zinc-400 leading-relaxed mt-3">
+              <strong className="text-zinc-300">Team and Enterprise plans</strong> can opt into a private routing matrix that isolates quality signal to your tenant alone. Available as a per-tenant setting once you subscribe.
+            </p>
           </section>
 
           <section>
