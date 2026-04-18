@@ -266,6 +266,7 @@ export const promptVersions = sqliteTable("prompt_versions", {
 });
 
 export const modelScores = sqliteTable("model_scores", {
+  tenantId: text("tenant_id").notNull().default(""),
   taskType: text("task_type").notNull(),
   complexity: text("complexity").notNull(),
   provider: text("provider").notNull(),
@@ -276,7 +277,7 @@ export const modelScores = sqliteTable("model_scores", {
     .notNull()
     .$defaultFn(() => new Date()),
 }, (table) => [
-  primaryKey({ columns: [table.taskType, table.complexity, table.provider, table.model] }),
+  primaryKey({ columns: [table.tenantId, table.taskType, table.complexity, table.provider, table.model] }),
 ]);
 
 /**
