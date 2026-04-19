@@ -210,9 +210,18 @@ async function populateBankForCell(
   let skipped = 0;
   const slots = REPLAY_BANK_MAX_PER_CELL - existing.length;
 
+  const includeVision = shouldIncludeVision();
   for (const candidate of candidates) {
     if (added >= slots) break;
     if (seen.has(candidate.id)) {
+      skipped++;
+      continue;
+    }
+
+    // Vision requests are excluded by default — see shouldIncludeVision() for
+    // the cost/signal rationale. Set PROVARA_REGRESSION_INCLUDE_VISION=true
+    // to opt in once the cost budget is there for it.
+    if (!includeVision && promptHasImage(candidate.prompt)) {
       skipped++;
       continue;
     }
@@ -278,14 +287,46 @@ async function populateBankForCell(
   return { ...cell, added, skipped };
 }
 
+type StoredContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } } | { type: string; [k: string]: unknown };
+type StoredMessage = { role: string; content: string | StoredContentPart[] };
+
 function extractLastUserText(promptJson: string): string {
   try {
-    const messages = JSON.parse(promptJson) as Array<{ role: string; content: string }>;
+    const messages = JSON.parse(promptJson) as StoredMessage[];
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
-    return lastUser?.content ?? "";
+    if (!lastUser) return "";
+    const content = lastUser.content;
+    if (typeof content === "string") return content;
+    return content
+      .map((p) => (p.type === "text" ? (p as { text: string }).text : ""))
+      .filter(Boolean)
+      .join(" ");
   } catch {
     return promptJson.slice(0, 2000);
   }
+}
+
+/** True if the stored prompt JSON contains any image_url content part. Used
+ *  to exclude vision requests from the replay bank (#256): image tokens are
+ *  expensive, base64 payloads balloon storage, and the judge heuristic
+ *  struggles to grade subjective vision outputs. */
+function promptHasImage(promptJson: string): boolean {
+  try {
+    const messages = JSON.parse(promptJson) as StoredMessage[];
+    return messages.some(
+      (m) => Array.isArray(m.content) && m.content.some((p) => p.type === "image_url"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Env flag that opts a deployment back into vision regression. Default off —
+ *  running regression on image-bearing prompts is ~10–15× the token cost of
+ *  text (image tokens + judge-model call across candidates) and produces
+ *  noisier signal because vision outputs resist heuristic grading. */
+function shouldIncludeVision(): boolean {
+  return process.env.PROVARA_REGRESSION_INCLUDE_VISION === "true";
 }
 
 /**
@@ -298,8 +339,13 @@ export async function runBankPopulationCycle(
   embeddings: EmbeddingProvider | null,
 ): Promise<BankPopulateResult[]> {
   const cells = await distinctEligibleCells(db);
+  const includeVision = shouldIncludeVision();
   const results: BankPopulateResult[] = [];
   for (const cell of cells) {
+    // Skip the whole vision cell by default (#256) — cheaper than filtering
+    // every candidate individually and avoids spending a fetch on requests
+    // that would all be rejected downstream.
+    if (!includeVision && cell.taskType === "vision") continue;
     // Tier gate (#168): even if the tenant has opted in, skip cells owned
     // by tenants without Intelligence access. Prevents cross-tier leakage
     // if a tenant downgrades from Pro → Free with opt-in still flagged.

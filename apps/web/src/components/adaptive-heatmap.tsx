@@ -41,7 +41,7 @@ interface Props {
   getSparkline?: (key: string) => SparklinePoint[];
 }
 
-const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general"] as const;
+const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general", "vision"] as const;
 const COMPLEXITIES = ["simple", "medium", "complex"] as const;
 
 export function cellKey(taskType: string, complexity: string, provider: string, model: string): string {

@@ -75,6 +75,14 @@ Input guardrails run on the text portion of each message only. If a rule fires:
 
 If you need PII scanning inside image content, that's an OCR-first pipeline on the client side before the request reaches the gateway.
 
+## Regression detection
+
+Image-bearing requests are **excluded from the replay bank by default**. Running regression on vision is ~10–15× the token cost of text (image tokens across candidate replays plus the judge-model call) and the heuristic judge struggles to grade subjective visual outputs reliably.
+
+The filter operates at two levels: whole cells with `taskType = "vision"` are skipped in the bank-population cycle, and any individual stored prompt that contains an `image_url` part is also skipped (defense-in-depth against pre-existing rows that pre-date the cell-level filter).
+
+Set `PROVARA_REGRESSION_INCLUDE_VISION=true` to opt back in. Budget accordingly — a single vision replay event can cost more than a day of text regression on a busy cell.
+
 ## Known limitations
 
 - **Pricing**: the gateway's cost calculation uses the model's per-token text pricing; vision-specific image-token pricing (OpenAI's "detail" tiers, Anthropic's image-tile counts) isn't yet factored in. Cost figures for vision requests are lower bounds, not exact.
