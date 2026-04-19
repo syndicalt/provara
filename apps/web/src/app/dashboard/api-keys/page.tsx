@@ -186,6 +186,7 @@ export default function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [masterKeyConfigured, setMasterKeyConfigured] = useState(true);
+  const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
 
   async function fetchData() {
@@ -196,8 +197,12 @@ export default function ApiKeysPage() {
         gatewayFetchRaw("/v1/providers"),
       ]);
 
-      const statusData = await statusRes.json();
-      setMasterKeyConfigured(statusData.configured);
+      if (statusRes.status === 401 || statusRes.status === 403) {
+        setForbidden(true);
+      } else if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        setMasterKeyConfigured(statusData.configured);
+      }
 
       if (keysRes?.ok) {
         const keysData = await keysRes.json();
@@ -239,10 +244,19 @@ export default function ApiKeysPage() {
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold">API Keys</h1>
-        {masterKeyConfigured && <AddKeyForm onSaved={fetchData} />}
+        {!forbidden && masterKeyConfigured && <AddKeyForm onSaved={fetchData} />}
       </div>
 
-      {!masterKeyConfigured && (
+      {forbidden && (
+        <div className="bg-amber-900/30 border border-amber-800 rounded-lg p-4">
+          <h3 className="font-medium text-amber-200 mb-1">Owner access required</h3>
+          <p className="text-sm text-amber-300/80">
+            Provider API keys are managed by tenant owners. Ask an owner on your team to add or rotate keys.
+          </p>
+        </div>
+      )}
+
+      {!forbidden && !masterKeyConfigured && (
         <div className="bg-amber-900/30 border border-amber-800 rounded-lg p-4">
           <h3 className="font-medium text-amber-200 mb-1">Master Key Required</h3>
           <p className="text-sm text-amber-300/80">
