@@ -12,9 +12,25 @@ import { createBoostTable } from "./adaptive/migrations.js";
 import { createRegressionCellTable } from "./adaptive/regression.js";
 import { getPricing } from "../cost/index.js";
 import { getRoutingConfig } from "./config.js";
+import { isStructuredOutputReliable } from "./model-capabilities.js";
 
 export type { RoutingResult, RouteTarget } from "./types.js";
 export { type RoutingProfile } from "./adaptive/index.js";
+
+/**
+ * Raised when `requires_structured_output` is true but no registered
+ * provider / model is known to reliably follow JSON schemas. The chat-
+ * completions handler in router.ts surfaces this as HTTP 502
+ * `no_capable_provider` — the caller asked for a constraint we can't
+ * honor; better to fail loudly than silently route to an unreliable
+ * model.
+ */
+export class NoCapableProviderError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NoCapableProviderError";
+  }
+}
 
 export interface RoutingEngineConfig {
   registry: ProviderRegistry;
@@ -36,6 +52,17 @@ export interface RoutingRequest {
    * shared pool only. `null`/`undefined` = anonymous caller, pool-only.
    */
   tenantId?: string | null;
+  /**
+   * Caller needs a response matching a structured output schema (#233).
+   * When true, the adaptive router and fallback chain both filter to
+   * models listed in `STRUCTURED_OUTPUT_RELIABLE`. Detected automatically
+   * from OpenAI-shape `response_format: { type: "json_schema" }` or a
+   * `tools` array, or set explicitly via the `requires_structured_output`
+   * request flag. A request with this flag and no capable candidate
+   * surfaces as `no_capable_provider` rather than silently routing to
+   * an unreliable model.
+   */
+  requiresStructuredOutput?: boolean;
 }
 
 export async function createRoutingEngine(config: RoutingEngineConfig) {
@@ -112,7 +139,25 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
   }
 
   async function route(request: RoutingRequest): Promise<RoutingResult> {
-    const allFallbacks = buildDynamicFallbacks(config.registry);
+    let allFallbacks = buildDynamicFallbacks(config.registry);
+
+    // Structured-output filter (#233). When the caller has signaled (or
+    // we auto-detected) that the response must match a JSON schema, the
+    // router narrows every candidate pool to models we've marked as
+    // reliably schema-conformant. Fallback chain, adaptive scoring, and
+    // A/B test variants all run against the filtered set. A user-
+    // pinned provider/model bypasses this filter — pinning is an
+    // explicit declaration that the caller knows what they're doing.
+    if (request.requiresStructuredOutput && !(request.provider && request.model) && !request.model) {
+      allFallbacks = allFallbacks.filter((t) => isStructuredOutputReliable(t.model));
+      if (allFallbacks.length === 0) {
+        throw new NoCapableProviderError(
+          "No provider registered with a model known to reliably follow structured output schemas. " +
+            "Register a capable model (gpt-4.1, claude-sonnet-4-6, gemini-2.5-pro, etc.) or set " +
+            "`requires_structured_output: false` to opt back into the full candidate pool.",
+        );
+      }
+    }
 
     // User override: explicit provider + model bypasses routing entirely.
     // routingHint + complexityHint let callers place the sample in a meaningful
@@ -166,6 +211,15 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     const profile = request.routingProfile || "balanced";
     const availableProviders = new Set(config.registry.list().map((p) => p.name));
 
+    // The `availableProviders` set gates which adaptive candidates can be
+    // picked. When structured output is required we also need to prevent
+    // individual unreliable models within an otherwise-capable provider
+    // from winning — `allFallbacks` was already filtered above, but the
+    // adaptive EMA sees the full matrix. Post-filter the result.
+    const schemaFilter = request.requiresStructuredOutput
+      ? (target: RouteTarget) => isStructuredOutputReliable(target.model)
+      : null;
+
     // A/B test candidate (may or may not run before adaptive based on config)
     const abResult = await findActiveAbTest(taskType, complexity);
     const adaptiveResult = await adaptive.getBestModel(
@@ -199,7 +253,7 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    if (adaptiveResult) {
+    if (adaptiveResult && (!schemaFilter || schemaFilter(adaptiveResult.target))) {
       const { target, via } = adaptiveResult;
       return {
         provider: target.provider,
