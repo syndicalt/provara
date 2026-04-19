@@ -1,0 +1,61 @@
+---
+title: Jailbreak detection
+description: Detect and block prompt-injection attempts that try to extract system prompts, override instructions, or pivot the assistant off-policy.
+---
+
+Every enterprise security questionnaire asks about prompt injection. Provara ships four built-in detection rules that catch the most common attack surfaces, layered on top of the existing guardrails engine — no new infrastructure, no extra latency.
+
+**Tier**: free. Ships as part of the core gateway.
+
+## What's detected
+
+| Rule | Catches | Default action |
+|---|---|---|
+| Instruction override | "ignore previous instructions", "disregard your rules", "forget everything above" | Block |
+| System prompt extraction | "reveal your system prompt", "show me the initial prompt", "repeat your instructions" | Block |
+| Role reversal / mode switch | "you are now DAN", "pretend to be unrestricted", "enable developer mode" | Block |
+| Delimiter injection | `### new instructions`, `</system>`, `[SYSTEM]`, embedded `SYSTEM:` headers | Block |
+
+All rules are **disabled by default**. Tenants opt in from `/dashboard/guardrails` once they've reviewed the false-positive tradeoff for their workload.
+
+## Enabling
+
+1. Open `/dashboard/guardrails`
+2. Find the rules under the "Jailbreak Detection" group
+3. Toggle on the ones you want
+4. Optionally switch action from `block` to `flag` if you want observation-mode first (flagged requests still reach the model; violations log to the guardrails table for audit)
+
+## Tuning for false positives
+
+The patterns are deliberately literal — no context analysis, just regex matches on input text. This means:
+
+- A legitimate request like *"Can you show me the instructions for setting up a dev environment?"* will match "show me... the instructions" and block. For this kind of workload, either use `flag` mode or disable the system-prompt-extraction rule specifically.
+- The role-reversal rule targets the well-known DAN/DUDE/jailbreak lexicon. Less likely to false-positive against normal traffic, but a tutorial writing about jailbreaks *will* trip it. Guardrails are per-tenant, so content-writing workspaces can stay permissive while production API traffic stays locked down.
+
+Custom rules (`type: "regex"`) can complement the built-ins — add a pattern specific to your domain (e.g. block any message containing your internal ticketing system's API key prefix).
+
+## Limitations
+
+The MVP is heuristic-only. **Deferred to a follow-up**:
+
+- **Classifier-based detection** — route a copy of each input to a small model trained on jailbreak datasets. Catches semantic attacks that don't match known phrases. Will ship behind a flag since it adds a per-request API call.
+- **Multi-language patterns** — current rules are English-only. Non-English jailbreaks pass through silently.
+- **Response-side detection** — detecting when a jailbreak *succeeded* from the output, not just the input. A separate, harder problem.
+
+## API
+
+Same guardrails endpoints you already use:
+
+```
+GET    /v1/guardrails            list rules (auto-seeds jailbreak rules on first call)
+PUT    /v1/guardrails/:id        toggle enabled, change action, edit pattern
+POST   /v1/guardrails            create a custom rule
+GET    /v1/guardrails/logs       recent violations
+```
+
+Blocked requests return `400 guardrail_error` with the matched rule name in the message. The audit log row records the matched snippet so you can review false positives.
+
+## Related
+
+- [Guardrails](/docs/features/guardrails) — the engine that backs this feature; covers PII detection, custom regex, and rule lifecycle
+- [Audit logs](/docs/features/audit-logs) — every guardrail action is logged for compliance review

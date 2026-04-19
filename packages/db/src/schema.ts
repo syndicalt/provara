@@ -246,7 +246,7 @@ export const guardrailRules = sqliteTable("guardrail_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
   name: text("name").notNull(),
-  type: text("type", { enum: ["pii", "content", "regex", "token_limit"] }).notNull(),
+  type: text("type", { enum: ["pii", "content", "regex", "token_limit", "jailbreak"] }).notNull(),
   target: text("target", { enum: ["input", "output", "both"] }).notNull().default("both"),
   action: text("action", { enum: ["block", "redact", "flag"] }).notNull().default("block"),
   pattern: text("pattern"), // regex pattern or JSON config
