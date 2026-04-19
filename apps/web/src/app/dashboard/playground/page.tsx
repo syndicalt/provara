@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 import { ChatInput, type ChatInputHandle } from "../../../components/chat/ChatInput";
@@ -24,7 +24,11 @@ interface ProviderInfo {
   models: string[];
 }
 
-export default function PlaygroundPage() {
+// `useSearchParams` forces the page into dynamic rendering and — in Next 15 —
+// requires a Suspense boundary above it or the static prerender fails. The
+// real page lives in `PlaygroundInner`; the default export wraps it in
+// Suspense so the build can still statically generate the shell.
+function PlaygroundInner() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [selectedModel, setSelectedModel] = useSessionPersist("pg:model", "");
   const [selectedProvider, setSelectedProvider] = useSessionPersist("pg:provider", "");
@@ -613,5 +617,13 @@ export default function PlaygroundPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PlaygroundPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-zinc-400">Loading playground…</div>}>
+      <PlaygroundInner />
+    </Suspense>
   );
 }
