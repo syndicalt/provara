@@ -6,7 +6,7 @@ import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
 import { logCost } from "./cost/index.js";
 import { calculateCost } from "./cost/pricing.js";
-import { createRoutingEngine, type RoutingProfile } from "./routing/index.js";
+import { createRoutingEngine, NoCapableProviderError, type RoutingProfile } from "./routing/index.js";
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
@@ -265,9 +265,43 @@ export async function createRouter(ctx: RouterContext) {
 
   // OpenAI-compatible chat completions endpoint
   app.post("/v1/chat/completions", async (c) => {
-    const body = await c.req.json<CompletionRequest & { provider?: string; cache?: boolean; complexity_hint?: "simple" | "medium" | "complex" }>();
-    const { provider: providerName, routing_hint, complexity_hint, cache: cacheParam, ...rest } = body;
+    const body = await c.req.json<CompletionRequest & {
+      provider?: string;
+      cache?: boolean;
+      complexity_hint?: "simple" | "medium" | "complex";
+      /**
+       * Explicit opt-in to structured-output routing filter (#233).
+       * Auto-detected from `response_format: { type: "json_schema" }`
+       * or a non-empty `tools` array — callers don't need to set this
+       * unless they want to override a negative auto-detection.
+       */
+      requires_structured_output?: boolean;
+      response_format?: { type?: string };
+      tools?: unknown[];
+    }>();
+    const {
+      provider: providerName,
+      routing_hint,
+      complexity_hint,
+      cache: cacheParam,
+      requires_structured_output,
+      response_format,
+      tools,
+      ...rest
+    } = body;
     const request = rest as CompletionRequest;
+
+    // Auto-detect structured-output intent (#233). Explicit flag wins
+    // when set; otherwise any standard JSON-schema / tool-use marker
+    // flips it on.
+    const autoDetectStructured =
+      response_format?.type === "json_schema" ||
+      response_format?.type === "json_object" ||
+      (Array.isArray(tools) && tools.length > 0);
+    const requiresStructuredOutput =
+      typeof requires_structured_output === "boolean"
+        ? requires_structured_output
+        : autoDetectStructured;
     // Serialize once for all downstream DB writes (cache-hit row, streaming
     // row, non-streaming row). Messages is otherwise stringified 2–3× per
     // request on the hot path.
@@ -344,16 +378,33 @@ export async function createRouter(ctx: RouterContext) {
         );
       }
     }
-    const routingResult = await routingEngine.route({
-      messages: request.messages,
-      provider: providerName,
-      model: request.model !== "" ? request.model : undefined,
-      routingHint: routing_hint,
-      complexityHint: complexity_hint,
-      routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
-      routingWeights: tokenInfo?.routingWeights || undefined,
-      tenantId,
-    });
+    let routingResult;
+    try {
+      routingResult = await routingEngine.route({
+        messages: request.messages,
+        provider: providerName,
+        model: request.model !== "" ? request.model : undefined,
+        routingHint: routing_hint,
+        complexityHint: complexity_hint,
+        requiresStructuredOutput,
+        routingProfile: (tokenInfo?.routingProfile as RoutingProfile) || undefined,
+        routingWeights: tokenInfo?.routingWeights || undefined,
+        tenantId,
+      });
+    } catch (err) {
+      if (err instanceof NoCapableProviderError) {
+        return c.json(
+          {
+            error: {
+              message: err.message,
+              type: "no_capable_provider",
+            },
+          },
+          502,
+        );
+      }
+      throw err;
+    }
 
     // Check cache before calling any provider.
     // Cache lookup order: exact-match (in-memory) → semantic-match (embedding
