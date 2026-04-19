@@ -7,4 +7,5 @@
 -- never rendered. Normalizing to the closest valid value ("medium")
 -- makes the historical data visible again without discarding it.
 UPDATE requests SET complexity = 'medium' WHERE complexity = 'moderate';
+--> statement-breakpoint
 UPDATE model_scores SET complexity = 'medium' WHERE complexity = 'moderate';
