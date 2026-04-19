@@ -41,6 +41,7 @@ import {
 } from "../audit/actions.js";
 import { getStripe } from "../stripe/index.js";
 import { getSubscriptionForTenant } from "../stripe/subscriptions.js";
+import { isOperatorTenant } from "../auth/tier.js";
 
 /**
  * Self-service profile routes (#251). These are all gated by the
@@ -85,6 +86,7 @@ export function createMeRoutes(db: Db) {
 
     const sub = await getSubscriptionForTenant(db, authUser.tenantId);
     const tier = sub?.tier ?? "free";
+    const isOperator = await isOperatorTenant(db, authUser.tenantId);
 
     return c.json({
       user: {
@@ -101,6 +103,7 @@ export function createMeRoutes(db: Db) {
         ownerCount,
         authMethods: methods.map((m) => m.provider),
         tier,
+        isOperator,
       },
     });
   });
@@ -239,6 +242,25 @@ export function createMeRoutes(db: Db) {
     const body: { confirmTenantName?: string } = await c.req
       .json<{ confirmTenantName?: string }>()
       .catch(() => ({}));
+
+    // Operator tenants are the super-admin accounts (PROVARA_OPERATOR_EMAILS)
+    // we use to run the platform. Self-serve delete is intentionally off
+    // here — if we ever need to tear one down it's done by hand with a
+    // DB script so we don't accidentally nuke the account we're using for
+    // production support.
+    const operator = await isOperatorTenant(db, authUser.tenantId);
+    if (operator) {
+      return c.json(
+        {
+          error: {
+            message:
+              "Operator accounts cannot be deleted through the dashboard. These are managed by the Provara team directly.",
+            type: "operator_tenant_protected",
+          },
+        },
+        409,
+      );
+    }
 
     const ownerCountRow = await db
       .select({ count: sql<number>`count(*)` })
