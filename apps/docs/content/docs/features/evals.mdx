@@ -1,0 +1,77 @@
+---
+title: Evals
+description: Upload a JSONL dataset, run it against a model, get per-case judge scores. Prevent prompt/model regressions before they ship, not after.
+---
+
+Provara's replay bank, judge, and model registry already score quality on production traffic. Evals is the same loop applied to a curated dataset you control — a golden test set that regressions must pass to ship.
+
+**Positioning**: your prod quality monitor and your pre-deploy regression check run on the same judge, same models, same scoring. No drift between what "good" means in staging vs. production.
+
+## Quickstart
+
+1. Go to `/dashboard/evals`
+2. Click **Upload dataset**, paste JSONL (one case per line):
+   ```json
+   {"input": [{"role": "user", "content": "What's 2+2?"}]}
+   {"input": [{"role": "user", "content": "Summarize: the sky is blue because of Rayleigh scattering."}]}
+   {"input": [{"role": "user", "content": "Write a haiku about caching."}]}
+   ```
+3. Pick a dataset + a (provider, model) pair, click **Run**
+4. The run executes cases in batches of 4; judge scores each output on a 1–5 scale
+5. Open the run detail to watch progress, drill into individual cases, inspect scores + outputs
+
+## Case format
+
+Each JSONL line is a JSON object:
+
+| Field | Required | Description |
+|---|---|---|
+| `input` | yes | `ChatMessage[]` — the messages array you'd normally POST to `/v1/chat/completions` |
+| `expected` | no | String reference output. Not yet used for pass/fail; reserved for a follow-up that adds exact/fuzzy matching. |
+| `metadata` | no | Arbitrary object. Useful for tagging cases by category, source, ticket number, etc. |
+
+`ChatMessage.content` can be a string or the multimodal `ContentPart[]` shape — evals with image inputs work the same as production vision requests (see [vision](/docs/features/vision)).
+
+## Judge scoring
+
+Each output is graded by a small, cheap model (default: `gpt-4.1-mini` → `claude-haiku-4-5-*` → first available). The judge prompt asks for a 1–5 score considering accuracy, relevance, clarity, and completeness. Failed parses or unreachable judges leave `score: null` — these cases count toward the run's progress but not toward the average.
+
+**Aggregate score**: simple average across cases with a non-null score. Live-updating as each case completes, so long-running datasets show real-time convergence instead of a final reveal.
+
+## API
+
+Same endpoints the dashboard uses:
+
+```
+POST /v1/evals/datasets           { name, description?, jsonl }
+GET  /v1/evals/datasets           list
+GET  /v1/evals/datasets/:id       detail + first 5 cases preview
+DELETE /v1/evals/datasets/:id     cascades to dependent runs + results
+
+POST /v1/evals/runs               { datasetId, provider, model }
+GET  /v1/evals/runs               list (last 50)
+GET  /v1/evals/runs/:id           run + all results + completedCases
+```
+
+A run POST returns immediately (`202 Accepted` with `{ runId, status: "queued" }`); the executor works in the background and writes results as they complete. Poll `/runs/:id` to track progress.
+
+## Cost accounting
+
+Eval runs write rows to `cost_logs` with a `requestId` of `eval-<runId>-<caseIndex>`. They show up on your spend dashboard alongside production traffic, but don't contaminate the adaptive router's EMA — evals deliberately skip the `/v1/chat/completions` path so feedback from evals doesn't get mixed with feedback from real users.
+
+## Out of scope (MVP)
+
+Deferred to follow-ups:
+
+- **CLI + GitHub Action** — run a dataset against a candidate (provider, model) in CI, block the PR on regression. Primary distribution unlock.
+- **Prompt-version variants** — same dataset, two prompt versions, compare scores
+- **Pass/fail with expected outputs** — exact, fuzzy, or model-graded matching against `expected`
+- **Side-by-side run comparison** — two completed runs, delta per case + aggregate
+
+Track them under issues tagged with `feature` + related to #262.
+
+## Related
+
+- [Adaptive routing](/docs/features/adaptive-routing) — judge scoring for live traffic
+- [Regression detection](/docs/features/regression-detection) — replay bank for post-hoc regression catch; evals are the pre-deploy counterpart
+- [Analytics](/docs/features/analytics) — where eval cost shows up on the dashboard

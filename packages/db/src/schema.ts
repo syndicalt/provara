@@ -856,3 +856,70 @@ export const ssoConfigs = sqliteTable("sso_configs", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+/**
+ * Eval datasets and runs (#262). A dataset is a JSONL-encoded collection
+ * of input cases; a run executes every case against a (provider, model)
+ * pair and grades each output with the existing judge pipeline.
+ *
+ * MVP skips per-case expected outputs and pass/fail logic — the judge's
+ * 1–5 quality score is the primary signal. A follow-up will add
+ * expected-output matching and CI integration.
+ */
+export const evalDatasets = sqliteTable("eval_datasets", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  /** JSONL string — one case per line, shape `{input: ChatMessage[], expected?: string, metadata?: object}`. */
+  casesJsonl: text("cases_jsonl").notNull(),
+  caseCount: integer("case_count").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const evalRuns = sqliteTable("eval_runs", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  datasetId: text("dataset_id")
+    .notNull()
+    .references(() => evalDatasets.id),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  /** Status lifecycle: queued → running → (completed | failed). Set to `failed`
+   *  if the executor crashes before finishing; partial results still persist. */
+  status: text("status", { enum: ["queued", "running", "completed", "failed"] })
+    .notNull()
+    .default("queued"),
+  /** Aggregate average score across all cases with a non-null score. Recomputed
+   *  each time results land so the UI can render a live-updating number. */
+  avgScore: real("avg_score"),
+  totalCost: real("total_cost"),
+  startedAt: integer("started_at", { mode: "timestamp" }),
+  completedAt: integer("completed_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const evalResults = sqliteTable("eval_results", {
+  id: text("id").primaryKey(),
+  runId: text("run_id")
+    .notNull()
+    .references(() => evalRuns.id),
+  caseIndex: integer("case_index").notNull(),
+  /** Stored for the run view so we don't re-read the dataset JSONL for display. */
+  input: text("input").notNull(),
+  output: text("output"),
+  score: integer("score"),
+  judgeSource: text("judge_source"),
+  error: text("error"),
+  latencyMs: integer("latency_ms"),
+  cost: real("cost"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("eval_results_run_idx").on(table.runId),
+]);
