@@ -1,0 +1,200 @@
+---
+title: Analytics
+description: Every metric on the Provara dashboard — what it measures, how it's calculated, and how to move it.
+---
+
+Every number on the Provara dashboard comes from one of two tables:
+
+- **`requests`** — one row per inbound `/v1/chat/completions` call, including cache hits. Source for counts, latency, task-type / complexity / routed-by distribution, and tokens-saved.
+- **`cost_logs`** — one row per **real upstream provider call**. Cache hits do **not** write here. Source for all cost figures.
+
+This matters: a 1,000-request day with 40% cache hit rate shows 1,000 in "Total Requests" but only 600 rows in `cost_logs`. Cost averages divide by `cost_logs.count`, not `requests.count`.
+
+All analytics endpoints are scoped to the caller's `tenant_id` — numbers are always per-workspace.
+
+## Overview metrics
+
+The top-of-dashboard stat strip. Endpoint: `GET /v1/analytics/overview` + `GET /v1/analytics/cache/savings`.
+
+### Total Requests
+
+**Measures:** every inbound chat-completion call that got past auth, including cache hits, A/B-routed requests, and guardrail-blocked ones that we still logged.
+
+**Calculated as:** `SELECT count(*) FROM requests WHERE tenant_id = ?`
+
+**How to improve:** this is a traffic counter, not a quality signal — there is no "good" value. Watch it for week-over-week trend; a sudden drop usually means a client misconfig upstream (bad base URL, expired token).
+
+### Total Cost
+
+**Measures:** total USD we calculated for real upstream provider calls in this tenant's scope.
+
+**Calculated as:** `SELECT sum(cost) FROM cost_logs WHERE tenant_id = ?`. Cost per row = input_tokens × input_rate + output_tokens × output_rate, using the static pricing table in `packages/gateway/src/cost/pricing.ts`. **Cached requests contribute $0** because they never write to `cost_logs`.
+
+**How to improve:**
+- Enable the **semantic cache** ([semantic-cache](/docs/features/semantic-cache)) — exact-match is on by default but resets on every gateway restart; semantic hits persist across restarts.
+- Turn on **auto cost migration** ([cost-migration](/docs/features/cost-migration)) so routing cells quietly move to cheaper models at quality parity.
+- Set **budgets** ([budgets](/docs/features/budgets)) with hard-stop enforcement so runaway workloads don't silently compound.
+- Use **adaptive routing** ([adaptive-routing](/docs/features/adaptive-routing)) with feedback — it biases simple prompts toward cheaper models.
+
+### Avg Latency
+
+**Measures:** mean end-to-end latency in milliseconds across all requests.
+
+**Calculated as:** `SELECT avg(latency_ms) FROM requests WHERE tenant_id = ?`. Cache hits are recorded with `latency_ms = 0` — caching working well pulls this number down, which is correct (user-observed latency really is ~0 on hits).
+
+**How to improve:**
+- Improve cache hit rate (see Cache section below).
+- Reduce fallback rate — each fallback adds the failed attempt's wall time before the retry succeeds. Check `GET /v1/analytics/pipeline` → `stages.fallback.count`.
+- Review the Timeseries page for a specific slow provider/model; if one is dragging the average, set it as a fallback instead of a primary.
+- For streaming workloads, latency is time-to-**last**-chunk in current releases, not time-to-first-token — prompt length dominates.
+
+### Active Providers
+
+**Measures:** how many provider adapters are currently reachable and can answer a routing decision *right now*.
+
+**Calculated as:** `registry.list().filter(p => p.models.length > 0).length`. Liveness is inferred from whether the startup discovery pass returned any models. Ollama registers unconditionally, so if your Ollama server is down it drops out of this count. Historically this was a `COUNT(DISTINCT provider) FROM requests` — that number conflated "ever routed through" with "ready to route" and was corrected in #157.
+
+**How to improve:** add API keys via `/dashboard/api-keys` or set the corresponding env var. The registry picks them up on gateway restart.
+
+### Tokens Saved
+
+**Measures:** total input + output tokens your tenant did **not** have to re-send to a provider because a cache hit returned a prior response.
+
+**Calculated as:** `SELECT sum(tokens_saved_input + tokens_saved_output) FROM requests WHERE tenant_id = ?`. These columns are populated *only* when a cache hit is served (`router.ts:443-476`), copied from the original cached response's token counts.
+
+**Requirements for a row to contribute:**
+1. `temperature = 0` or unset on the request
+2. No `x-provara-no-cache: true` header and no `"cache": false` in the body
+3. Not routed by an active A/B test
+4. Either an exact-match hit (same messages+provider+model within a 5-minute, in-memory, per-process window) **or** a semantic hit (requires an embedding provider configured — typically an OpenAI key)
+
+**How to improve:**
+- Set `PROVARA_SEMANTIC_CACHE_ENABLED=true` and make sure an embedding-capable provider key is configured. Exact-match alone dies on every gateway restart; semantic is durable.
+- Lower `PROVARA_SEMANTIC_CACHE_THRESHOLD` (default `0.97`) — `0.93`–`0.95` catches paraphrases at the cost of more false positives.
+- Audit `temperature > 0` callers — unless you need stochasticity, `0` is a free cache unlock.
+- For batch/report workloads with repeated prompts, stop sending `x-provara-no-cache: true`.
+
+## Cost analytics
+
+Endpoints: `GET /v1/analytics/costs/by-provider`, `GET /v1/analytics/costs/by-model`, `GET /v1/analytics/timeseries/cost-by-provider`.
+
+### Cost by provider / Cost by model
+
+**Measures:** total spend, token volume, request count, and (for by-model) average cost-per-request, sliced by provider and by `(provider, model)` pair.
+
+**Calculated as:** `SELECT sum(cost), sum(input_tokens), sum(output_tokens), count(*), avg(cost) FROM cost_logs WHERE tenant_id = ? GROUP BY provider[, model]`. All-time — no range filter.
+
+**How to improve:**
+- Look for the same task class routed across multiple expensive models. If GPT-4-class and Claude-4-class models both serve the same `(taskType, complexity)` cell, an A/B test will tell you which is actually winning.
+- High **avg cost** on a model with low **request count** usually means long-context calls — check prompt length distribution in the Timeseries page.
+- See Cost Migration ([cost-migration](/docs/features/cost-migration)) for automated per-cell substitution.
+
+### Cost timeseries by provider
+
+**Measures:** spend per time bucket, split by provider, over a rolling range (`1h`, `6h`, `24h`, `7d`, `30d`).
+
+**Calculated as:** `strftime(bucket_format, created_at) ... GROUP BY bucket, provider`. Bucket format is hourly for ≤24h ranges, daily otherwise.
+
+**How to improve:** spikes that don't correlate with request-volume spikes mean you're paying more *per call* — usually because routing shifted to a more expensive model. Cross-reference the Routing page for the same window.
+
+## Latency & volume timeseries
+
+Endpoint: `GET /v1/analytics/timeseries`.
+
+**Measures:** per-bucket request count, avg latency, p50/p95/p99, and total cost (joined from `cost_logs`).
+
+**Calculated as:** request-volume and latency come from `requests`; cost comes from `cost_logs`, merged on bucket. **The percentiles are approximations, not true quantiles** — SQLite doesn't have a built-in percentile function, so:
+
+- `p50Latency ≈ avg(latency_ms)`
+- `p95Latency ≈ avg + 0.8 × (max − avg)`
+- `p99Latency ≈ max(latency_ms)`
+
+This is fine for "is something spiking?" and wrong for SLA reporting. If you need true p99 for an SLA, export the raw `requests.latency_ms` column and compute it downstream.
+
+**How to improve:**
+- A widening gap between p50 and p99 on a single provider usually means you're hitting its long-prompt slow path — shorten context or shard the prompt.
+- p99 = single slowest request in the bucket, so one timeout can distort the chart. Widen the bucket (pick a shorter range = more buckets = smaller blast radius per outlier).
+
+## Routing analytics
+
+Endpoints: `GET /v1/analytics/routing/stats`, `GET /v1/analytics/routing/distribution`, `GET /v1/analytics/pipeline`.
+
+### Task-type × complexity distribution
+
+**Measures:** how your traffic classifies. Every request is tagged by the classifier (or by routing hint / user override) with a `taskType` (e.g. `code`, `analysis`, `conversation`) and `complexity` (`simple`, `medium`, `complex`).
+
+**Calculated as:** `GROUP BY task_type, complexity, routed_by, provider, model`. `null` task_type / complexity means the classifier was bypassed (user override, A/B test, or classification failed).
+
+**How to improve:**
+- A lopsided distribution (80%+ in one cell) means the classifier isn't discriminating well for your workload. Consider routing hints on the client side (`x-provara-task-type`, `x-provara-complexity`) to pre-label traffic.
+- Heavy `null` task_type from user overrides means adaptive routing can't learn from those requests — the feedback loop skips them.
+
+### Pipeline stages
+
+**Measures:** which routing stage decided the target model for each request, and how long that stage added. Stages:
+
+| Stage | Triggered by | Active condition |
+|---|---|---|
+| `classifier` | Default path — `routed_by = "classification"` or `"routing-hint"` | Always |
+| `userOverride` | `routed_by = "user-override"` (caller pinned `model` in the request) | Always |
+| `abTest` | `routed_by = "ab-test"` (caller had an active experiment in scope) | Any A/B test with `status = "active"` |
+| `adaptive` | `routed_by = "adaptive"` (score-based pick from observed feedback) | Any feedback row has ever been submitted |
+| `exploration` | `routed_by = "exploration"` (adaptive engine randomly sampled a non-top model) | `PROVARA_EXPLORATION_RATE > 0` (default `0.1`) |
+| `fallback` | Original provider errored, retry succeeded — `used_fallback = true` | Always |
+| `providers` | Final upstream call (all requests pass through) | Always |
+
+**Calculated as:** `GROUP BY routed_by` with latency averaged per stage; `active_ab_tests` counted from `ab_tests.status`; `feedback_count` from the `feedback` table.
+
+**How to improve:**
+- `adaptive.count = 0` and `feedbackCount = 0` means no one is submitting thumbs-up/down on responses — the adaptive router has nothing to learn from. Wire `POST /v1/feedback` into your app.
+- High `fallback.count` means your primary providers are flaky. Look at `GET /v1/analytics/requests?orderBy=createdAt&limit=50` and filter `used_fallback = true` to see *which* provider/model is failing.
+- `exploration.count` should be roughly 10% of traffic by default. If it's 0, `PROVARA_EXPLORATION_RATE` is probably set to `0` — the router will then never discover that a new model has gotten better.
+
+## Cache analytics
+
+Endpoint: `GET /v1/analytics/cache/savings`.
+
+### Hit rate
+
+**Measures:** fraction of requests served from a cache.
+
+**Calculated as:** `(exact_hits + semantic_hits) / total_requests`, all-time per tenant.
+
+**How to improve:**
+- Confirm cacheability: temperature must be `0`/unset, no `x-provara-no-cache` header, not mid-A/B test.
+- Enable the semantic layer (see [semantic-cache](/docs/features/semantic-cache)) — exact-match only hits verbatim-identical prompts.
+- Lower `PROVARA_SEMANTIC_CACHE_THRESHOLD` if your prompts paraphrase a lot.
+- **The exact-match cache is in-memory, per-process, 5-min TTL, 1000-entry LRU.** It dies on every gateway restart, so fresh deploys start at 0% exact hit rate regardless of prior traffic.
+
+### Savings by model
+
+**Measures:** which models generate the most cache hits and how many tokens you've saved on each.
+
+**Calculated as:** `GROUP BY provider, model WHERE cached = true`.
+
+**How to improve:** a model with high hit count + high tokens-saved is a prime candidate to leave routed as the primary for that cell; frequent cache hits suggest the prompt class is repetitive and stable. A model with many requests but few cache hits is either drawing temperature>0 traffic or novel prompts.
+
+## Model comparison / quality
+
+Endpoint: `GET /v1/analytics/models/compare?range=7d`.
+
+**Measures:** per `(provider, model)` over the selected range: request count, avg latency, total cost, avg user feedback score, feedback count.
+
+**Calculated as:**
+- Volume & latency: `GROUP BY provider, model FROM requests WHERE created_at >= since`
+- Cost: joined from `cost_logs` by model
+- Quality: `avg(feedback.score), count(feedback.id)` joined to `requests` on `request_id`, filtered to the same range
+
+**How to improve:**
+- `avgScore = null` means nobody's submitted feedback on this model — call `POST /v1/feedback` from your app (thumbs-up/down is enough; adaptive routing uses the numeric score).
+- If two models have similar `avgScore` within noise (±0.05 with >50 feedback rows each) and one is 2–5× cheaper, run an A/B test to confirm and let cost migration ([cost-migration](/docs/features/cost-migration)) move the routing cell.
+- Low `feedbackCount` on a high-traffic model is a blind spot — you're flying routing decisions on latency and cost alone for that model.
+
+## Related
+
+- [Semantic cache](/docs/features/semantic-cache) — exact + semantic caching internals
+- [Adaptive routing](/docs/features/adaptive-routing) — how feedback drives model selection
+- [Cost migration](/docs/features/cost-migration) — nightly automated cost optimization
+- [Spend intelligence](/docs/features/spend-intelligence) — per-user attribution, anomaly detection, forecasts
+- [Budgets](/docs/features/budgets) — hard-stop spend caps
+- [A/B testing](/docs/features/a-b-testing) — experiment-driven routing
