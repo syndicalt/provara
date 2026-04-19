@@ -191,6 +191,16 @@ Endpoint: `GET /v1/analytics/models/compare?range=7d`.
 - If two models have similar `avgScore` within noise (±0.05 with >50 feedback rows each) and one is 2–5× cheaper, run an A/B test to confirm and let cost migration ([cost-migration](/docs/features/cost-migration)) move the routing cell.
 - Low `feedbackCount` on a high-traffic model is a blind spot — you're flying routing decisions on latency and cost alone for that model.
 
+## Live traffic tap
+
+Endpoint: `GET /v1/analytics/live` (Server-Sent Events). UI: `/dashboard/live`.
+
+**Measures:** nothing — it's a live tail of completed requests, not an aggregate. Each event is a compact summary (provider, model, taskType, routedBy, tokens, cost, prompt preview) published as the gateway finishes writing the `requests` row.
+
+**Calculated as:** in-process pub/sub. The router publishes after every live, cached, and streaming completion. The SSE handler filters by tenant and forwards. Stream is ephemeral — no server-side persistence. For a time-bounded lookup use the Logs page.
+
+**How to improve:** not an optimization target; it's a debugging tool. Use it when a customer reports an issue and you need to see what's happening *now*.
+
 ## Related
 
 - [Semantic cache](/docs/features/semantic-cache) — exact + semantic caching internals
