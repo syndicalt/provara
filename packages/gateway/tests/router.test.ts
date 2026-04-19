@@ -51,6 +51,29 @@ describe("routing engine", () => {
       expect(result.complexity).toBe("complex");
     });
 
+    it("honors complexityHint on the CLASSIFICATION path (no provider pin) — regression for the dropped-hint bug", async () => {
+      // Short user message that the heuristic classifier would normally
+      // label `simple`. With a `complexityHint: "complex"` the hint must
+      // override so the caller's explicit claim ("I know this needs a
+      // capable model") routes to the complex cell.
+      const db = await makeTestDb();
+      const registry = makeFakeRegistry([
+        makeFakeProvider({ name: "openai", models: ["gpt-4.1-nano"] }),
+        makeFakeProvider({ name: "anthropic", models: ["claude-sonnet-4-6"] }),
+      ]);
+      const engine = await createRoutingEngine({ registry, db });
+
+      const result = await engine.route({
+        messages: [{ role: "user", content: "hi" }],
+        routingHint: "coding",
+        complexityHint: "complex",
+        // no provider / model pin → hits the classification path
+      });
+
+      expect(result.taskType).toBe("coding");
+      expect(result.complexity).toBe("complex");
+    });
+
     it("resolves model-only pin through getForModel to the correct provider", async () => {
       const db = await makeTestDb();
       const registry = makeFakeRegistry([

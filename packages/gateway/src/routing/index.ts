@@ -154,10 +154,13 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
       }
     }
 
-    // Classify the request
+    // Classify the request. Caller-supplied `routingHint` / `complexityHint`
+    // always win over the classifier — the hints are an explicit claim that
+    // the caller knows better than the heuristic (e.g. a schema-heavy
+    // request where a short user message still demands a capable model).
     const classification = await classifyRequest(request.messages, config.registry);
     const taskType: TaskType = request.routingHint || classification.taskType;
-    const complexity: Complexity = classification.complexity;
+    const complexity: Complexity = request.complexityHint || classification.complexity;
 
     const { abTestPreempts } = getRoutingConfig();
     const profile = request.routingProfile || "balanced";
