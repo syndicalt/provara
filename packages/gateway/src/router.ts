@@ -9,6 +9,7 @@ import { calculateCost } from "./cost/pricing.js";
 import { createRoutingEngine, NoCapableProviderError, type RoutingProfile } from "./routing/index.js";
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
+import { createEvalRoutes } from "./routes/evals.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
 import { createAdminMiddleware, requireRole } from "./auth/admin.js";
@@ -244,6 +245,9 @@ export async function createRouter(ctx: RouterContext) {
 
   // Mount analytics routes
   app.route("/v1/analytics", createAnalyticsRoutes(ctx.db, ctx.registry));
+
+  // Mount evals routes (#262)
+  app.route("/v1/evals", createEvalRoutes(ctx.db, ctx.registry));
 
   // Mount API key management routes
   app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));
