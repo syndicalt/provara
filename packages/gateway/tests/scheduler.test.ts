@@ -101,7 +101,11 @@ describe("scheduler", () => {
     await expect(scheduler.runNow("nope")).rejects.toThrow(/unknown job/);
   });
 
-  it("skips overlapping runs of the same job", async () => {
+  it("skips overlapping runs of the same job without writing to scheduled_jobs", async () => {
+    // #225 regression: when a tick fires while the previous run is still
+    // in progress, we silently skip and DO NOT call recordRun. Writing on
+    // every blocked tick amplified by a misconfigured intervalMs caused
+    // the Turso 10M-writes-in-a-month quota burn.
     const scheduler = createScheduler(db);
     let running = 0;
     let maxConcurrent = 0;
@@ -126,8 +130,39 @@ describe("scheduler", () => {
 
     expect(maxConcurrent).toBe(1);
     const row = await db.select().from(scheduledJobs).where(eq(scheduledJobs.name, "slow-job")).get();
-    // Second call recorded as skipped
-    expect(["ok", "skipped"]).toContain(row?.lastStatus);
+    // First call completes as "ok"; second call silently no-ops and does
+    // not overwrite the row with a "skipped" status.
+    expect(row?.lastStatus).toBe("ok");
+    expect(row?.runCount).toBe(1);
+  });
+
+  it("clamps intervalMs below 60s to the minimum — #225 misconfiguration guard", async () => {
+    // Ops set `PROVARA_REPLAY_CYCLE_INTERVAL_MS=7` thinking "7 days" but
+    // the var is milliseconds. Scheduler fired ~143 times/sec until Turso
+    // cut off writes. This test encodes that a too-small intervalMs is
+    // clamped rather than honored.
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const scheduler = createScheduler(db);
+    let runs = 0;
+    await scheduler.schedule({
+      name: "misconfigured-job",
+      intervalMs: 7,           // the bug
+      initialDelayMs: 0,
+      handler: () => { runs++; },
+    });
+    scheduler.start();
+
+    await wait(200);
+    scheduler.stop();
+
+    // At the 7ms setting there would be ~28 firings in 200ms. With the
+    // 60s clamp, only the initial immediate-fire runs.
+    expect(runs).toBeLessThanOrEqual(2);
+    expect(warnSpy).toHaveBeenCalled();
+    const msg = warnSpy.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(msg).toMatch(/intervalMs=7/);
+    expect(msg).toMatch(/below 60000ms minimum/i);
+    warnSpy.mockRestore();
   });
 
   it("getJobs returns persisted state", async () => {

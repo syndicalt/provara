@@ -104,8 +104,15 @@ export function createScheduler(db: Db) {
     // Atomic check-and-set before any await so concurrent calls cannot both
     // pass the guard. Without this, two runNow() calls both see an empty
     // `running` set, then both enter the async body and double-fire.
+    //
+    // When the guard blocks, we intentionally DON'T call `recordRun` — doing
+    // so would write to `scheduled_jobs` on every blocked tick, which at
+    // high firing rates (e.g. a misconfigured `intervalMs=7` fires ~143x/sec)
+    // amplifies DB writes catastrophically. The previous run is still alive
+    // and its final status will be recorded when it finishes; the in-memory
+    // `running` set is the authoritative "is this busy?" signal anyway.
+    // See #225 for the incident that motivated this.
     if (running.has(name)) {
-      await recordRun(name, "skipped", 0, "previous run still in progress");
       return;
     }
     running.add(name);
@@ -141,10 +148,26 @@ export function createScheduler(db: Db) {
     if (started) armTimer(job);
   }
 
+  /**
+   * Minimum acceptable `intervalMs`. Any value below this is treated as a
+   * misconfiguration (see #225: `PROVARA_REPLAY_CYCLE_INTERVAL_MS=7` was set
+   * thinking "7 days" and the scheduler fired ~143x/sec until Turso cut off
+   * writes). Clamping + loud warn is safer than honoring the value.
+   */
+  const MIN_INTERVAL_MS = 60_000;
+
   function armTimer(job: JobRegistration): void {
     if (timers.has(job.name)) {
       clearTimeout(timers.get(job.name)!);
       clearInterval(timers.get(job.name)!);
+    }
+    if (job.intervalMs < MIN_INTERVAL_MS) {
+      console.warn(
+        `[scheduler] job "${job.name}" configured with intervalMs=${job.intervalMs} ` +
+        `(below ${MIN_INTERVAL_MS}ms minimum) — likely misconfigured. Clamping to ${MIN_INTERVAL_MS}ms. ` +
+        `If you meant days, multiply by 86_400_000.`,
+      );
+      job = { ...job, intervalMs: MIN_INTERVAL_MS };
     }
     const delay = job.initialDelayMs ?? job.intervalMs;
     const first = setTimeout(() => {
