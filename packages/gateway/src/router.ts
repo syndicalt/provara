@@ -311,8 +311,8 @@ export async function createRouter(ctx: RouterContext) {
     }>();
     const {
       provider: providerName,
-      routing_hint,
-      complexity_hint,
+      routing_hint: rawRoutingHint,
+      complexity_hint: rawComplexityHint,
       cache: cacheParam,
       requires_structured_output,
       response_format,
@@ -320,6 +320,27 @@ export async function createRouter(ctx: RouterContext) {
       ...rest
     } = body;
     const request = rest as CompletionRequest;
+
+    // Validate hints at the edge. The TypeScript types constrain these to
+    // enums, but the HTTP body is just parsed JSON — at runtime a caller
+    // can send any string. Invalid values previously wrote straight to
+    // `requests.complexity` / `requests.task_type` and broke the adaptive
+    // heatmap (cells are keyed on the enum values, so e.g. "moderate"
+    // landed nowhere on the grid — see Ampline vision traffic).
+    // Drop invalid values silently so a typo'd hint falls through to the
+    // classifier instead of 400-ing the request.
+    const VALID_ROUTING_HINTS = new Set([
+      "coding", "creative", "summarization", "qa", "general", "vision",
+    ] as const);
+    const VALID_COMPLEXITIES = new Set(["simple", "medium", "complex"] as const);
+    const routing_hint =
+      typeof rawRoutingHint === "string" && VALID_ROUTING_HINTS.has(rawRoutingHint as "coding")
+        ? (rawRoutingHint as "coding" | "creative" | "summarization" | "qa" | "general" | "vision")
+        : undefined;
+    const complexity_hint =
+      typeof rawComplexityHint === "string" && VALID_COMPLEXITIES.has(rawComplexityHint as "simple")
+        ? (rawComplexityHint as "simple" | "medium" | "complex")
+        : undefined;
 
     // Auto-detect structured-output intent (#233). Explicit flag wins
     // when set; otherwise any standard JSON-schema / tool-use marker
