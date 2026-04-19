@@ -72,6 +72,17 @@ Deferred to follow-ups:
 
 Track them under issues tagged with `feature` + related to #262.
 
+## Building datasets from production traffic
+
+The fastest way to seed a dataset is from real requests that went through Provara:
+
+1. Open `/dashboard/logs`, find the request you want to use as a test case
+2. Click **Fork to Playground** (top-right of the detail page)
+3. Edit the prompt / settings / model if you want, rerun
+4. Click **Save as eval case** in the top bar — pick an existing dataset or create a new one inline
+
+Each saved case stores the user→assistant exchange as a single JSONL line with `expected` set to the observed response. Run the dataset later against any candidate model to catch regressions before they ship.
+
 ## Related
 
 - [Adaptive routing](/docs/features/adaptive-routing) — judge scoring for live traffic

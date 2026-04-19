@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { gatewayClientFetch } from "../../../lib/gateway-client";
+import { useSearchParams, useRouter } from "next/navigation";
+import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 import { ChatInput, type ChatInputHandle } from "../../../components/chat/ChatInput";
 import { MessageList } from "../../../components/chat/MessageList";
 import { SettingsPanel } from "../../../components/chat/SettingsPanel";
@@ -46,6 +47,66 @@ export default function PlaygroundPage() {
       .then((data) => setProviders(data.providers || []))
       .catch(console.error);
   }, []);
+
+  // Fork from a logged request (#266). When the URL carries `?forkFrom=<id>`,
+  // load that request's messages + model + system prompt into the playground
+  // so the user can edit and rerun without manual copy-paste. Runs once on
+  // mount; strips the param after loading so a page refresh doesn't re-fork.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const forkFromId = searchParams.get("forkFrom");
+  useEffect(() => {
+    if (!forkFromId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await gatewayClientFetch<{
+          request: { provider: string; model: string; prompt: string };
+        }>(`/v1/analytics/requests/${forkFromId}`);
+        if (cancelled) return;
+        const messages = JSON.parse(data.request.prompt) as Array<{
+          role: "system" | "user" | "assistant";
+          content: string | Array<{ type: string; text?: string }>;
+        }>;
+        const systemMsg = messages.find((m) => m.role === "system");
+        if (systemMsg) {
+          setSystemPrompt(
+            typeof systemMsg.content === "string"
+              ? systemMsg.content
+              : systemMsg.content
+                  .map((p) => (p.type === "text" && p.text ? p.text : ""))
+                  .filter(Boolean)
+                  .join("\n"),
+          );
+        }
+        const nonSystem = messages
+          .filter((m) => m.role !== "system")
+          .map((m) => ({
+            role: m.role,
+            content:
+              typeof m.content === "string"
+                ? m.content
+                : m.content
+                    .map((p) =>
+                      p.type === "text" && p.text ? p.text : p.type === "image_url" ? "[image]" : "",
+                    )
+                    .filter(Boolean)
+                    .join(" "),
+          }));
+        session.loadMessages(nonSystem);
+        setSelectedProvider(data.request.provider);
+        setSelectedModel(data.request.model);
+        toast.success("Loaded request — edit and rerun below");
+      } catch {
+        toast.error("Failed to load request");
+      } finally {
+        // Clear the query param so a refresh doesn't re-fork.
+        router.replace("/dashboard/playground");
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forkFromId]);
 
   // Auto-save when messages change and streaming has completed. Creates on the
   // first assistant turn of an unsaved session; otherwise PATCHes the active
@@ -102,6 +163,97 @@ export default function PlaygroundPage() {
     if (!id) return;
     session.loadMessages(slice);
     setActiveConversationId(id);
+  }
+
+  // Save-as-eval-case state (#266)
+  const [saveEvalOpen, setSaveEvalOpen] = useState(false);
+  const [evalDatasets, setEvalDatasets] = useState<{ id: string; name: string }[]>([]);
+  const [evalDatasetId, setEvalDatasetId] = useState("");
+  const [newDatasetName, setNewDatasetName] = useState("");
+  const [savingEval, setSavingEval] = useState(false);
+
+  async function openSaveEval() {
+    setSaveEvalOpen(true);
+    try {
+      const res = await gatewayClientFetch<{ datasets: { id: string; name: string }[] }>(
+        "/v1/evals/datasets",
+      );
+      setEvalDatasets(res.datasets || []);
+    } catch {
+      // If evals is tier-gated and the tenant doesn't have access, this 402s —
+      // surface a helpful toast instead of a silent empty list.
+      toast.error("Evals requires the Intelligence tier. Upgrade to save cases.");
+      setSaveEvalOpen(false);
+    }
+  }
+
+  async function handleSaveEvalCase() {
+    // Take everything up through the last assistant message — that's the case
+    // the user wants to lock in as a regression test. Trailing unanswered user
+    // prompts are dropped because they don't represent a completed exchange.
+    const lastAssistant = session.messages.map((m) => m.role).lastIndexOf("assistant");
+    if (lastAssistant < 0) {
+      toast.error("No assistant response to save yet");
+      return;
+    }
+    const inputMessages = session.messages
+      .slice(0, lastAssistant)
+      .map((m) => ({ role: m.role, content: m.content }));
+    const expectedMessage = session.messages[lastAssistant];
+
+    if (inputMessages.length === 0) {
+      toast.error("Need at least one user prompt before the assistant response");
+      return;
+    }
+
+    setSavingEval(true);
+    try {
+      let datasetId = evalDatasetId;
+      if (!datasetId) {
+        if (!newDatasetName.trim()) {
+          toast.error("Pick a dataset or enter a name for a new one");
+          setSavingEval(false);
+          return;
+        }
+        // Create a new dataset with this single case inline.
+        const jsonl = JSON.stringify({
+          input: inputMessages,
+          expected: expectedMessage.content,
+          metadata: { source: "playground-save" },
+        });
+        const res = await gatewayFetchRaw("/v1/evals/datasets", {
+          method: "POST",
+          body: JSON.stringify({ name: newDatasetName.trim(), jsonl }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error?.message || `HTTP ${res.status}`);
+        }
+        const created = (await res.json()) as { id: string };
+        datasetId = created.id;
+      } else {
+        const res = await gatewayFetchRaw(`/v1/evals/datasets/${datasetId}/cases`, {
+          method: "POST",
+          body: JSON.stringify({
+            input: inputMessages,
+            expected: expectedMessage.content,
+            metadata: { source: "playground-save" },
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error?.message || `HTTP ${res.status}`);
+        }
+      }
+      toast.success("Saved to eval dataset");
+      setSaveEvalOpen(false);
+      setEvalDatasetId("");
+      setNewDatasetName("");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save case");
+    } finally {
+      setSavingEval(false);
+    }
   }
 
   async function handleShare() {
@@ -275,6 +427,15 @@ export default function PlaygroundPage() {
                 Share
               </button>
             )}
+            {session.messages.some((m) => m.role === "assistant") && (
+              <button
+                onClick={openSaveEval}
+                className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 bg-zinc-800 border border-zinc-700 rounded-lg transition-colors"
+                title="Save this exchange as a regression test case in an eval dataset"
+              >
+                Save as eval case
+              </button>
+            )}
             <button
               onClick={handleNewConversation}
               title="Start a fresh conversation. The current chat stays saved in the sidebar."
@@ -394,6 +555,63 @@ export default function PlaygroundPage() {
           </p>
         </div>
       </SettingsPanel>
+
+      {/* Save-as-eval-case modal (#266) */}
+      {saveEvalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-md p-5 space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold">Save as eval case</h2>
+              <p className="text-xs text-zinc-500 mt-1">
+                Stores the current user+assistant exchange as a regression test in an eval dataset.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs text-zinc-400">Existing dataset</label>
+              <select
+                value={evalDatasetId}
+                onChange={(e) => {
+                  setEvalDatasetId(e.target.value);
+                  if (e.target.value) setNewDatasetName("");
+                }}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm"
+              >
+                <option value="">— none —</option>
+                {evalDatasets.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="block text-xs text-zinc-400">…or create new dataset</label>
+              <input
+                value={newDatasetName}
+                onChange={(e) => {
+                  setNewDatasetName(e.target.value);
+                  if (e.target.value) setEvalDatasetId("");
+                }}
+                placeholder="e.g. panel-photo-regression-v1"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                onClick={() => setSaveEvalOpen(false)}
+                className="px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-300"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveEvalCase}
+                disabled={savingEval}
+                className="px-3 py-1.5 text-xs rounded-md bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium"
+              >
+                {savingEval ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

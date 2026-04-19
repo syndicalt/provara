@@ -327,6 +327,51 @@ export function createEvalRoutes(db: Db, registry: ProviderRegistry) {
     });
   });
 
+  // Append a single case to an existing dataset. Used by the playground's
+  // "Save as eval case" button (#266) — lets users turn a forked-and-edited
+  // prod request into a regression test with one click.
+  app.post("/datasets/:id/cases", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const { id } = c.req.param();
+    const body = await c.req.json<{
+      input?: ChatMessage[];
+      expected?: string;
+      metadata?: Record<string, unknown>;
+    }>();
+    if (!Array.isArray(body.input) || body.input.length === 0) {
+      return c.json(
+        { error: { message: "`input` must be a non-empty ChatMessage[]", type: "validation_error" } },
+        400,
+      );
+    }
+    const tc = tenantFilter(evalDatasets.tenantId, tenantId);
+    const existing = await db
+      .select()
+      .from(evalDatasets)
+      .where(tc ? and(eq(evalDatasets.id, id), tc) : eq(evalDatasets.id, id))
+      .get();
+    if (!existing) {
+      return c.json({ error: { message: "Dataset not found", type: "not_found" } }, 404);
+    }
+    const newCase: DatasetCase = {
+      input: body.input,
+      ...(body.expected ? { expected: body.expected } : {}),
+      ...(body.metadata ? { metadata: body.metadata } : {}),
+    };
+    const updatedJsonl =
+      (existing.casesJsonl.endsWith("\n") ? existing.casesJsonl : existing.casesJsonl + "\n") +
+      JSON.stringify(newCase);
+    await db
+      .update(evalDatasets)
+      .set({
+        casesJsonl: updatedJsonl,
+        caseCount: existing.caseCount + 1,
+      })
+      .where(eq(evalDatasets.id, id))
+      .run();
+    return c.json({ ok: true, caseCount: existing.caseCount + 1 }, 201);
+  });
+
   app.delete("/datasets/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
