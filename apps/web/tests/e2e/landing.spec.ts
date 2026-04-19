@@ -2,12 +2,18 @@ import { test, expect } from "@playwright/test";
 
 test("landing page renders hero", async ({ page }) => {
   await page.goto("/");
-  // Hero copy was the subject of three separate UAT iterations (#91, #93, #94).
-  // Lock it in so future changes don't silently revert the title-cased line break.
+  // Hero copy locked in PR #231 as part of the "Adaptive LLM Gateway"
+  // repositioning. The H1 is split into two `<span class="block">`
+  // elements so Playwright's `toContainText` sees "The AdaptiveLLM Gateway"
+  // (no space between spans in the accessible name). Match the two halves
+  // independently so the assertion is robust to styling that adds or
+  // removes visual whitespace between the lines.
   const hero = page.getByRole("heading", { level: 1 });
   await expect(hero).toBeVisible();
-  await expect(hero).toContainText(/One Gateway/i);
-  await expect(hero).toContainText(/Smarter with Every Request/i);
+  await expect(hero).toContainText(/Adaptive/i);
+  await expect(hero).toContainText(/LLM Gateway/i);
+  // Subhead is a paragraph under the H1 — assert against the page.
+  await expect(page.getByText(/Routes every request\. Learns from every response\./i)).toBeVisible();
 });
 
 test("landing page has no horizontal scroll at common widths", async ({ page }) => {
