@@ -19,6 +19,7 @@ interface Me {
   isSoleOwner: boolean;
   ownerCount: number;
   authMethods: string[];
+  tier: string;
 }
 
 interface SessionRow {
@@ -118,6 +119,15 @@ export default function ProfilePage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // Enterprise tenants intentionally can't self-delete —
+        // surface the support email prominently instead of a generic
+        // error toast.
+        if (body?.error?.type === "enterprise_offboarding_required") {
+          alert(
+            `${body.error.message}\n\nSupport: ${body.supportEmail ?? "legal@corelumen.io"}`,
+          );
+          return;
+        }
         toast.error(`Could not delete: ${body?.error?.message ?? "Unknown error"}`);
         return;
       }
@@ -275,24 +285,45 @@ export default function ProfilePage() {
       {/* Danger zone */}
       <section className="bg-red-950/20 border border-red-900/40 rounded-lg p-6">
         <h2 className="text-sm font-semibold text-red-200 uppercase tracking-widest mb-2">Danger zone</h2>
-        <p className="text-sm text-zinc-400 mb-4">
-          {me.isSoleOwner ? (
-            <>
-              You are the <strong>sole owner</strong> of this tenant. Deleting your account will
-              cancel the Stripe subscription and permanently delete all tenant data. To preserve
-              the tenant, promote another member to Owner first in{" "}
-              <a href="/dashboard/team" className="text-blue-400 hover:underline">Team settings</a>.
-            </>
-          ) : (
-            <>Deleting your account removes you from this tenant. Tenant data and other members are unaffected.</>
-          )}
-        </p>
-        <button
-          onClick={deleteAccount}
-          className="px-4 py-2 bg-red-900/40 hover:bg-red-900/60 border border-red-800 rounded-lg text-sm font-medium text-red-200 transition-colors"
-        >
-          {me.isSoleOwner ? "Delete tenant and my account" : "Delete my account"}
-        </button>
+        {me.isSoleOwner && (me.tier === "enterprise" || me.tier === "selfhost_enterprise") ? (
+          <>
+            <p className="text-sm text-zinc-400 mb-4">
+              Enterprise tenants are offboarded through support so contract termination,
+              data export, and final invoicing are handled by a human. Email{" "}
+              <a href="mailto:legal@corelumen.io" className="text-blue-400 hover:underline">
+                legal@corelumen.io
+              </a>{" "}
+              to start the process.
+            </p>
+            <a
+              href="mailto:legal@corelumen.io?subject=Enterprise%20tenant%20offboarding"
+              className="inline-block px-4 py-2 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg text-sm font-medium text-zinc-200"
+            >
+              Contact support
+            </a>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-zinc-400 mb-4">
+              {me.isSoleOwner ? (
+                <>
+                  You are the <strong>sole owner</strong> of this tenant. Deleting your account will
+                  cancel the Stripe subscription and permanently delete all tenant data. To preserve
+                  the tenant, promote another member to Owner first in{" "}
+                  <a href="/dashboard/team" className="text-blue-400 hover:underline">Team settings</a>.
+                </>
+              ) : (
+                <>Deleting your account removes you from this tenant. Tenant data and other members are unaffected.</>
+              )}
+            </p>
+            <button
+              onClick={deleteAccount}
+              className="px-4 py-2 bg-red-900/40 hover:bg-red-900/60 border border-red-800 rounded-lg text-sm font-medium text-red-200 transition-colors"
+            >
+              {me.isSoleOwner ? "Delete tenant and my account" : "Delete my account"}
+            </button>
+          </>
+        )}
       </section>
     </div>
   );
