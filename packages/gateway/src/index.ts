@@ -227,6 +227,24 @@ if (process.env.PROVARA_DEMO_ENABLED === "true") {
       console.log("[demo-reseed] t_demo refreshed");
     },
   });
+
+  // Live tick (#229 follow-up). Every 5 min, append 1-3 recent
+  // requests + occasional judge feedback so the dashboards animate
+  // for anyone watching. Nightly reseed wipes the accumulation.
+  await scheduler.schedule({
+    name: "demo-tick",
+    intervalMs: 5 * 60 * 1000,
+    initialDelayMs: 90_000,
+    handler: async () => {
+      const { runDemoTick } = await import("./demo/tick.js");
+      const s = await runDemoTick(db);
+      if (!s.skippedNoTenant) {
+        console.log(
+          `[demo-tick] reqs=${s.requestsAdded} feedback=${s.feedbackAdded} scores=${s.scoresTouched}`,
+        );
+      }
+    },
+  });
 }
 
 scheduler.start();

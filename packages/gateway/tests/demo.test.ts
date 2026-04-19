@@ -35,14 +35,14 @@ describe("#229 — demo tenant seed", () => {
       .from(requests)
       .where(eq(requests.tenantId, DEMO_TENANT_ID))
       .all();
-    expect(reqs.length).toBe(200);
+    expect(reqs.length).toBe(240);
 
     const costs = await db
       .select()
       .from(costLogs)
       .where(eq(costLogs.tenantId, DEMO_TENANT_ID))
       .all();
-    expect(costs.length).toBe(200);
+    expect(costs.length).toBe(240);
 
     const audit = await db
       .select()
