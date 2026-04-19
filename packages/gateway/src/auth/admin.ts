@@ -164,16 +164,31 @@ export function getAuthRole(req: Request): Role | null {
 }
 
 /**
- * Role middleware — restricts access to users with the required role.
- * Must run after createAdminMiddleware (which attaches the user).
- * In self_hosted mode, this is a no-op.
+ * Role rank — higher rank subsumes lower. Callers pass the *minimum*
+ * required role to `requireRole`; anyone at or above that rank
+ * passes through. Owner is always allowed because it has the top
+ * rank. Viewer is the floor.
+ */
+const ROLE_RANK: Record<Role, number> = {
+  viewer: 1,
+  developer: 2,
+  admin: 3,
+  owner: 4,
+};
+
+/**
+ * Role middleware — restricts access to users at or above the
+ * required role. Must run after createAdminMiddleware (which
+ * attaches the user). In self_hosted mode, this is a no-op.
  *
- * Accepts either a single role or an array. Owner is always allowed.
- * Legacy single-role callers like `requireRole("owner")` remain valid.
+ * Accepts either a single role or an array. For an array, the
+ * minimum rank wins (so `requireRole(["developer"])` allows every
+ * role at or above developer: developer, admin, owner).
  */
 export function requireRole(role: Role | Role[]) {
-  const allowed = new Set<Role>(Array.isArray(role) ? role : [role]);
-  allowed.add("owner"); // owner is always allowed
+  const required = Array.isArray(role) ? role : [role];
+  const minRank = Math.min(...required.map((r) => ROLE_RANK[r]));
+  const minRoleName = (Object.entries(ROLE_RANK).find(([, r]) => r === minRank)?.[0]) ?? "admin";
 
   return async (c: Context, next: Next) => {
     if (getMode() !== "multi_tenant") {
@@ -189,15 +204,14 @@ export function requireRole(role: Role | Role[]) {
     }
 
     const normalized = normalizeRole(user.role);
-    if (allowed.has(normalized)) {
+    if (ROLE_RANK[normalized] >= minRank) {
       return next();
     }
 
-    const requiredList = Array.from(allowed).join(", ");
     return c.json(
       {
         error: {
-          message: `Insufficient permissions. Required role: ${requiredList}.`,
+          message: `Insufficient permissions. ${minRoleName} role or higher required.`,
           type: "auth_error",
         },
       },
