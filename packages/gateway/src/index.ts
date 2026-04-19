@@ -17,6 +17,7 @@ import { createScheduler } from "./scheduler/index.js";
 import { runAutoAbCycle } from "./routing/adaptive/auto-ab.js";
 import { runBankPopulationCycle, runReplayCycle } from "./routing/adaptive/regression.js";
 import { runCostMigrationCycle } from "./routing/adaptive/migrations.js";
+import { runRolloutEvaluationCycle } from "./prompts/rollouts.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getJudgeConfig } from "./routing/judge.js";
 import { isCloudDeployment } from "./config.js";
@@ -116,6 +117,29 @@ const COST_MIGRATION_INTERVAL_MS = parseInt(
   process.env.PROVARA_COST_MIGRATION_INTERVAL_MS || `${24 * 60 * 60 * 1000}`,
   10,
 );
+// Prompt rollout evaluation (#264). Hourly scan of active rollouts — if
+// canary vs stable stats meet the rollout's criteria, auto-promote; if the
+// score drop exceeds the tolerance, auto-revert. Otherwise continue.
+const ROLLOUT_EVAL_INTERVAL_MS = parseInt(
+  process.env.PROVARA_ROLLOUT_EVAL_INTERVAL_MS || `${60 * 60 * 1000}`,
+  10,
+);
+if (cloudDeployment) {
+  await scheduler.schedule({
+    name: "prompt-rollout-eval",
+    intervalMs: ROLLOUT_EVAL_INTERVAL_MS,
+    initialDelayMs: 180_000,
+    handler: async () => {
+      const stats = await runRolloutEvaluationCycle(db);
+      if (stats.promoted > 0 || stats.reverted > 0) {
+        console.log(
+          `[rollout-eval] evaluated=${stats.evaluated} promoted=${stats.promoted} reverted=${stats.reverted}`,
+        );
+      }
+    },
+  });
+}
+
 if (cloudDeployment) {
   await scheduler.schedule({
     name: "cost-migration",

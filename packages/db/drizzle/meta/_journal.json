@@ -281,6 +281,13 @@
       "when": 1776632431789,
       "tag": "0039_aromatic_photon",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1776638039277,
+      "tag": "0040_friendly_revanche",
+      "breakpoints": true
     }
   ]
 }

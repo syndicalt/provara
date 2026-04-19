@@ -10,6 +10,7 @@ import { createRoutingEngine, NoCapableProviderError, type RoutingProfile } from
 import { createAbTestRoutes } from "./routes/ab-tests.js";
 import { createAnalyticsRoutes } from "./routes/analytics.js";
 import { createEvalRoutes } from "./routes/evals.js";
+import { createRolloutRoutes } from "./routes/rollouts.js";
 import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
 import { createAdminMiddleware, requireRole } from "./auth/admin.js";
@@ -250,6 +251,11 @@ export async function createRouter(ctx: RouterContext) {
   // Mount evals routes (#262)
   app.route("/v1/evals", createEvalRoutes(ctx.db, ctx.registry));
 
+  // Mount prompt rollout routes (#264). Weighted-pick resolve lives under
+  // /v1/rollouts/resolve/:templateId to avoid a route-shadow collision with
+  // the existing /v1/prompts/* sub-app.
+  app.route("/v1/rollouts", createRolloutRoutes(ctx.db));
+
   // Mount API key management routes
   app.route("/v1/api-keys", createApiKeyRoutes(ctx.db));
 
@@ -305,6 +311,9 @@ export async function createRouter(ctx: RouterContext) {
       provider?: string;
       cache?: boolean;
       complexity_hint?: "simple" | "medium" | "complex";
+      /** Prompt-template version id threaded through from `/v1/rollouts/resolve/:templateId`
+       *  so canary vs stable feedback can be tracked per version (#264). */
+      prompt_version_id?: string;
       /**
        * Explicit opt-in to structured-output routing filter (#233).
        * Auto-detected from `response_format: { type: "json_schema" }`
@@ -323,6 +332,7 @@ export async function createRouter(ctx: RouterContext) {
       requires_structured_output,
       response_format,
       tools,
+      prompt_version_id: promptVersionId,
       ...rest
     } = body;
     const request = rest as CompletionRequest;
@@ -517,6 +527,7 @@ export async function createRouter(ctx: RouterContext) {
           userId: attribution.userId,
           apiTokenId: attribution.apiTokenId,
           abTestId: routingResult.abTestId || null,
+          promptVersionId: promptVersionId || null,
         })
         .run();
       publishLive({
@@ -731,6 +742,7 @@ export async function createRouter(ctx: RouterContext) {
                     userId: attribution.userId,
                     apiTokenId: attribution.apiTokenId,
                     abTestId: routingResult.abTestId || null,
+                    promptVersionId: promptVersionId || null,
                   })
                   .run();
 
@@ -908,6 +920,7 @@ export async function createRouter(ctx: RouterContext) {
         userId: attribution.userId,
         apiTokenId: attribution.apiTokenId,
         abTestId: routingResult.abTestId || null,
+        promptVersionId: promptVersionId || null,
       })
       .run();
 

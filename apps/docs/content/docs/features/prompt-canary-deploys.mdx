@@ -1,0 +1,97 @@
+---
+title: Prompt canary deploys
+description: Ship a new prompt version to a percentage of traffic; auto-promote or auto-revert based on feedback scores.
+---
+
+Prompt changes are production deploys dressed up as content edits. Provara treats them that way: start a canary, monitor scores, and let the scheduler promote or revert based on criteria you set.
+
+**Tier**: free. Ships as part of the core gateway.
+
+## How it works
+
+1. A prompt template has a **published** version (the stable one serving production)
+2. You add a new version (v2) and start a **canary rollout** at, say, 25% traffic
+3. Clients resolve the template via `POST /v1/rollouts/resolve/:templateId` — the gateway weighted-picks canary vs stable per request
+4. Clients pass the returned `versionId` as `prompt_version_id` on the next `/v1/chat/completions` call
+5. User or judge feedback attached to those requests flows back per-version into the rollout's stats
+6. Every hour, the `prompt-rollout-eval` scheduler checks criteria. When canary + stable both meet `min_samples`:
+   - If `canary_avg_score - stable_avg_score >= -max_avg_score_delta` → **promote** (swap publishedVersionId to canary)
+   - Else → **revert** (canary status flipped, stable stays published)
+
+One active rollout per template at a time. Historical rollouts stay in the database with their completion reason for audit.
+
+## Starting a rollout (UI)
+
+1. Open `/dashboard/prompts`, click the template
+2. Scroll to the **Canary rollout** panel
+3. Click **Start canary**, pick the canary version, set rollout %, criteria:
+   - `min_samples` — required samples per arm before any auto-decision (default 20)
+   - `max_avg_score_delta` — tolerated drop in canary avg score vs stable. `0.3` means "canary can be up to 0.3 points worse on a 1–5 scale and still promote"
+   - `window_hours` — rolling window for sample counting (default 24)
+4. The panel shows live canary vs stable stats + a prediction of the next scheduler decision
+
+## Starting a rollout (API)
+
+```bash
+curl -X POST https://gateway.provara.xyz/v1/rollouts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "templateId": "<template-id>",
+    "canaryVersionId": "<version-id>",
+    "rolloutPct": 25,
+    "criteria": {
+      "min_samples": 20,
+      "max_avg_score_delta": 0.3,
+      "window_hours": 24
+    }
+  }'
+```
+
+## Client integration
+
+```ts
+// 1. Resolve to get a versionId and messages
+const resolved = await fetch(`/v1/rollouts/resolve/${templateId}`, { method: "POST" }).then(r => r.json());
+// { versionId, messages, rolloutId?, variant? }
+
+// 2. Use messages for your completion, pass versionId for tracking
+const completion = await fetch("/v1/chat/completions", {
+  method: "POST",
+  body: JSON.stringify({
+    model: "", // let adaptive routing decide
+    messages: resolved.messages,
+    prompt_version_id: resolved.versionId,
+  }),
+});
+```
+
+The `prompt_version_id` field on `/v1/chat/completions` is what ties the request back to the rollout for stats — without it the scheduler has nothing to evaluate.
+
+## Manual overrides
+
+The UI and API both support **Promote now** and **Revert now** buttons that bypass criteria evaluation. Use them when you've seen enough qualitative signal (user feedback, bug reports) and don't want to wait for the scheduler.
+
+```
+POST /v1/rollouts/:id/promote
+POST /v1/rollouts/:id/revert
+```
+
+## Auto-promotion criteria — more detail
+
+The promotion rule is **not** "canary beats stable." It's "canary didn't drop more than `max_avg_score_delta` below stable." The asymmetric tolerance is intentional: prompt changes are usually iterative refinements, not radical improvements. Requiring a net-positive delta would stall most useful rollouts.
+
+If you want a strictly-better gate, set `max_avg_score_delta: 0` — that requires canary ≥ stable to promote.
+
+## Limitations
+
+Deferred to follow-ups:
+
+- **Cost delta evaluation** — promote only if canary cost is ≤ stable cost + threshold
+- **p95 latency evaluation** — same idea for latency (currently the criteria only watches quality scores)
+- **Sticky user assignment** — a given userId always gets the same arm for the rollout's duration
+- **Gradual ramp-up** — start at 5%, step to 25%, step to 50% automatically on passing intermediate checks
+
+## Related
+
+- [Prompts](/docs/features/prompts) — prompt template management (where canary rollouts attach)
+- [Analytics](/docs/features/analytics) — feedback scoring pipeline that drives the criteria
