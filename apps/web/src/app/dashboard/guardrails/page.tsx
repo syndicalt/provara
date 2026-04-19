@@ -34,6 +34,7 @@ const TYPE_LABELS: Record<string, string> = {
   content: "Content Policy",
   regex: "Custom Regex",
   token_limit: "Token Limit",
+  jailbreak: "Jailbreak Detection",
 };
 
 function AddRuleForm({ onCreated }: { onCreated: () => void }) {
