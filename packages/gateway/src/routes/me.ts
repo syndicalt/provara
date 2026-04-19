@@ -83,6 +83,9 @@ export function createMeRoutes(db: Db) {
       .where(eq(oauthAccounts.userId, authUser.id))
       .all();
 
+    const sub = await getSubscriptionForTenant(db, authUser.tenantId);
+    const tier = sub?.tier ?? "free";
+
     return c.json({
       user: {
         id: me.id,
@@ -97,6 +100,7 @@ export function createMeRoutes(db: Db) {
         isSoleOwner,
         ownerCount,
         authMethods: methods.map((m) => m.provider),
+        tier,
       },
     });
   });
@@ -245,6 +249,30 @@ export function createMeRoutes(db: Db) {
     const isSoleOwner = authUser.role === "owner" && ownerCount <= 1;
 
     if (isSoleOwner) {
+      // Enterprise tenants have signed contracts with termination
+      // clauses, data-export timelines, and manual invoicing. Bypassing
+      // those with a self-serve `stripe.subscriptions.cancel()` would
+      // create contract disputes and skip the customer-success
+      // offboarding. Route Enterprise sole-owners to a human path
+      // instead; they can still leave the tenant (not the sole-owner
+      // branch) or ask support to execute the wipe.
+      const existingSub = await getSubscriptionForTenant(db, authUser.tenantId);
+      const tier = existingSub?.tier ?? null;
+      if (tier === "enterprise" || tier === "selfhost_enterprise") {
+        return c.json(
+          {
+            error: {
+              message:
+                "Enterprise tenants must be offboarded through support. Email legal@corelumen.io to start the process — we'll coordinate contract termination, data export, and final invoicing.",
+              type: "enterprise_offboarding_required",
+            },
+            tenantId: authUser.tenantId,
+            supportEmail: "legal@corelumen.io",
+          },
+          409,
+        );
+      }
+
       if (!body.confirmTenantName || body.confirmTenantName !== authUser.tenantId) {
         return c.json(
           {
