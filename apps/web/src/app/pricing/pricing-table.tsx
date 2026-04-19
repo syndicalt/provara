@@ -62,7 +62,7 @@ function TierCard({ plan, annual }: { plan: PricingPlan; annual: boolean }) {
   const suffix = annual ? "/yr" : "/mo";
 
   function ctaHref(): string {
-    if (plan.ctaKind === "contact") return "mailto:legal@provara.xyz?subject=Provara%20Enterprise%20inquiry";
+    if (plan.ctaKind === "contact") return "mailto:legal@corelumen.io?subject=Provara%20Enterprise%20inquiry";
     if (plan.ctaKind === "signup") return user ? "/dashboard" : "/login";
     // checkout
     return user ? "/dashboard/billing" : `/login?return=${encodeURIComponent("/dashboard/billing")}`;

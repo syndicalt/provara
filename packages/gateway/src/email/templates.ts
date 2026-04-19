@@ -40,7 +40,7 @@ function emailShell(title: string, body: string): string {
                 &nbsp;&middot;&nbsp;
                 <a href="https://www.provara.xyz/pricing" style="color:#60a5fa; text-decoration:none;">Pricing</a>
                 &nbsp;&middot;&nbsp;
-                <a href="mailto:legal@provara.xyz" style="color:#60a5fa; text-decoration:none;">Contact</a>
+                <a href="mailto:support@corelumen.io" style="color:#60a5fa; text-decoration:none;">Contact</a>
               </div>
             </td>
           </tr>

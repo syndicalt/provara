@@ -7,7 +7,7 @@ Provara is a self-hostable LLM operations platform. Contributions are welcome ac
 Provara is licensed under the **Business Source License 1.1** (BSL). In short:
 
 - **Non-production use** (evaluation, development, internal experimentation): free and unrestricted.
-- **Production use:** free for individuals and small organizations. Commercial production use by larger organizations requires a license from CoreLumen, LLC (legal@provara.xyz).
+- **Production use:** free for individuals and small organizations. Commercial production use by larger organizations requires a license from CoreLumen, LLC (legal@corelumen.io).
 - **Change date:** each release converts to Apache 2.0 four years after its release date.
 
 If this model isn't compatible with how you want to use Provara, reach out — there's a path for most cases.
@@ -85,9 +85,9 @@ See the root `README.md` for the full picture. The elevator version:
 
 ## Reporting security issues
 
-**Do not open a public issue for security vulnerabilities.** Email security@provara.xyz instead. We'll acknowledge within 48 hours, fix, and coordinate disclosure.
+**Do not open a public issue for security vulnerabilities.** Email security@corelumen.io instead. We'll acknowledge within 48 hours, fix, and coordinate disclosure.
 
 ## Questions
 
-- General: open a discussion or hit the team email at legal@provara.xyz (yes, legal is currently the catch-all — this will split out as volume grows)
+- General: open a discussion or hit the team email at legal@corelumen.io (yes, legal is currently the catch-all — this will split out as volume grows)
 - Real-time: we don't currently run a public Slack/Discord; watch the releases page for updates.
