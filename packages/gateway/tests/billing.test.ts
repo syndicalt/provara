@@ -138,16 +138,20 @@ describe("/v1/billing/usage", () => {
   });
 
   it("marks quota unlimited for operator tenants", async () => {
+    // Operator tenants don't have a `subscriptions` row, but they must
+    // still surface as tier=operator with an unlimited quota — otherwise
+    // the dashboard billing page displays tier=operator on the badge
+    // (from /billing/me) but quota=10,000 on the usage bar (from
+    // /billing/usage), which is internally inconsistent and misreads
+    // the limit for employee accounts.
     await seedOperatorUser(db, "op-tenant", "ops@corelumen.com");
     const app = buildApp(db);
     const res = await app.request("/v1/billing/usage", { headers: { "x-test-tenant": "op-tenant" } });
     const body = await res.json();
-    // Operator tier falls through subscription lookup; quota is "free" fallback
-    // since operators don't have subscription rows. The operator tier's
-    // includesIntelligence path lives in /me, but /usage uses the tier from
-    // the subscription which is absent → free. That's fine — operators
-    // aren't billed anyway.
-    expect(body.tier).toBe("free");
+    expect(body.tier).toBe("operator");
+    expect(body.quotaUnlimited).toBe(true);
+    expect(body.percentUsed).toBe(0);
+    expect(body.periodEnd).toBeNull();
   });
 });
 

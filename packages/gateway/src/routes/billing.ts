@@ -7,7 +7,7 @@ import { getSubscriptionForTenant } from "../stripe/subscriptions.js";
 import { getStripe } from "../stripe/index.js";
 import { getOperatorEmails } from "../config.js";
 import { users } from "@provara/db";
-import { listRecentUsageReports, TIER_QUOTAS } from "../billing/usage.js";
+import { isOperatorTenantForQuota, listRecentUsageReports, TIER_QUOTAS } from "../billing/usage.js";
 
 /**
  * Billing routes (#169). Dashboard-facing endpoints for reading the
@@ -103,6 +103,35 @@ export function createBillingRoutes(db: Db) {
     const tenantId = getTenantId(c.req.raw);
     if (!tenantId) {
       return c.json({ error: { message: "Authentication required.", type: "auth_error" } }, 401);
+    }
+
+    // Operator tenants bypass the subscription → tier → quota chain so
+    // the usage bar renders "unlimited" rather than capping at the Free-
+    // tier 10k. `/billing/me` already applies this same bypass; without
+    // the mirror here, the dashboard shows tier=operator + quota=10k,
+    // which is internally inconsistent and misreads the limit for
+    // employee accounts.
+    if (await isOperatorTenantForQuota(db, tenantId)) {
+      const now = new Date();
+      const periodStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const row = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(requestsTable)
+        .where(and(
+          eq(requestsTable.tenantId, tenantId),
+          gte(requestsTable.createdAt, periodStart),
+        ))
+        .get();
+      return c.json({
+        tier: "operator",
+        periodStart,
+        periodEnd: null,
+        used: row?.count ?? 0,
+        quota: Number.MAX_SAFE_INTEGER,
+        quotaUnlimited: true,
+        remaining: Number.MAX_SAFE_INTEGER,
+        percentUsed: 0,
+      });
     }
 
     const sub = await getSubscriptionForTenant(db, tenantId);
