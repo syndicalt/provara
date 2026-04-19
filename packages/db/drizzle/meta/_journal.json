@@ -253,6 +253,13 @@
       "when": 1776610228392,
       "tag": "0035_luxuriant_texas_twister",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1776614376579,
+      "tag": "0036_narrow_ares",
+      "breakpoints": true
     }
   ]
 }

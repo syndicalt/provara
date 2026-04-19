@@ -12,7 +12,7 @@ export const users = sqliteTable("users", {
   lastName: text("last_name"),
   avatarUrl: text("avatar_url"),
   tenantId: text("tenant_id").notNull(),
-  role: text("role", { enum: ["owner", "member"] }).notNull().default("owner"),
+  role: text("role", { enum: ["owner", "admin", "developer", "viewer"] }).notNull().default("owner"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -197,6 +197,10 @@ export const apiTokens = sqliteTable("api_tokens", {
   routingWeights: text("routing_weights"), // JSON: { quality, cost, latency }
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   expiresAt: integer("expires_at", { mode: "timestamp" }),
+  // Creator attribution (#247). Nullable because historical tokens
+  // predate the column. Developer-role users CRUD only where this
+  // matches their user id; Owner/Admin see all.
+  createdByUserId: text("created_by_user_id").references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -558,7 +562,7 @@ export const teamInvites = sqliteTable("team_invites", {
   token: text("token").primaryKey(),
   tenantId: text("tenant_id").notNull(),
   invitedEmail: text("invited_email").notNull(),
-  invitedRole: text("invited_role", { enum: ["owner", "member"] }).notNull().default("member"),
+  invitedRole: text("invited_role", { enum: ["owner", "admin", "developer", "viewer"] }).notNull().default("developer"),
   invitedByUserId: text("invited_by_user_id").notNull().references(() => users.id),
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
   consumedAt: integer("consumed_at", { mode: "timestamp" }),

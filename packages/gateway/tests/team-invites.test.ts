@@ -15,7 +15,7 @@ vi.mock("../src/auth/admin.js", () => ({
     const h = req.headers.get("x-test-user");
     if (!h) return null;
     const [id, tenantId, role] = h.split(":");
-    return { id, tenantId, role: role as "owner" | "member" };
+    return { id, tenantId, role: role as "owner" | "admin" | "developer" | "viewer" };
   },
 }));
 
@@ -34,7 +34,7 @@ import { getSeatStatus } from "../src/billing/seats.js";
 import { upsertUser } from "../src/routes/auth.js";
 import type { OAuthProfile } from "../src/auth/oauth.js";
 
-function authHeader(user: { id: string; tenantId: string; role: "owner" | "member" }) {
+function authHeader(user: { id: string; tenantId: string; role: "owner" | "developer" }) {
   return `${user.id}:${user.tenantId}:${user.role}`;
 }
 
@@ -46,13 +46,13 @@ function buildApp(db: Db) {
 
 async function seedUser(
   db: Db,
-  opts: { id: string; tenantId: string; email: string; role?: "owner" | "member" },
+  opts: { id: string; tenantId: string; email: string; role?: "owner" | "developer" },
 ) {
   await db.insert(users).values({
     id: opts.id,
     email: opts.email,
     tenantId: opts.tenantId,
-    role: opts.role ?? "member",
+    role: opts.role ?? "developer",
     createdAt: new Date(),
   }).run();
 }
@@ -99,7 +99,7 @@ describe("getSeatStatus — seat math (#177)", () => {
       token: "tok-1",
       tenantId: "t1",
       invitedEmail: "pending@example.com",
-      invitedRole: "member",
+      invitedRole: "developer",
       invitedByUserId: "u1",
       expiresAt: new Date(Date.now() + 86400_000),
       createdAt: new Date(),
@@ -122,7 +122,7 @@ describe("getSeatStatus — seat math (#177)", () => {
         token: `expired-${i}`,
         tenantId: "t1",
         invitedEmail: `old${i}@example.com`,
-        invitedRole: "member",
+        invitedRole: "developer",
         invitedByUserId: "u1",
         expiresAt: new Date(Date.now() - 86400_000),
         createdAt: new Date(Date.now() - 86400_000 * 10),
@@ -141,7 +141,7 @@ describe("getSeatStatus — seat math (#177)", () => {
       token: "consumed-1",
       tenantId: "t1",
       invitedEmail: "consumed@example.com",
-      invitedRole: "member",
+      invitedRole: "developer",
       invitedByUserId: "u1",
       expiresAt: new Date(Date.now() + 86400_000),
       consumedAt: new Date(),
@@ -178,7 +178,7 @@ describe("Team invite routes (#177)", () => {
   const owner = { id: "owner-1", tenantId: "tenant-a", role: "owner" as const };
   // Member fixture lives on a separate tenant so it doesn't consume a
   // seat on tenant-a — we only use it to prove owner-only routes 403.
-  const member = { id: "member-1", tenantId: "tenant-b", role: "member" as const };
+  const member = { id: "member-1", tenantId: "tenant-b", role: "developer" as const };
 
   beforeEach(async () => {
     db = await makeTestDb();
@@ -187,7 +187,7 @@ describe("Team invite routes (#177)", () => {
     sendEmailMock.mockResolvedValue({ sent: true });
     // Pro tier so 3 seats available
     await seedUser(db, { id: owner.id, tenantId: owner.tenantId, email: "owner@example.com", role: "owner" });
-    await seedUser(db, { id: member.id, tenantId: member.tenantId, email: "member@example.com", role: "member" });
+    await seedUser(db, { id: member.id, tenantId: member.tenantId, email: "member@example.com", role: "developer" });
     await seedSubscription(db, owner.tenantId, "pro");
   });
   afterEach(() => resetTierEnv());
@@ -202,12 +202,12 @@ describe("Team invite routes (#177)", () => {
           "x-test-user": authHeader(owner),
           Origin: "https://dash.test",
         },
-        body: JSON.stringify({ email: "NewPerson@Example.com", role: "member" }),
+        body: JSON.stringify({ email: "NewPerson@Example.com", role: "developer" }),
       });
       expect(res.status).toBe(201);
       const body = await res.json();
       expect(body.invitedEmail).toBe("newperson@example.com");
-      expect(body.invitedRole).toBe("member");
+      expect(body.invitedRole).toBe("developer");
       expect(body.inviteUrl).toBe(`https://dash.test/invite/${body.token}`);
       expect(body.emailSent).toBe(true);
 
@@ -227,7 +227,7 @@ describe("Team invite routes (#177)", () => {
       const res = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(member) },
-        body: JSON.stringify({ email: "x@example.com", role: "member" }),
+        body: JSON.stringify({ email: "x@example.com", role: "developer" }),
       });
       expect(res.status).toBe(403);
       expect(sendEmailMock).not.toHaveBeenCalled();
@@ -238,7 +238,7 @@ describe("Team invite routes (#177)", () => {
       const res = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(owner) },
-        body: JSON.stringify({ email: "not-an-email", role: "member" }),
+        body: JSON.stringify({ email: "not-an-email", role: "developer" }),
       });
       expect(res.status).toBe(400);
     });
@@ -248,7 +248,7 @@ describe("Team invite routes (#177)", () => {
       const res = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(owner) },
-        body: JSON.stringify({ email: "owner@example.com", role: "member" }),
+        body: JSON.stringify({ email: "owner@example.com", role: "developer" }),
       });
       expect(res.status).toBe(409);
       const body = await res.json();
@@ -260,14 +260,14 @@ describe("Team invite routes (#177)", () => {
       const first = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(owner) },
-        body: JSON.stringify({ email: "dup@example.com", role: "member" }),
+        body: JSON.stringify({ email: "dup@example.com", role: "developer" }),
       });
       expect(first.status).toBe(201);
 
       const dup = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(owner) },
-        body: JSON.stringify({ email: "dup@example.com", role: "member" }),
+        body: JSON.stringify({ email: "dup@example.com", role: "developer" }),
       });
       expect(dup.status).toBe(409);
       const body = await dup.json();
@@ -276,14 +276,14 @@ describe("Team invite routes (#177)", () => {
 
     it("returns 402 with gate payload when seat limit reached", async () => {
       // Pro = 3 seats. Owner + 2 more members = 3/3. Next invite must 402.
-      await seedUser(db, { id: "u-2", tenantId: owner.tenantId, email: "two@example.com", role: "member" });
-      await seedUser(db, { id: "u-3", tenantId: owner.tenantId, email: "three@example.com", role: "member" });
+      await seedUser(db, { id: "u-2", tenantId: owner.tenantId, email: "two@example.com", role: "developer" });
+      await seedUser(db, { id: "u-3", tenantId: owner.tenantId, email: "three@example.com", role: "developer" });
 
       const app = buildApp(db);
       const res = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(owner) },
-        body: JSON.stringify({ email: "late@example.com", role: "member" }),
+        body: JSON.stringify({ email: "late@example.com", role: "developer" }),
       });
       expect(res.status).toBe(402);
       const body = await res.json();
@@ -306,7 +306,7 @@ describe("Team invite routes (#177)", () => {
       const res = await app.request("/v1/admin/team/invites", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-test-user": authHeader(owner) },
-        body: JSON.stringify({ email: "offline@example.com", role: "member" }),
+        body: JSON.stringify({ email: "offline@example.com", role: "developer" }),
       });
       expect(res.status).toBe(201);
       const body = await res.json();
@@ -325,7 +325,7 @@ describe("Team invite routes (#177)", () => {
           token: "active-1",
           tenantId: owner.tenantId,
           invitedEmail: "a1@example.com",
-          invitedRole: "member",
+          invitedRole: "developer",
           invitedByUserId: owner.id,
           expiresAt: new Date(Date.now() + 86400_000),
           createdAt: new Date(),
@@ -334,7 +334,7 @@ describe("Team invite routes (#177)", () => {
           token: "active-2",
           tenantId: owner.tenantId,
           invitedEmail: "a2@example.com",
-          invitedRole: "member",
+          invitedRole: "developer",
           invitedByUserId: owner.id,
           expiresAt: new Date(Date.now() + 86400_000),
           createdAt: new Date(),
@@ -343,7 +343,7 @@ describe("Team invite routes (#177)", () => {
           token: "expired-1",
           tenantId: owner.tenantId,
           invitedEmail: "old@example.com",
-          invitedRole: "member",
+          invitedRole: "developer",
           invitedByUserId: owner.id,
           expiresAt: new Date(Date.now() - 86400_000),
           createdAt: new Date(Date.now() - 86400_000 * 10),
@@ -352,7 +352,7 @@ describe("Team invite routes (#177)", () => {
           token: "consumed-1",
           tenantId: owner.tenantId,
           invitedEmail: "done@example.com",
-          invitedRole: "member",
+          invitedRole: "developer",
           invitedByUserId: owner.id,
           expiresAt: new Date(Date.now() + 86400_000),
           consumedAt: new Date(),
@@ -363,7 +363,7 @@ describe("Team invite routes (#177)", () => {
           token: "other-tenant",
           tenantId: "tenant-b",
           invitedEmail: "other@example.com",
-          invitedRole: "member",
+          invitedRole: "developer",
           invitedByUserId: owner.id,
           expiresAt: new Date(Date.now() + 86400_000),
           createdAt: new Date(),
@@ -387,7 +387,7 @@ describe("Team invite routes (#177)", () => {
         token: "to-revoke",
         tenantId: owner.tenantId,
         invitedEmail: "bye@example.com",
-        invitedRole: "member",
+        invitedRole: "developer",
         invitedByUserId: owner.id,
         expiresAt: new Date(Date.now() + 86400_000),
         createdAt: new Date(),
@@ -408,7 +408,7 @@ describe("Team invite routes (#177)", () => {
         token: "used-up",
         tenantId: owner.tenantId,
         invitedEmail: "gone@example.com",
-        invitedRole: "member",
+        invitedRole: "developer",
         invitedByUserId: owner.id,
         expiresAt: new Date(Date.now() + 86400_000),
         consumedAt: new Date(),
@@ -432,7 +432,7 @@ describe("Team invite routes (#177)", () => {
         token: "not-mine",
         tenantId: "tenant-b",
         invitedEmail: "x@example.com",
-        invitedRole: "member",
+        invitedRole: "developer",
         invitedByUserId: owner.id,
         expiresAt: new Date(Date.now() + 86400_000),
         createdAt: new Date(),
@@ -451,7 +451,7 @@ describe("Team invite routes (#177)", () => {
         token: "tok",
         tenantId: owner.tenantId,
         invitedEmail: "x@example.com",
-        invitedRole: "member",
+        invitedRole: "developer",
         invitedByUserId: owner.id,
         expiresAt: new Date(Date.now() + 86400_000),
         createdAt: new Date(),
@@ -460,7 +460,7 @@ describe("Team invite routes (#177)", () => {
       const app = buildApp(db);
       // Seed a member on the same tenant (current member fixture is on tenant-a too... wait no,
       // fixture has member on tenant-a:member role? Actually: member fixture is tenantId "tenant-a"
-      // and role "member" — same tenant.
+      // and role "developer" — same tenant.
       const res = await app.request("/v1/admin/team/invites/tok", {
         method: "DELETE",
         headers: { "x-test-user": `${member.id}:${owner.tenantId}:member` },
@@ -484,7 +484,7 @@ describe("OAuth invite claim (#177)", () => {
       token?: string;
       tenantId: string;
       email: string;
-      role?: "owner" | "member";
+      role?: "owner" | "developer";
       expiresAt?: Date;
       consumedAt?: Date | null;
       invitedByUserId?: string;
@@ -495,7 +495,7 @@ describe("OAuth invite claim (#177)", () => {
       token: opts.token ?? `tok-${opts.email}`,
       tenantId: opts.tenantId,
       invitedEmail: opts.email,
-      invitedRole: opts.role ?? "member",
+      invitedRole: opts.role ?? "developer",
       invitedByUserId: opts.invitedByUserId ?? "inv-owner",
       expiresAt: opts.expiresAt ?? new Date(Date.now() + 86400_000),
       consumedAt: opts.consumedAt ?? null,
@@ -507,11 +507,11 @@ describe("OAuth invite claim (#177)", () => {
   it("new signup with matching pending invite lands on inviter's tenant with invite role", async () => {
     // Seed inviter and their pending invite
     await seedUser(db, { id: "inv-owner", tenantId: "team-alpha", email: "owner@alpha.com", role: "owner" });
-    await seedInvite(db, { tenantId: "team-alpha", email: "newbie@example.com", role: "member" });
+    await seedInvite(db, { tenantId: "team-alpha", email: "newbie@example.com", role: "developer" });
 
     const user = await upsertUser(db, "google", profile());
     expect(user.tenantId).toBe("team-alpha");
-    expect(user.role).toBe("member");
+    expect(user.role).toBe("developer");
 
     const claimed = await db.select().from(teamInvites).where(eq(teamInvites.invitedEmail, "newbie@example.com")).get();
     expect(claimed?.consumedAt).toBeTruthy();
@@ -601,7 +601,7 @@ describe("DELETE /v1/admin/team/:id (member removal)", () => {
     const ownerId = "owner-1";
     const memberId = "member-1";
     await seedUser(db, { id: ownerId, tenantId: "t-1", email: "owner@example.com", role: "owner" });
-    await seedUser(db, { id: memberId, tenantId: "t-1", email: "member@example.com", role: "member" });
+    await seedUser(db, { id: memberId, tenantId: "t-1", email: "member@example.com", role: "developer" });
     await db.insert(oauthAccounts).values({
       id: "oauth-1",
       userId: memberId,
@@ -633,12 +633,12 @@ describe("DELETE /v1/admin/team/:id (member removal)", () => {
     const ownerId = "owner-1";
     const memberId = "member-1";
     await seedUser(db, { id: ownerId, tenantId: "t-1", email: "owner@example.com", role: "owner" });
-    await seedUser(db, { id: memberId, tenantId: "t-1", email: "member@example.com", role: "member" });
+    await seedUser(db, { id: memberId, tenantId: "t-1", email: "member@example.com", role: "developer" });
     await db.insert(teamInvites).values({
       token: "inv-1",
       tenantId: "t-1",
       invitedEmail: "member@example.com",
-      invitedRole: "member",
+      invitedRole: "developer",
       invitedByUserId: ownerId,
       consumedByUserId: memberId,
       consumedAt: new Date(Date.now() - 60_000),
@@ -665,12 +665,12 @@ describe("DELETE /v1/admin/team/:id (member removal)", () => {
     const ownerId = "owner-1";
     const inviterId = "member-inviter";
     await seedUser(db, { id: ownerId, tenantId: "t-1", email: "owner@example.com", role: "owner" });
-    await seedUser(db, { id: inviterId, tenantId: "t-1", email: "inviter@example.com", role: "member" });
+    await seedUser(db, { id: inviterId, tenantId: "t-1", email: "inviter@example.com", role: "developer" });
     await db.insert(teamInvites).values({
       token: "inv-2",
       tenantId: "t-1",
       invitedEmail: "pending@example.com",
-      invitedRole: "member",
+      invitedRole: "developer",
       invitedByUserId: inviterId,
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 60_000),

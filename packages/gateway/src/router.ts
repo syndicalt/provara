@@ -173,9 +173,31 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/spend", adminAuth);
   app.use("/v1/spend/*", adminAuth);
 
-  // Role-based access — owner-only routes (after adminAuth attaches user)
-  app.use("/v1/admin/*", requireRole("owner"));
-  app.use("/v1/api-keys/*", requireRole("owner"));
+  // Role-based access (#247). Admin-auth middleware above attaches the
+  // session user; these gates restrict by role. Owner is always allowed;
+  // the passed role is the *minimum* required tier inside the namespace.
+  //
+  // - tokens / prompts are developer+ (devs need their own tokens; token
+  //   CRUD filters to creator for developers in the route handler)
+  // - team / providers / guardrails / alerts / api-keys / routing are
+  //   admin+ (affect the whole tenant, not policy-appropriate for devs)
+  // - audit / spend / analytics / billing-reads stay at viewer+ via the
+  //   adminAuth-only gates above (viewer gets into the dashboard, just
+  //   no mutation surface)
+  app.use("/v1/admin/tokens", requireRole(["developer"]));
+  app.use("/v1/admin/tokens/*", requireRole(["developer"]));
+  app.use("/v1/admin/prompts", requireRole(["developer"]));
+  app.use("/v1/admin/prompts/*", requireRole(["developer"]));
+  app.use("/v1/admin/team", requireRole(["admin"]));
+  app.use("/v1/admin/team/*", requireRole(["admin"]));
+  app.use("/v1/admin/providers", requireRole(["admin"]));
+  app.use("/v1/admin/providers/*", requireRole(["admin"]));
+  app.use("/v1/admin/guardrails", requireRole(["admin"]));
+  app.use("/v1/admin/guardrails/*", requireRole(["admin"]));
+  app.use("/v1/admin/alerts", requireRole(["admin"]));
+  app.use("/v1/admin/alerts/*", requireRole(["admin"]));
+  app.use("/v1/api-keys/*", requireRole(["admin"]));
+  app.use("/v1/routing/*", requireRole(["admin"]));
 
   // Tenant middleware — enforces tenant context in multi_tenant mode
   app.use("/v1/*", createTenantMiddleware(ctx.db));

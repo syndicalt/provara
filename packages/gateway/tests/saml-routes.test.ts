@@ -199,7 +199,7 @@ describe("upsertUserFromSso", () => {
     if (result.kind === "created") {
       expect(result.user.tenantId).toBe("tenant-acme");
       expect(result.user.email).toBe("alice@acme.com");
-      expect(result.user.role).toBe("member");
+      expect(result.user.role).toBe("developer");
       expect(result.user.firstName).toBe("Alice");
     }
   });

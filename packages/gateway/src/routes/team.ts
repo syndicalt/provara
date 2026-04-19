@@ -62,8 +62,10 @@ export function createTeamRoutes(db: Db) {
     }
 
     const body = await c.req.json<{ role: string }>();
-    if (body.role !== "owner" && body.role !== "member") {
-      return c.json({ error: { message: "Role must be 'owner' or 'member'", type: "validation_error" } }, 400);
+    const VALID_ROLES = ["owner", "admin", "developer", "viewer"] as const;
+    type ValidRole = typeof VALID_ROLES[number];
+    if (!VALID_ROLES.includes(body.role as ValidRole)) {
+      return c.json({ error: { message: `Role must be one of: ${VALID_ROLES.join(", ")}`, type: "validation_error" } }, 400);
     }
 
     const target = await db.select().from(users).where(
@@ -74,7 +76,7 @@ export function createTeamRoutes(db: Db) {
       return c.json({ error: { message: "Member not found", type: "not_found" } }, 404);
     }
 
-    await db.update(users).set({ role: body.role as "owner" | "member" }).where(eq(users.id, targetId)).run();
+    await db.update(users).set({ role: body.role as ValidRole }).where(eq(users.id, targetId)).run();
 
     const updated = await db.select().from(users).where(eq(users.id, targetId)).get();
     emitAudit(db, {
@@ -188,11 +190,15 @@ export function createTeamRoutes(db: Db) {
       return c.json({ error: { message: "Owner access required", type: "auth_error" } }, 403);
     }
 
+    const VALID_INVITE_ROLES = ["owner", "admin", "developer", "viewer"] as const;
+    type InviteRole = typeof VALID_INVITE_ROLES[number];
     const body = await c.req
-      .json<{ email?: string; role?: "owner" | "member" }>()
-      .catch(() => ({} as { email?: string; role?: "owner" | "member" }));
+      .json<{ email?: string; role?: InviteRole }>()
+      .catch(() => ({} as { email?: string; role?: InviteRole }));
     const email = (body.email ?? "").trim().toLowerCase();
-    const role: "owner" | "member" = body.role === "owner" ? "owner" : "member";
+    const role: InviteRole = VALID_INVITE_ROLES.includes(body.role as InviteRole)
+      ? (body.role as InviteRole)
+      : "developer";
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return c.json({ error: { message: "Valid email address required.", type: "validation_error" } }, 400);

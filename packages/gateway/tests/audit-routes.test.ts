@@ -10,7 +10,7 @@ vi.mock("../src/auth/admin.js", () => ({
     const h = req.headers.get("x-test-user");
     if (!h) return null;
     const [id, tenantId, role] = h.split(":");
-    return { id, tenantId, role: role as "owner" | "member" };
+    return { id, tenantId, role: role as "owner" | "admin" | "developer" | "viewer" };
   },
 }));
 
@@ -23,7 +23,7 @@ function buildApp(db: Db) {
   app.route("/v1/audit-logs", createAuditRoutes(db));
   return app;
 }
-function authHeader(u: { id: string; tenantId: string; role: "owner" | "member" }) {
+function authHeader(u: { id: string; tenantId: string; role: "owner" | "developer" }) {
   return `${u.id}:${u.tenantId}:${u.role}`;
 }
 

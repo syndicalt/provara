@@ -66,7 +66,7 @@ export interface InviteEmailParams {
   inviterName: string;
   inviterEmail: string;
   invitedEmail: string;
-  role: "owner" | "member";
+  role: "owner" | "admin" | "developer" | "viewer";
   expiresAt: Date;
 }
 

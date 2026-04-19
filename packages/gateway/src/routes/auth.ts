@@ -499,7 +499,7 @@ async function upsertUserFromMagicLink(
 
   const userId = nanoid();
   let tenantId = nanoid(12);
-  let role: "owner" | "member" = "owner";
+  let role: "owner" | "admin" | "developer" | "viewer" = "owner";
   let claimedInviteToken: string | null = null;
 
   const pending = await db
@@ -675,7 +675,7 @@ export async function upsertUser(
   // hijack a shared-email case).
   const userId = nanoid();
   let tenantId = nanoid(12);
-  let role: "owner" | "member" = "owner";
+  let role: "owner" | "admin" | "developer" | "viewer" = "owner";
   let claimedInviteToken: string | null = null;
 
   if (profile.emailVerified) {
