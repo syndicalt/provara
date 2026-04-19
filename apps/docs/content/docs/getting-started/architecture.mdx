@@ -1,0 +1,69 @@
+---
+title: Architecture
+description: Monorepo structure, services, data flow.
+---
+
+## Monorepo layout
+
+```
+provara/
+├── packages/
+│   ├── gateway/        # Hono-based LLM proxy (port 4000)
+│   │   └── src/
+│   │       ├── auth/         # API tokens, OAuth, sessions, RBAC
+│   │       ├── classifier/   # Task type + complexity heuristics
+│   │       ├── routing/      # Adaptive routing engine + judge
+│   │       ├── providers/    # Provider adapters
+│   │       ├── routes/       # HTTP routes (spend, audit, team, billing, …)
+│   │       ├── middleware/   # Rate limiting, attribution
+│   │       ├── billing/      # Usage metering, budgets, trajectory, drift
+│   │       ├── scheduler/    # Background jobs
+│   │       ├── audit/        # Emit + retention
+│   │       ├── crypto/       # AES-256-GCM + rotation
+│   │       ├── guardrails/   # PII, content, regex
+│   │       ├── cache/        # Exact-match + semantic
+│   │       └── email/        # Resend templates
+│   └── db/             # Drizzle ORM + libSQL/SQLite
+└── apps/
+    ├── web/            # Next.js + Tailwind dashboard
+    └── docs/           # Fumadocs docs site (this)
+```
+
+## Service topology
+
+- **Gateway** — single process, Hono, port 4000. Proxies chat completions, serves all admin/analytics APIs, runs the scheduler.
+- **Web** — Next.js App Router, port 3000. Dashboard UI, OAuth flow, billing pages. Talks to the gateway over HTTP.
+- **Database** — single libSQL / Turso DB. One schema, all state.
+- **External** — Stripe (billing), Resend (email), OpenAI/Anthropic/etc. (upstream providers).
+
+## Request flow — chat completions
+
+1. Client sends `POST /v1/chat/completions` with a bearer token or session cookie
+2. **Rate limit middleware** — per-IP DoS floor (default 200 rps) + per-token `apiTokens.rateLimit`
+3. **Auth middleware** — resolves the token/session, rejects 401 if invalid, 429 if rate-limit
+4. **Quota middleware** — Free-tier hard cutoff against `TIER_QUOTAS`
+5. **Tenant middleware** — populates tenant context
+6. **Budget hard-stop** — refuses 402 if `hard_stop=true` and monthly spend >= cap
+7. **Guardrails** — PII / content / regex policies on input
+8. **Classifier** — task type + complexity heuristic
+9. **Routing engine** — adaptive EMA over `(task_type, complexity, provider, model)` with ε-greedy exploration, A/B test precedence, fallback chain
+10. **Cache** — exact match then semantic (cosine similarity) — early return on hit
+11. **Provider call** — upstream with streaming or non-streaming, fallback on error
+12. **Persist** — `requests` row + `cost_logs` row with attribution (`user_id`, `api_token_id`)
+13. **Judge sample** — some responses get auto-scored by LLM-as-judge; feeds back into the EMA
+14. **Response** — OpenAI-compatible envelope with a `_provara` meta block
+
+## Background jobs
+
+Registered at gateway startup, all ride on a single `setInterval`-based scheduler:
+
+- `auto-ab` — spawns 50/50 tests on tied routing cells
+- `replay-bank-populate` — captures representative historical prompts per cell
+- `replay-execute` — periodically replays against current model, flags regressions via judge
+- `cost-migration` — nightly quality-gated model swaps
+- `usage-report` — reports Pro/Team overage to Stripe
+- `audit-retention` — purges audit rows past per-tier window
+- `budget-alerts` — emails threshold crossings
+- `weight-snapshots` — daily snapshot of tenant routing weights for drift analysis
+
+Multi-replica is not currently supported — deploy a single replica for now. Horizontal scaling tracked as issue #50.

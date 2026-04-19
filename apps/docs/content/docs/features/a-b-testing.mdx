@@ -1,0 +1,39 @@
+---
+title: A/B testing
+description: Manual and auto-generated experiments scoped to routing cells.
+---
+
+A/B tests override adaptive routing on a specific cell (optional). Weighted variant selection sends traffic across multiple `(provider, model)` targets at configurable ratios.
+
+## Manual
+
+```sh
+curl -X POST https://gateway.provara.xyz/v1/ab-tests \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "gpt-4o-mini vs gpt-4.1-nano on coding/simple",
+    "variants": [
+      { "provider": "openai", "model": "gpt-4o-mini", "weight": 1, "taskType": "coding", "complexity": "simple" },
+      { "provider": "openai", "model": "gpt-4.1-nano", "weight": 1, "taskType": "coding", "complexity": "simple" }
+    ]
+  }'
+```
+
+## Auto-generated (#148)
+
+When two models are tied on a cell (both cleared `MIN_SAMPLES`, scores within noise), the gateway spawns its own 50/50 test via the `auto-ab` scheduler job. The test self-resolves when a decisive winner emerges.
+
+## Precedence
+
+`abTestPreempts` config flag controls whether A/B tests beat the adaptive router when both apply. Default: yes, A/B wins — the test's purpose is to learn, and silent adaptive routing would mask the signal.
+
+## API reference
+
+| Endpoint | Description |
+|---|---|
+| `GET /v1/ab-tests` | List all tests |
+| `POST /v1/ab-tests` | Create a test |
+| `GET /v1/ab-tests/:id` | Detail + per-variant results |
+| `PATCH /v1/ab-tests/:id` | Update status (active/paused/completed) |
+| `DELETE /v1/ab-tests/:id` | Delete |

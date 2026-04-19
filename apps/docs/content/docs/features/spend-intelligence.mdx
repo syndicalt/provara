@@ -1,0 +1,70 @@
+---
+title: Spend intelligence
+description: FinOps-grade dashboard — attribution, trajectory, quality-adjusted spend, weight drift, savings recommendations, budgets.
+---
+
+## What it answers
+
+Traditional cost analytics answers "what did my LLMs cost." Spend intelligence answers the questions Finance is actually asking:
+
+1. **Who spent it?** — per-user + per-token attribution (Enterprise)
+2. **On what?** — per-provider / per-model / per-category (Team+)
+3. **Is the quality worth it?** — every row carries the judge-score envelope (`quality_median`, `quality_p25`, `quality_p75`, `cost_per_quality_point`)
+4. **Where is it trending?** — MTD total, linear-run-rate projection, 7-vs-28-day anomaly flag
+5. **Did my last routing change save money?** — weight-snapshot diff events joined with the per-provider spend mix in the attribution window after each change (Enterprise)
+6. **Where's the biggest savings opportunity?** — ranked recommendations from quality-comparable cheaper alternates (Enterprise)
+7. **Stay within budget** — monthly/quarterly caps with threshold emails and an optional hard-stop
+
+## API surface
+
+All tenant-scoped, under `/v1/spend/*`.
+
+| Path | Tier | Returns |
+|---|---|---|
+| `GET /by?dim=provider\|model\|user\|token\|category&from=&to=&compare=prior\|yoy` | Team+ (user/token → Enterprise) | Spend rows with quality envelope + period-over-period delta |
+| `GET /trajectory?period=month\|quarter` | Team+ | MTD + projection + prior-period total + anomaly flag with reason |
+| `GET /drift?from=&to=&window=<days>` | Enterprise | Weight-change events with spend mix in the attribution window after (default 14d, max 90) |
+| `GET /recommendations` | Enterprise | Ranked from → to model swaps with estimated monthly savings |
+| `GET /budgets`, `PUT /budgets` | Team+ | Budget CRUD |
+| `GET /export?dim=&from=&to=&format=csv` | Same as `/by` per dim | CSV with `currency=USD` column, filename encodes tenant + dim + dates |
+
+## Quality envelope
+
+Every `/spend/by` row carries:
+
+```json
+{
+  "cost_usd": 1.23,
+  "requests": 45,
+  "judged_requests": 12,
+  "quality_median": 4.0,
+  "quality_p25": 3.5,
+  "quality_p75": 4.5,
+  "cost_per_quality_point": 0.3075,
+  "delta_usd": 0.18,
+  "delta_pct": 0.17
+}
+```
+
+Percentiles use linear interpolation (numpy/R type-7 default). `cost_per_quality_point = sum(cost) / median(score)` — null when the cell has no judged rows, so the UI renders "no quality data" rather than a misleading zero.
+
+## Data model
+
+- **Attribution** — `requests.user_id` and `requests.api_token_id` (nullable, populated at ingest from auth context); denormalized onto `cost_logs` so per-user / per-token aggregations hit a covering index without a join.
+- **Weight snapshots** — `routing_weight_snapshots(tenant_id, task_type, complexity, weights, captured_at)`, one row per tenant per day, only written when weights differ.
+- **Budgets** — `spend_budgets(tenant_id PK, period, cap_usd, alert_thresholds JSON, alert_emails JSON, hard_stop, alerted_thresholds JSON, period_started_at, ...)`.
+
+## Budget hard-stop
+
+When a budget has `hard_stop=true` and current-period spend has reached the cap, `/v1/chat/completions` returns HTTP 402:
+
+```json
+{
+  "error": {
+    "message": "Spend budget exceeded: 250.00 / 250.00 USD (monthly).",
+    "type": "budget_exceeded"
+  }
+}
+```
+
+The soft path (email alerts at 50/75/90/100% by default) fires independently of the hard-stop setting.

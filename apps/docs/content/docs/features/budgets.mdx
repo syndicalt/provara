@@ -1,0 +1,37 @@
+---
+title: Budgets & alerts
+description: Monthly or quarterly caps with threshold emails and an optional hard-stop.
+---
+
+See also: [Spend intelligence](/docs/features/spend-intelligence).
+
+## What it does
+
+- **Cap** — a dollar amount per period (`monthly` or `quarterly`)
+- **Thresholds** — an array of percentages (default `[50, 75, 90, 100]`). When crossed, each triggers one email per configured recipient per period
+- **Hard-stop** — optional; when on, `/v1/chat/completions` returns HTTP 402 `budget_exceeded` once the cap is reached
+
+## Config
+
+```http
+PUT /v1/spend/budgets
+Content-Type: application/json
+
+{
+  "cap_usd": 500,
+  "period": "monthly",
+  "alert_thresholds": [50, 75, 90, 100],
+  "alert_emails": ["finance@example.com", "ops@example.com"],
+  "hard_stop": false
+}
+```
+
+Or via the dashboard at `/dashboard/spend` → Budgets & alerts section.
+
+## Period reset
+
+When the stored `period_started_at` falls before the current period start (configurable in code; defaults to first-of-month UTC for monthly, first-of-quarter for quarterly), the scheduler job clears `alerted_thresholds` so the next period starts with a clean slate.
+
+## Idempotency
+
+Alerts are keyed by threshold-within-period. Crossing 75% fires once; staying at 75% for a week doesn't re-fire. The scheduler cycle is daily but idempotent — running twice in one day is a no-op.

@@ -1,0 +1,67 @@
+---
+title: Quick start
+description: Docker or local dev in 5 minutes.
+---
+
+## Docker (recommended)
+
+```bash
+git clone https://github.com/syndicalt/provara.git
+cd provara
+
+# Set up environment
+cp .env.example .env
+# Edit .env: set PROVARA_MASTER_KEY and at least one provider API key
+
+docker compose up -d
+```
+
+- **Gateway:** http://localhost:4000
+- **Dashboard:** http://localhost:3000
+
+## Local development
+
+```bash
+git clone https://github.com/syndicalt/provara.git
+cd provara
+npm install
+
+cp .env.example .env
+# Edit .env
+
+npx turbo dev
+```
+
+Same ports as Docker. Both the gateway (Hono on 4000) and the dashboard (Next.js on 3000) hot-reload.
+
+## Generate a master key
+
+`PROVARA_MASTER_KEY` encrypts provider API keys stored via the dashboard UI. Generate a 32-byte hex key:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Paste into your `.env`. Rotation procedure lives in the [master-key rotation runbook](/docs/runbooks/master-key-rotation).
+
+## Your first completion
+
+The gateway is OpenAI-compatible. Point any SDK at `http://localhost:4000/v1/chat/completions`:
+
+```bash
+curl -X POST http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "model": "",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+Passing `"model": ""` lets the router pick. Pass a specific model (e.g. `"claude-sonnet-4-6"`) to pin.
+
+## Next steps
+
+- Add more providers via the dashboard at `/dashboard/api-keys` — their keys are AES-256-GCM encrypted with `PROVARA_MASTER_KEY`
+- Enable adaptive routing by submitting quality feedback from the Playground
+- Turn on [silent-regression detection](/docs/features/regression-detection) and [auto cost migration](/docs/features/cost-migration) once you have ~30 days of traffic

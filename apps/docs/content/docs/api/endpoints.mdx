@@ -1,0 +1,124 @@
+---
+title: Endpoint reference
+description: Full /v1/* and /auth/* surface. The machine-readable OpenAPI spec lives at packages/gateway/openapi.yaml.
+---
+
+The authoritative machine-readable spec lives at [`packages/gateway/openapi.yaml`](https://github.com/syndicalt/provara/blob/master/packages/gateway/openapi.yaml) — import into Yaak, Postman, or Insomnia for request composition.
+
+## Chat
+
+| Endpoint | Description |
+|---|---|
+| `POST /v1/chat/completions` | OpenAI-compatible chat completions. See [Chat completions](/docs/api/chat-completions). |
+
+## Models
+
+| Endpoint | Description |
+|---|---|
+| `GET /v1/providers` | List active providers and models |
+| `GET /v1/models/stats` | All models with pricing, latency, and quality stats |
+| `GET /v1/models/pricing` | Full pricing table |
+
+## Spend intelligence
+
+See [Spend intelligence](/docs/features/spend-intelligence) for semantics.
+
+| Endpoint | Tier |
+|---|---|
+| `GET /v1/spend/by` | Team+ (user/token → Enterprise) |
+| `GET /v1/spend/trajectory` | Team+ |
+| `GET /v1/spend/drift` | Enterprise |
+| `GET /v1/spend/recommendations` | Enterprise |
+| `GET /v1/spend/budgets`, `PUT /v1/spend/budgets` | Team+ |
+| `GET /v1/spend/export` | Same as `/by` per dim |
+
+## Audit
+
+| Endpoint | Tier |
+|---|---|
+| `GET /v1/audit-logs` | Team+ |
+
+## A/B tests
+
+| Endpoint | Description |
+|---|---|
+| `GET /v1/ab-tests` | List |
+| `POST /v1/ab-tests` | Create |
+| `GET /v1/ab-tests/:id` | Detail + per-variant results |
+| `PATCH /v1/ab-tests/:id` | Update status |
+| `DELETE /v1/ab-tests/:id` | Delete |
+
+## Feedback & quality
+
+| Endpoint | Description |
+|---|---|
+| `POST /v1/feedback` | Submit user quality feedback (1–5) |
+| `GET /v1/feedback` | List feedback |
+| `GET /v1/feedback/quality/by-model` | Quality by model |
+| `GET /v1/feedback/quality/by-cell` | Quality by cell |
+| `GET /v1/feedback/quality/trend` | Time-series |
+| `GET/PUT /v1/feedback/judge/config` | LLM judge configuration |
+
+## Regression detection
+
+| Endpoint | Description |
+|---|---|
+| `GET /v1/regression/status` | Opt-in state + replay bank size + weekly spend |
+| `POST /v1/regression/opt-in` | Toggle |
+| `GET /v1/regression/events` | Tenant-scoped history (`?unresolvedOnly=true`) |
+| `POST /v1/regression/events/:id/resolve` | Mark resolved with a note |
+
+## Cost migrations
+
+| Endpoint | Description |
+|---|---|
+| `GET /v1/cost-migrations/status` | Opt-in state + monthly projected savings |
+| `POST /v1/cost-migrations/opt-in` | Toggle |
+| `GET /v1/cost-migrations` | List (active + rolled back) |
+| `POST /v1/cost-migrations/run` | Trigger a cycle manually |
+| `POST /v1/cost-migrations/:id/rollback` | Revert + clear grace boost |
+
+## Admin
+
+| Endpoint | Description |
+|---|---|
+| `GET/POST/DELETE /v1/api-keys` | Provider API key CRUD (encrypted) |
+| `GET/POST/PATCH/DELETE /v1/admin/tokens` | API token CRUD with enable/disable |
+| `GET/POST/PATCH/DELETE /v1/admin/providers` | Custom provider CRUD |
+| `GET/PATCH/DELETE /v1/admin/team` | Team member management |
+| `GET/POST /v1/admin/team/invites` | List / create invites |
+| `DELETE /v1/admin/team/invites/:token` | Revoke an invite |
+| `GET /v1/admin/scheduler/jobs` | Per-job last-run state |
+| `POST /v1/admin/scheduler/jobs/:name/run` | Trigger a job immediately |
+| `POST /v1/providers/reload` | Hot-reload providers after key changes |
+
+## Billing
+
+| Endpoint | Description |
+|---|---|
+| `POST /v1/billing/checkout-session` | Stripe Checkout |
+| `POST /v1/billing/portal-session` | Stripe Customer Portal |
+| `GET /v1/billing/subscription` | Current subscription mirror |
+| `POST /v1/webhooks/stripe` | Stripe webhook (HMAC auth) |
+
+## Auth (multi-tenant mode only)
+
+| Endpoint | Description |
+|---|---|
+| `GET /auth/login/google` | Google OAuth (accepts `?return=&invite_token=`) |
+| `GET /auth/login/github` | GitHub OAuth (accepts `?return=&invite_token=`) |
+| `GET /auth/callback/google` | OAuth callback |
+| `GET /auth/callback/github` | OAuth callback |
+| `POST /auth/magic-link/request` | Request magic-link email |
+| `POST /auth/magic-link/verify` | Consume token, establish session |
+| `GET /auth/saml/discover` | SSO discover for an email's domain |
+| `GET /auth/saml/:tenantId/start` | Begin SAML flow |
+| `POST /auth/saml/:tenantId/acs` | SAML assertion consumer |
+| `POST /auth/logout` | Sign out |
+| `GET /auth/me` | Current user |
+
+## System
+
+| Endpoint | Description |
+|---|---|
+| `GET /health` | Health check + mode |

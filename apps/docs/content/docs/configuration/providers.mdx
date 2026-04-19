@@ -1,0 +1,32 @@
+---
+title: Providers
+description: Built-in adapters and how to add more.
+---
+
+## Built-in
+
+| Provider | Models | API style |
+|---|---|---|
+| **OpenAI** | gpt-4o, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3, o4-mini | Native SDK |
+| **Anthropic** | claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5 | Native SDK |
+| **Google** | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Native SDK |
+| **Mistral** | mistral-large, mistral-medium, mistral-small | OpenAI-compatible |
+| **xAI** | grok-3, grok-3-mini | OpenAI-compatible |
+| **Z.ai** | glm-5.1, glm-5, glm-5-turbo, glm-4.7, glm-4.7-flashx, glm-4.7-flash | OpenAI-compatible |
+| **Ollama** | any model served locally | OpenAI-compatible |
+
+## Registration
+
+Providers auto-register at gateway startup based on:
+
+1. **Env vars** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.
+2. **DB-stored keys** — added via `/dashboard/api-keys`, encrypted with `PROVARA_MASTER_KEY`. DB keys take precedence over env vars.
+
+Ollama is always registered (points at `OLLAMA_BASE_URL`, default `http://localhost:11434/v1`).
+
+## Adding a provider
+
+See the [adding-a-provider runbook](/docs/runbooks/adding-a-provider). Two paths:
+
+- **OpenAI-compatible** (Fireworks, Together, Groq, DeepSeek, etc.) — no code change; register via `registerOpenAICompatible` and add pricing
+- **Native API** — new adapter under `packages/gateway/src/providers/`

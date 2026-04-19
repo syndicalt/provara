@@ -1,0 +1,22 @@
+---
+title: Semantic cache
+description: Two-layer response caching — exact-match (in-memory) + semantic similarity via embeddings.
+---
+
+Every cacheable request (temperature = 0, not mid-A/B-test) checks two caches before hitting a provider:
+
+1. **Exact match** — in-memory hash of `(messages, provider, model)`. Sub-millisecond.
+2. **Semantic match** — OpenAI embedding of the messages, compared against prior cached embeddings via cosine similarity. Hit when similarity >= `PROVARA_SEMANTIC_CACHE_THRESHOLD` (default 0.97).
+
+Hits return immediately; the gateway logs `cached=true` and reports `tokensSavedInput` / `tokensSavedOutput` for dashboard savings calculation.
+
+## Tuning
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `PROVARA_SEMANTIC_CACHE_ENABLED` | `true` | Hard off-switch for the semantic layer |
+| `PROVARA_SEMANTIC_CACHE_THRESHOLD` | `0.97` | Cosine similarity required for a match |
+| `PROVARA_EMBEDDING_MODEL` | `text-embedding-3-small` | Must be one of OpenAI's embedding models |
+| `PROVARA_EMBEDDING_PROVIDER` | `openai` | Only OpenAI is supported in MVP |
+
+The exact-match cache is always on; the semantic cache depends on having an OpenAI API key (env or DB-stored) for embeddings.

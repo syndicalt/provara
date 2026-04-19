@@ -1,0 +1,27 @@
+---
+title: Guardrails
+description: PII detection, content policies, and custom regex rules with redact / flag / block actions.
+---
+
+Guardrails sit in the request path alongside the classifier and rate limiter. Rules are stored per-tenant; each rule can target input, output, or both.
+
+## Built-in detectors
+
+- **PII** — SSN, credit card, email, phone, IP address
+- **Content** — built-in policy presets
+- **Regex** — custom tenant-defined patterns
+- **Token limit** — refuse requests exceeding a max token count
+
+## Actions
+
+- **block** — refuse the request (HTTP 400)
+- **redact** — replace the matched span with `[REDACTED]` before forwarding upstream
+- **flag** — log but allow through
+
+## Logging
+
+Every guardrail hit writes to `guardrail_logs` with `requestId`, `tenantId`, rule name, matched text (redacted), and action taken. Viewable on `/dashboard/guardrails`.
+
+## Tenant-scoped vs global
+
+Built-in detectors are tenant-scoped with `builtIn=true` flags so tenants can enable/disable the set Provara ships. Custom regex rules are tenant-created entirely.

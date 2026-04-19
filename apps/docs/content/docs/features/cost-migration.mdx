@@ -1,0 +1,39 @@
+---
+title: Auto cost migration
+description: Nightly quality-gated model swaps with one-click rollback and reported savings.
+---
+
+## The idea
+
+Per cell, if a **cheaper** model's EMA quality is within `epsilon` of the current winner and has enough samples, migrate the cell. Report the projected monthly savings. If things go sideways, one click to roll back.
+
+The migration is automatic; the quality gate is the only thing keeping a cell from moving to a worse model. That gate is tunable.
+
+## Safety rails
+
+- **Quality epsilon** — default `0.05` on the 0..1 quality scale. A cheaper alternative must be within this of the current winner.
+- **Minimum samples** — default 30 on the alternative before it's eligible.
+- **Grace boost** — the newly-migrated model gets a temporary EMA boost so it doesn't immediately lose to its predecessor on the next judge event.
+- **Rollback** — one click reverts the migration and clears the grace boost. Savings stop accruing immediately.
+- **Opt-in per tenant** — default off; Pro+ tiers can enable.
+
+## What you see
+
+- Reported savings on `/dashboard/routing` — "Migrated 3 cells last week — saved $X at equal quality"
+- Migration history on `GET /v1/cost-migrations`
+- Full per-migration detail: from model, to model, quality delta, estimated monthly savings
+
+## Tuning
+
+```sh
+# Opt in
+curl -X POST https://gateway.provara.xyz/v1/cost-migrations/opt-in \
+  -H "Authorization: Bearer <token>" \
+  -d '{"enabled": true}'
+
+# Trigger a cycle manually
+curl -X POST https://gateway.provara.xyz/v1/cost-migrations/run \
+  -H "Authorization: Bearer <token>"
+```
+
+Env vars `PROVARA_COST_MIGRATION_EPSILON` and `PROVARA_COST_MIGRATION_MIN_SAMPLES` override the defaults.

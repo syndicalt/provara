@@ -1,0 +1,70 @@
+---
+title: Audit logs
+description: Append-only, tenant-scoped record of security- and admin-relevant events. SOC 2-aligned, tier-gated retention.
+---
+
+## Scope
+
+Audit logs cover **security- and admin-relevant events**, not API traffic. API traffic lives in the `requests` table (with its own retention). Audit rows are for the things an auditor or security admin would ask about.
+
+## Event vocabulary
+
+- **Auth** — `auth.login.success` (method: magic_link / google / saml), `auth.login.failed`, `auth.session.revoked`, `auth.sso_config.updated`
+- **Users & team** — `user.invited`, `user.joined`, `user.removed`, `user.role_changed`
+- **Access surface** — `api_key.created`, `api_key.revoked`, `token.created`, `token.revoked`, `token.rotated`
+- **Billing** — `billing.subscription.created/updated/canceled`, `billing.checkout.started`
+- **Abuse signals** — `rate_limit.exceeded` (only fired for callers with resolvable tenant; suppressed at 1/minute/tenant/scope)
+
+Canonical list: [`packages/gateway/src/audit/actions.ts`](https://github.com/syndicalt/provara/blob/master/packages/gateway/src/audit/actions.ts).
+
+## Row shape
+
+```ts
+{
+  id: string,              // nanoid
+  tenantId: string,
+  actorUserId: string | null,   // null for system-emitted events
+  actorEmail: string | null,    // denormalized — survives user deletion
+  action: AuditAction,
+  resourceType: string | null,  // e.g. "api_key", "user", "subscription"
+  resourceId: string | null,
+  metadata: object | null,      // free-form JSON
+  createdAt: Date,
+}
+```
+
+## Retention
+
+| Tier | Window |
+|---|---|
+| Free / Pro | 90 days |
+| Team | 365 days |
+| Enterprise / Self-host Enterprise | 730 days |
+
+A daily scheduler job (`audit-retention`) deletes rows past the per-tier cutoff, chunked 10k at a time. The app layer is the only DELETE writer on `audit_logs`; nothing issues UPDATE.
+
+## Access
+
+- **Dashboard viewer** — `/dashboard/audit` (Team+ gated). Filter by actor email, action, date range. Cursor-paginated. One-click CSV export.
+- **SIEM pull** — `GET /v1/audit-logs?action=&actor=&since=&until=&cursor=&format=json|csv&limit=`. Up to 500 rows per page. Tenant-scoped; operators can view cross-tenant via admin UI.
+
+## Emission pattern
+
+Audit writes are **fire-and-forget**. An audit-log write failure must never block the underlying action — if the log is down, the user still gets their API key created / subscription changed / whatever. Failures are swallowed and logged to stdout.
+
+```ts
+import { emitAudit } from "./audit/emit.js";
+import { AUDIT_API_KEY_CREATED } from "./audit/actions.js";
+
+emitAudit(db, {
+  tenantId: authUser.tenantId,
+  actorUserId: authUser.id,
+  actorEmail: authUser.email,
+  action: AUDIT_API_KEY_CREATED,
+  resourceType: "api_key",
+  resourceId: newKey.id,
+  metadata: { provider: body.provider, name: body.name },
+});
+```
+
+Tests that need to observe the row use `emitAuditSync`.

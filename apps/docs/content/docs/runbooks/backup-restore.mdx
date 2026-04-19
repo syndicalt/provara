@@ -1,0 +1,86 @@
+---
+title: "Operator runbook: database backup & restore"
+description: Operator runbook.
+---
+
+
+Provara's state lives in a single libSQL / Turso database. Nothing else on disk, no external caches, no secondary stores. This makes backup/restore straightforward.
+
+## Routine backups
+
+Turso runs point-in-time recovery (PITR) on all paid plans — the Scaler tier retains **14 days**, Starter retains **24 hours**. You generally don't need to take your own backups unless you want longer retention or off-provider copies.
+
+### Manual snapshot (for rotations, migrations, anything that writes many rows)
+
+Before anything risky, dump the state you're about to touch to a local file:
+
+```sh
+# Whole DB dump (Turso CLI)
+turso db shell provara-railway ".dump" > ./backups/provara_$(date +%Y%m%d_%H%M).sql
+
+# Specific table (e.g. the one you're about to migrate)
+railway run --service provara-gateway --environment production -- \
+  node -e "
+    const { createClient } = require('@libsql/client');
+    const c = createClient({ url: process.env.DATABASE_URL, authToken: process.env.DATABASE_AUTH_TOKEN });
+    c.execute('SELECT * FROM api_keys').then(r => console.log(JSON.stringify(r.rows, null, 2)));
+  " > ./backups/api_keys_$(date +%Y%m%d_%H%M).json
+```
+
+Keep snapshots under a **gitignored** path — the repo's `.gitignore` has `.local/` and `./backups/` isn't tracked by default, but verify before you commit anything.
+
+## Restore from Turso PITR
+
+When something goes wrong and you need to roll back:
+
+1. **Don't keep writing to prod.** Every new write narrows your PITR window. Take the gateway offline by scaling the Railway service to 0 replicas if you have time.
+2. **Pick the target timestamp.** Via Turso dashboard → Databases → `provara-railway` → Restore, or CLI:
+
+   ```sh
+   turso db restore provara-railway --timestamp "2026-04-18T22:30:00Z" --name provara-railway-restored
+   ```
+
+   Restoring creates a **new database**; it doesn't overwrite the original. The original stays intact while you validate.
+3. **Validate.** Point a local gateway at the restored DB URL and verify the rows you care about are in the expected state:
+
+   ```sh
+   DATABASE_URL=libsql://provara-railway-restored-<org>.aws-us-east-2.turso.io \
+   DATABASE_AUTH_TOKEN=... \
+     npm run dev -w packages/gateway
+   ```
+4. **Swap.** Two options:
+   - **Rename swap (canonical):** rename `provara-railway` to `provara-railway-corrupted-<date>`, then rename `provara-railway-restored` to `provara-railway`. The gateway's env-var URL stays the same; no redeploy needed if Turso keeps the hostname stable (it does, the hostname is derived from the DB name).
+   - **Config swap:** update `DATABASE_URL` on Railway to the restored DB's URL; redeploy. Simpler but leaves a non-obvious dependency on env var state.
+5. **Bring traffic back.** Scale replicas up, run smoke tests.
+
+## Restore from local dump
+
+If Turso PITR isn't available (e.g. Starter plan past the 24h window), fall back to a local `.sql` dump you took manually:
+
+```sh
+# Create a new blank DB
+turso db create provara-railway-restored
+
+# Stream the dump into it
+turso db shell provara-railway-restored < ./backups/provara_20260418_2230.sql
+```
+
+Then proceed as with PITR step 3 onward.
+
+## What the backup does and doesn't cover
+
+- **In backup:** all tenant data, subscriptions, audit logs, encrypted provider keys, model scores, requests, cost logs, budgets, routing-weight snapshots.
+- **Not in backup:**
+  - `PROVARA_MASTER_KEY` (env var on Railway — if you restore a DB encrypted under an old key, you **must** also restore the matching master key, or every provider key in `api_keys` will fail to decrypt)
+  - In-memory scheduler state (`running` set, interval timers) — rebuilds on next process start
+  - Semantic-cache embeddings (in-memory only; re-hydrate as traffic arrives)
+  - Upstream provider data (chat histories live on OpenAI/Anthropic/etc.; Provara only logs prompts + responses on its own side via the `requests` table)
+
+## Disaster scenarios we've actually hit
+
+| Scenario | First move |
+|---|---|
+| "Rotated `PROVARA_MASTER_KEY` but forgot to update the Railway env var" | Revert the env var to the old value — the DB is fine, only the running process is using the wrong key. No DB restore needed. |
+| "Accidentally deleted every row in `subscriptions`" | PITR restore to 5 minutes before. Keep the original; move the restored DB into place with rename-swap. |
+| "Turso region outage" | Can't restore during an outage — the provider is down. If you've been taking local `.sql` dumps (recommended before any risky op), bring up a dev gateway pointed at a local libSQL DB seeded from the dump, and flip `DATABASE_URL` / `DATABASE_AUTH_TOKEN` on Railway when Turso returns. |
+| "Write quota exhausted mid-deployment" | Enable overages (or upgrade plan) in the Turso dashboard. DB is intact; no restore needed. Redeploy the gateway to clear the crash loop. See `incident-response.md` §4. |
