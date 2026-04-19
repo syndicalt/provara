@@ -240,6 +240,7 @@ export async function createRouter(ctx: RouterContext) {
   const tierGate = requireIntelligenceTier(ctx.db);
   app.use("/v1/regression/*", tierGate);
   app.use("/v1/cost-migrations/*", tierGate);
+  app.use("/v1/evals/*", tierGate);
   app.route("/v1/regression", createRegressionRoutes(ctx.db, routingEngine.regressionCellTable));
   app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
 
