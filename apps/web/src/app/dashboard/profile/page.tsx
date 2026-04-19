@@ -20,6 +20,7 @@ interface Me {
   ownerCount: number;
   authMethods: string[];
   tier: string;
+  isOperator: boolean;
 }
 
 interface SessionRow {
@@ -285,7 +286,12 @@ export default function ProfilePage() {
       {/* Danger zone */}
       <section className="bg-red-950/20 border border-red-900/40 rounded-lg p-6">
         <h2 className="text-sm font-semibold text-red-200 uppercase tracking-widest mb-2">Danger zone</h2>
-        {me.isSoleOwner && (me.tier === "enterprise" || me.tier === "selfhost_enterprise") ? (
+        {me.isOperator ? (
+          <p className="text-sm text-zinc-400">
+            This is a Provara operator account. Account and tenant lifecycle for operators is
+            managed by the platform team directly — there&apos;s no self-serve delete here by design.
+          </p>
+        ) : me.isSoleOwner && (me.tier === "enterprise" || me.tier === "selfhost_enterprise") ? (
           <>
             <p className="text-sm text-zinc-400 mb-4">
               Enterprise tenants are offboarded through support so contract termination,
