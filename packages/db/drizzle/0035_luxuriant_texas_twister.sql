@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `read_only` integer DEFAULT false NOT NULL;

@@ -39,6 +39,14 @@ export const sessions = sqliteTable("sessions", {
     .notNull()
     .references(() => users.id),
   expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+  /**
+   * Demo-tenant sessions (#229) are marked read-only so the hot path can
+   * refuse writes without tearing the tenant-scoping code apart. When
+   * set, every POST/PUT/PATCH/DELETE under `/v1/*` returns 403
+   * `demo_read_only` — the rest of the dashboard experience (reads,
+   * exports, chart renders) remains functional. Null = regular session.
+   */
+  readOnly: integer("read_only", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

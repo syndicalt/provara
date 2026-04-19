@@ -12,6 +12,9 @@ const tenantMap = new WeakMap<Request, string>();
 // token callers have no session user — their attribution comes from the
 // token via `getTokenInfo`.
 const sessionUserMap = new WeakMap<Request, string>();
+// Demo-tenant sessions (#229) carry a read-only flag. Writes under /v1/*
+// refuse when this is set. Missing from the map ≡ not a demo session.
+const sessionReadOnlyMap = new WeakMap<Request, boolean>();
 
 export function getTenantId(req: Request): string | null {
   return tenantMap.get(req) || null;
@@ -19,6 +22,10 @@ export function getTenantId(req: Request): string | null {
 
 export function getSessionUserId(req: Request): string | null {
   return sessionUserMap.get(req) || null;
+}
+
+export function isReadOnlySession(req: Request): boolean {
+  return sessionReadOnlyMap.get(req) === true;
 }
 
 /** Testing-only helper — sets the tenant on a Request for unit tests that
@@ -31,6 +38,11 @@ export function __testSetTenant(req: Request, tenantId: string): void {
 /** Testing-only helper — sets the session user id on a Request. */
 export function __testSetSessionUserId(req: Request, userId: string): void {
   sessionUserMap.set(req, userId);
+}
+
+/** Testing-only helper — marks a request's session as read-only. */
+export function __testSetReadOnlySession(req: Request, readOnly: boolean): void {
+  sessionReadOnlyMap.set(req, readOnly);
 }
 
 /**
@@ -105,6 +117,9 @@ export function createTenantMiddleware(db: Db) {
       if (result) {
         tenantMap.set(c.req.raw, result.user.tenantId);
         sessionUserMap.set(c.req.raw, result.user.id);
+        if (result.session.readOnly) {
+          sessionReadOnlyMap.set(c.req.raw, true);
+        }
         return next();
       }
     }

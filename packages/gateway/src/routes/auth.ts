@@ -260,6 +260,7 @@ export function createAuthRoutes(db: Db) {
         tenantId: result.user.tenantId,
         role: result.user.role,
       },
+      isDemo: result.session.readOnly === true,
     });
   });
 

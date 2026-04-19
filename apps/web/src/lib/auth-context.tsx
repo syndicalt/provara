@@ -15,12 +15,15 @@ interface User {
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  /** True when the current session is a public read-only demo session (#229). */
+  isDemo: boolean;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
   user: null,
   loading: true,
+  isDemo: false,
   logout: async () => {},
 });
 
@@ -53,10 +56,11 @@ const PG_USER_KEY = "pg:user_id";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
+  const [isDemo, setIsDemo] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    gatewayClientFetch<{ user: User | null }>("/auth/me")
+    gatewayClientFetch<{ user: User | null; isDemo?: boolean }>("/auth/me")
       .then((data) => {
         if (typeof window !== "undefined") {
           const stashedId = sessionStorage.getItem(PG_USER_KEY);
@@ -70,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
         }
         setUser(data.user);
+        setIsDemo(data.isDemo === true);
       })
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
@@ -87,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, logout }}>
+    <AuthContext.Provider value={{ user, loading, isDemo, logout }}>
       {children}
     </AuthContext.Provider>
   );
