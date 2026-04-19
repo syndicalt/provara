@@ -29,45 +29,21 @@ interface FeatureGroup {
 
 const featureGroups: FeatureGroup[] = [
   {
-    heading: "Routing that learns",
-    tagline: "Traffic quietly migrates to the models that actually perform on your workload.",
+    heading: "Catch what you'd otherwise miss",
+    tagline: "Most LLM regressions are invisible until a customer complains. Not here.",
     items: [
       {
-        title: "Adaptive routing",
-        description: "Per-cell quality EMA picks the best model for each (task, complexity) pair. No retraining loop.",
+        title: "Silent-regression detection",
+        description: "A replay bank of your top historical prompts re-runs against current models on a schedule. When quality drops, you know before your users do.",
         icon: (
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M7 15l4-4 4 4 5-5" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.01M5.07 19h13.86a2 2 0 001.74-3L13.73 4a2 2 0 00-3.46 0L3.34 16a2 2 0 001.73 3z" />
           </svg>
         ),
       },
       {
-        title: "LLM-as-judge scoring",
-        description: "Sample a configurable slice of responses and score them automatically. Pin a judge model to avoid grade inflation.",
-        icon: (
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.56.56 0 011.04 0l2.13 5.1a.56.56 0 00.47.35l5.52.44c.5.04.7.66.32.99l-4.2 3.6a.56.56 0 00-.18.56l1.28 5.38a.56.56 0 01-.84.61L12 17.3a.56.56 0 00-.58 0L6.98 20.54a.56.56 0 01-.84-.61l1.28-5.38a.56.56 0 00-.18-.56L3.04 10.39a.56.56 0 01.32-.99l5.52-.44a.56.56 0 00.47-.35L11.48 3.5z" />
-          </svg>
-        ),
-      },
-      {
-        title: "Cost-aware fallback",
-        description: "Primary provider fails? Automatic fallback chain sorted cheapest-first keeps your requests alive.",
-        icon: (
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.8l.88.66c1.17.88 3.07.88 4.24 0 1.17-.88 1.17-2.3 0-3.18C13.54 12.22 12.77 12 12 12c-.73 0-1.45-.22-2-.66-1.11-.88-1.11-2.3 0-3.18s2.9-.88 4 0l.42.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        ),
-      },
-    ],
-  },
-  {
-    heading: "Know what's working",
-    tagline: "Every routing decision, cost, and quality signal is visible and queryable.",
-    items: [
-      {
-        title: "Live observability",
-        description: "Request logs with routing metadata, per-model cost breakdowns, latency percentiles, and adaptive-matrix heatmaps.",
+        title: "Quality-adjusted spend",
+        description: "Every cost row carries the judge-score envelope — median, p25, p75, and cost per quality point. Know which dollar is buying a good answer.",
         icon: (
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.13C3 12.5 3.5 12 4.13 12h2.25c.62 0 1.12.5 1.12 1.13v6.75c0 .62-.5 1.12-1.12 1.12H4.13A1.13 1.13 0 013 19.88v-6.75zM9.75 8.63c0-.63.5-1.13 1.13-1.13h2.24c.63 0 1.13.5 1.13 1.13v11.24c0 .63-.5 1.13-1.13 1.13h-2.24a1.13 1.13 0 01-1.13-1.13V8.63zM16.5 4.13c0-.63.5-1.13 1.13-1.13h2.25C20.5 3 21 3.5 21 4.13v15.74c0 .63-.5 1.13-1.13 1.13h-2.25a1.13 1.13 0 01-1.13-1.13V4.13z" />
@@ -75,41 +51,56 @@ const featureGroups: FeatureGroup[] = [
         ),
       },
       {
-        title: "A/B tests scoped per cell",
-        description: "Run controlled comparisons on specific task/complexity combinations without polluting the rest of your traffic.",
+        title: "Weight-drift × spend",
+        description: "Changed your routing weights last week? See the exact spend mix in the attribution window after each change. Unique to Provara.",
         icon: (
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
-          </svg>
-        ),
-      },
-      {
-        title: "Fallback attribution",
-        description: "When a provider fails, you see exactly which ones were tried and why — surfaced in the response and persisted to logs.",
-        icon: (
-          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.01M5.07 19h13.86a2 2 0 001.74-3L13.73 4a2 2 0 00-3.46 0L3.34 16a2 2 0 001.73 3z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18h18M7 15l4-4 4 4 5-5" />
           </svg>
         ),
       },
     ],
   },
   {
-    heading: "Own your stack",
-    tagline: "Drop-in API, your infra, your data.",
+    heading: "Cut spend without cutting quality",
+    tagline: "Automated, auditable, rollback-able — not a black box that just picks cheaper.",
     items: [
       {
-        title: "OpenAI-compatible API",
-        description: "Change the base URL in your existing code — any SDK that speaks /v1/chat/completions Just Works.",
+        title: "Auto cost migration",
+        description: "A nightly job migrates routing cells to cheaper models when quality parity holds. Reports savings in dollars. One click to roll back.",
         icon: (
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25M6.75 17.25L1.5 12l5.25-5.25M14.25 4.5L9.75 19.5" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.8l.88.66c1.17.88 3.07.88 4.24 0 1.17-.88 1.17-2.3 0-3.18C13.54 12.22 12.77 12 12 12c-.73 0-1.45-.22-2-.66-1.11-.88-1.11-2.3 0-3.18s2.9-.88 4 0l.42.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         ),
       },
       {
+        title: "Savings recommendations",
+        description: "Per-cell \"switch from X to Y\" recommendations ranked by projected monthly savings, using real judge scores to guarantee quality parity.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M11.48 3.5a.56.56 0 011.04 0l2.13 5.1a.56.56 0 00.47.35l5.52.44c.5.04.7.66.32.99l-4.2 3.6a.56.56 0 00-.18.56l1.28 5.38a.56.56 0 01-.84.61L12 17.3a.56.56 0 00-.58 0L6.98 20.54a.56.56 0 01-.84-.61l1.28-5.38a.56.56 0 00-.18-.56L3.04 10.39a.56.56 0 01.32-.99l5.52-.44a.56.56 0 00.47-.35L11.48 3.5z" />
+          </svg>
+        ),
+      },
+      {
+        title: "Budgets with hard-stop",
+        description: "Monthly or quarterly caps with threshold alerts at 50/75/90/100%. Optional hard-stop returns HTTP 402 the moment a tenant hits the cap.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    heading: "Stay on your terms",
+    tagline: "Self-host it or use the Cloud — same code, same features.",
+    items: [
+      {
         title: "Self-host with Docker",
-        description: "One compose file, zero telemetry. All traffic, keys, and scores stay on your infrastructure.",
+        description: "One compose file, zero telemetry, BSL-licensed source. Prompts, keys, and scores never leave your infrastructure.",
         icon: (
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.74 5.1a3.38 3.38 0 012.7-1.35h7.13c1.06 0 2.06.5 2.7 1.35l2.58 3.45a4.5 4.5 0 01.9 2.7" />
@@ -117,15 +108,48 @@ const featureGroups: FeatureGroup[] = [
         ),
       },
       {
-        title: "Prompt templates",
-        description: "Version and publish prompts from the dashboard. Resolve by name via API — ship prompt changes without redeploying code.",
+        title: "OpenAI-compatible API",
+        description: "Change the base URL in your existing code — any SDK that speaks /v1/chat/completions Just Works. OpenAI SDK, LangChain, LlamaIndex, all of it.",
         icon: (
           <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.63A3.38 3.38 0 0016.13 8.25h-1.5A1.13 1.13 0 0113.5 7.13v-1.5A3.38 3.38 0 0010.13 2.25H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.63c-.63 0-1.13.5-1.13 1.13v17.25c0 .62.5 1.12 1.13 1.12h12.75c.62 0 1.12-.5 1.12-1.12V11.25a9 9 0 00-9-9z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25M6.75 17.25L1.5 12l5.25-5.25M14.25 4.5L9.75 19.5" />
+          </svg>
+        ),
+      },
+      {
+        title: "Audit log + compliance",
+        description: "Tenant-scoped audit trail with tier-gated retention (90d / 365d / 730d). CSV export, SIEM-pull API, SOC 2-shaped event vocabulary.",
+        icon: (
+          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" />
           </svg>
         ),
       },
     ],
+  },
+];
+
+interface OutcomeStat {
+  stat: string;
+  label: string;
+  context: string;
+}
+
+const outcomeStats: OutcomeStat[] = [
+  {
+    stat: "Catch regressions",
+    label: "before your users do",
+    context: "Replay bank + judge re-eval flags quality drops the moment they appear.",
+  },
+  {
+    stat: "Cut spend at equal quality",
+    label: "automatically",
+    context: "Nightly cost migration with rollback. Judge-score gated — no quality cliff.",
+  },
+  {
+    stat: "Answer \"why did our bill double?\"",
+    label: "in one screen",
+    context: "Per-user + per-token attribution. MTD + forecast + anomaly. CSV export.",
   },
 ];
 
@@ -186,14 +210,17 @@ export default function Home() {
             <div className="text-center max-w-3xl mx-auto">
               <div className="inline-flex items-center gap-2 mb-6 px-3 py-1 rounded-full bg-blue-950/40 border border-blue-900/40 text-xs text-blue-300">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                Self-hostable · OpenAI-compatible · Open source
+                BSL-licensed · Self-host or Cloud · OpenAI-compatible
               </div>
               <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight leading-[1.05]">
-                <span className="block">One Gateway, Every LLM</span>
-                <span className="block mt-6 text-blue-400">Smarter with Every Request</span>
+                <span className="block">The Adaptive</span>
+                <span className="block mt-2 text-blue-400">LLM Gateway</span>
               </h1>
-              <p className="mt-6 text-lg text-zinc-400 leading-relaxed">
-                Route traffic across OpenAI, Anthropic, Groq, DeepSeek, xAI, and more — then watch the gateway learn which models perform best on your workload and quietly shift routing toward them. No retraining, no manual tuning, no SDK swap.
+              <p className="mt-8 text-xl text-zinc-300 leading-relaxed">
+                Routes every request. Learns from every response.
+              </p>
+              <p className="mt-4 text-base text-zinc-400 leading-relaxed max-w-2xl mx-auto">
+                Know when a provider silently ships a regression. Cut model spend at equal quality — automatically. Answer &quot;why did our bill double?&quot; in one screen, not a grep. Built for teams shipping AI-powered products who&apos;ve outgrown raw API access.
               </p>
               <div className="mt-10 flex gap-3 justify-center flex-wrap">
                 <Link
@@ -201,6 +228,12 @@ export default function Home() {
                   className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors"
                 >
                   Start free
+                </Link>
+                <Link
+                  href="/demo"
+                  className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg font-medium transition-colors"
+                >
+                  See it live →
                 </Link>
                 <a
                   href="https://github.com/syndicalt/provara"
@@ -217,6 +250,21 @@ export default function Home() {
               <Link href="/models" className="inline-block mt-4 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
                 or browse all available models →
               </Link>
+            </div>
+          </div>
+        </section>
+
+        {/* Outcomes strip */}
+        <section className="border-y border-zinc-800/50 bg-zinc-900/40">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {outcomeStats.map((o) => (
+                <div key={o.stat} className="text-center md:text-left">
+                  <p className="text-xl font-semibold text-zinc-100">{o.stat}</p>
+                  <p className="text-sm text-blue-300 mt-1">{o.label}</p>
+                  <p className="text-xs text-zinc-500 mt-3 leading-relaxed">{o.context}</p>
+                </div>
+              ))}
             </div>
           </div>
         </section>
@@ -241,9 +289,9 @@ export default function Home() {
         {/* Features */}
         <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24 space-y-20">
           <div className="text-center">
-            <h2 className="text-3xl font-bold">More than a proxy</h2>
+            <h2 className="text-3xl font-bold">The gateway, the ops platform, in one.</h2>
             <p className="mt-4 text-zinc-400 max-w-2xl mx-auto">
-              Provara isn't just a router. It learns which models perform best on your actual traffic, gives you the evidence to prove it, and stays out of your way.
+              Adaptive routing is the foundation. Regression detection, auto cost migration, and spend intelligence are what you actually buy it for.
             </p>
           </div>
 
@@ -340,7 +388,7 @@ export default function Home() {
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24">
             <div className="text-center mb-16">
               <h2 className="text-3xl font-bold">Get started in minutes</h2>
-              <p className="mt-4 text-zinc-400">Three steps to intelligent LLM routing.</p>
+              <p className="mt-4 text-zinc-400">Three steps to an adaptive LLM gateway.</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-0 relative">
               {/* Connector lines (desktop only) */}
@@ -429,9 +477,9 @@ export default function Home() {
         {/* CTA */}
         <section className="border-t border-zinc-800/50">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-24 text-center">
-            <h2 className="text-3xl font-bold mb-4">Ready to optimize your LLM stack?</h2>
+            <h2 className="text-3xl font-bold mb-4">Ready to stop flying blind?</h2>
             <p className="text-zinc-400 mb-8 max-w-xl mx-auto">
-              Start routing requests intelligently. Self-host for free or sign up for managed hosting.
+              Catch regressions before your users do. Cut spend at equal quality. See who burned your API budget. Self-host for free or use the Cloud.
             </p>
             <div className="flex gap-4 justify-center">
               <Link
