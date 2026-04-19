@@ -25,8 +25,13 @@ Intelligent multi-provider LLM gateway with adaptive routing, A/B testing, and c
 - **Streaming** — Full SSE streaming support with first-chunk fallback detection
 - **Response Caching** — In-memory cache for deterministic requests (temperature=0)
 - **Multi-Tenant** — OAuth (Google + GitHub), role-based access (owner/member), tenant-scoped data
-- **Team Invites** — Owner-invite flow with seat quotas per tier, atomic email-verified claim on OAuth callback, and transactional invite + welcome email via Resend
-- **Encrypted Key Storage** — AES-256-GCM encryption for provider API keys at rest
+- **SAML SSO** — Enterprise-tier identity-provider integration (Okta, Azure AD, Google Workspace) with IdP-metadata autoconfig and email-domain enforcement
+- **Team Invites** — Owner-invite flow with seat quotas per tier, atomic email-verified claim on OAuth callback, transactional invite + welcome email via Resend, and wrong-OAuth-account detection with a sign-out-and-retry banner
+- **Audit Logs** — Append-only per-tenant record of security- and admin-relevant events (logins, API-key rotations, subscription changes) with tier-based retention (90 d Free/Pro, 365 d Team, 730 d Enterprise), dashboard viewer, CSV export, and SIEM-friendly cursor-paginated API
+- **Spend Intelligence** — Team+/Enterprise dashboard covering per-user/per-token attribution, MTD + run-rate forecast, 7-vs-28-day spend anomaly detection, quality-adjusted spend (p25/median/p75 judge scores next to every cost row), routing-weight drift correlation, and quality-comparable savings recommendations
+- **Budgets & Alerts** — Monthly or quarterly caps with per-threshold email alerts (50/75/90/100%) and an optional hard-stop that refuses chat completions with HTTP 402 once the cap is hit
+- **Per-IP Rate Limiting** — Flat abuse-protection limits on public auth routes (20/min) and a global DoS floor on `/v1/chat/completions` (200 rps), with per-token `rateLimit` as the separate programmatic-API lever
+- **Encrypted Key Storage** — AES-256-GCM encryption for provider API keys at rest, with a documented rotation CLI (`npm run key:rotate`) and operator runbook
 - **Web Dashboard** — Sidebar navigation with grouped sections: Monitor, Test, Configure, Admin
 
 ### Screenshots
@@ -457,6 +462,126 @@ On a hit from either layer, the `requests` row records `cached = true`, `cache_s
 | `PROVARA_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model. Must be one of `text-embedding-3-small`, `text-embedding-3-large`, `text-embedding-ada-002`. |
 | `PROVARA_EMBEDDING_PROVIDER` | `openai` | Only `openai` is supported in the MVP. Unknown values disable semantic cache. |
 
+## Audit Logs
+
+Every security- and admin-relevant event is written to an append-only per-tenant log. Used for compliance (SOC 2, ISO 27001, internal policy) and for operational "who revoked our API key last Friday?" questions.
+
+### What gets logged
+
+- **Auth** — `auth.login.success` (method: magic_link / google / saml), `auth.login.failed`, `auth.session.revoked`, `auth.sso_config.updated`
+- **Users & team** — `user.invited`, `user.joined`, `user.removed`, `user.role_changed`
+- **Access surface** — `api_key.created`, `api_key.revoked`, `token.created`, `token.revoked`, `token.rotated`
+- **Billing** — `billing.subscription.created/updated/canceled`, `billing.checkout.started`
+- **Abuse signals** — `rate_limit.exceeded` (emitted only when the blocked caller has a resolvable tenant; suppressed at 1 audit row per `(scope, ip, tenant)` per minute so bursts don't flood the log)
+
+Each row carries `tenantId`, `actorUserId` (nullable for system events), `actorEmail` (denormalized so "Alice deleted API key X" survives Alice being removed), `resourceType`, `resourceId`, and free-form JSON `metadata`.
+
+### Retention
+
+| Tier | Window |
+|---|---|
+| Free / Pro | 90 days |
+| Team | 365 days |
+| Enterprise / Self-host Enterprise | 730 days |
+
+A scheduler job (`audit-retention`) deletes rows past the per-tier cutoff daily, chunked 10k at a time. The app layer is the only UPDATE/DELETE writer on `audit_logs` — no app code path issues UPDATE.
+
+### Access
+
+- **Dashboard** — `/dashboard/audit` (Team+). Filter by actor email / action / date range, paginated cursor, one-click CSV export.
+- **SIEM pull** — `GET /v1/audit-logs?action=...&actor=...&since=...&until=...&cursor=...&format=json|csv&limit=...`. Cursor-paginated, 500-row page ceiling. Tenant-scoped; operators can view cross-tenant via the admin UI.
+
+### Emission pattern
+
+Audit writes are **fire-and-forget**: an audit-write failure must never block the underlying action. Calls use `emitAudit(db, event)`, which wraps a `.catch()` around the insert and logs write failures to stdout. Tests needing to observe the row use `emitAuditSync`.
+
+## Spend Intelligence (Team+ / Enterprise)
+
+A dedicated `/dashboard/spend` surface that goes beyond plain cost attribution. Answers Finance/FinOps questions Provara's router is uniquely positioned to answer:
+
+1. **Who spent it?** — per-user + per-token attribution (Enterprise)
+2. **On what?** — per-provider / per-model / per-category (Team+)
+3. **Is the quality worth it?** — every spend row carries the judge-score envelope (`quality_median`, `quality_p25`, `quality_p75`, `cost_per_quality_point`)
+4. **Where is it trending?** — MTD total, linear-run-rate projection, 7-vs-28-day anomaly flag
+5. **Did my last routing change save money?** — weight-snapshot diff events joined with the per-provider spend mix in the 14-day attribution window after each change (Enterprise)
+6. **Where's my biggest savings opportunity?** — ranked recommendations from same-quality cheaper alternates using the adaptive router's `model_scores.qualityScore` (Enterprise)
+7. **Stay within budget** — monthly/quarterly caps with threshold emails and an optional hard-stop
+
+### API endpoints (tenant-scoped, under `/v1/spend/*`)
+
+| Path | Tier | What it returns |
+|---|---|---|
+| `GET /by?dim=provider\|model\|user\|token\|category&from=&to=&compare=prior\|yoy` | Team+ (user/token → Enterprise) | Spend rows with the full quality envelope and period-over-period delta |
+| `GET /trajectory?period=month\|quarter` | Team+ | MTD, projected, prior-period total, anomaly flag with reason |
+| `GET /drift?from=&to=&window=<days>` | Enterprise | Weight-change events with per-provider spend-mix in the attribution window after each (default 14 d, max 90) |
+| `GET /recommendations` | Enterprise | Ranked from → to swaps with estimated monthly savings and confidence samples |
+| `GET /budgets`, `PUT /budgets` | Team+ | Budget CRUD (period, cap, alert thresholds, alert emails, hard_stop flag) |
+| `GET /export?dim=&from=&to=&format=csv` | Same as `/by` per dim | CSV export with `currency=USD` column, filename encodes tenant + dim + dates |
+
+### Budget hard-stop
+
+When `hard_stop=true` is set on a budget and current-period spend has hit the cap, every `/v1/chat/completions` call returns:
+
+```json
+{ "error": { "message": "Spend budget exceeded: 250.00 / 250.00 USD (monthly).", "type": "budget_exceeded" } }
+```
+
+with HTTP 402. The soft path (email-only) fires as thresholds are crossed regardless of the `hard_stop` setting.
+
+### Data model
+
+- **Attribution** — `requests.user_id` and `requests.api_token_id` (nullable, populated at ingest from the auth context); denormalized onto `cost_logs` so per-user / per-token aggregations hit a covering index without a join.
+- **Weight snapshots** — `routing_weight_snapshots(tenant_id, task_type, complexity, weights, captured_at)`, one row per tenant per day, only written when weights differ from the prior snapshot.
+- **Budgets** — `spend_budgets(tenant_id PK, period, cap_usd, alert_thresholds JSON, alert_emails JSON, hard_stop, alerted_thresholds JSON, period_started_at, ...)`.
+
+## Rate Limiting
+
+Two independent layers, by design:
+
+| Layer | Scope | Default | Purpose |
+|---|---|---|---|
+| Per-IP on `/auth/*` | IP | 20 / min | Credential stuffing + invite-token brute force |
+| Per-IP on `/v1/chat/completions` | IP | 200 rps | Global DoS floor |
+| Per-token on `/v1/chat/completions` | API token | `apiTokens.rateLimit` (nullable) | Programmatic budget lever, tenant-configurable per token |
+
+Exhaustion returns `HTTP 429` with `Retry-After` (seconds) and `X-RateLimit-Limit` / `X-RateLimit-Remaining` headers. Blocked calls from **authenticated** callers emit a `rate_limit.exceeded` audit event (suppressed at 1 / minute / tenant / endpoint so sustained bursts don't flood audit_logs); unauthenticated blocks log to stdout only.
+
+Pricing-tier quotas (Free 10k / Pro 100k / Team 500k / Ent custom requests per month) are a separate layer enforced by `requireQuota` + `usage-metering` — rate limit is per-second, quota is per-month.
+
+### Tuning
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RATE_LIMIT_AUTH_PER_MIN` | `20` | Per-IP cap on `/auth/*` |
+| `RATE_LIMIT_CHAT_RPS` | `200` | Per-IP global DoS floor on `/v1/chat/completions` |
+| `RATE_LIMIT_INVITE_PER_MIN` | `20` | Per-IP cap on invite endpoints |
+
+## Invite-Mismatch Detection
+
+When a user clicks an invite link and then signs in with an OAuth account whose email doesn't match the invited email, the flow previously looked successful from Google/GitHub's side — but the invite stayed pending and the user landed in a fresh solo workspace.
+
+Now: the invite token is threaded from `/invite/[token]` → `/login` → gateway OAuth start (stored in a short-TTL `provara_oauth_invite` cookie alongside state/return). Both OAuth callbacks compare the invited email against the profile email case-insensitively. On mismatch, the user still gets signed up (their own workspace) but is redirected to `/dashboard?invite_status=wrong_email&expected=<email>` where a non-dismissible banner offers a one-click sign-out and retry. Already-consumed invites are treated as no-mismatch.
+
+## Master-Key Rotation
+
+`PROVARA_MASTER_KEY` encrypts one thing: the provider API keys stored via `/dashboard/api-keys` (table: `api_keys`, AES-256-GCM). Env-var-driven providers never touch it. A documented rotation CLI + runbook live under `docs/runbooks/master-key-rotation.md` — the short version:
+
+```sh
+# 1. Generate a new 32-byte hex key (store in your secrets manager)
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+
+# 2. Dry-run against prod (verifies every row decrypts with the old key)
+DATABASE_URL=... DATABASE_AUTH_TOKEN=... \
+  npm run key:rotate -w packages/gateway -- \
+    --old "$CURRENT_KEY" --new "$NEW_KEY" --dry-run
+
+# 3. Real rotation (same command, no --dry-run)
+# 4. Update PROVARA_MASTER_KEY env var on Railway and redeploy
+# 5. Verify a stored provider key still decrypts on the dashboard
+```
+
+The CLI uses a two-phase-with-decrypt-gate pattern: phase 1 decrypts every row with the old key into memory (aborts if any row fails), phase 2 re-encrypts with the new key row-by-row. See the runbook for failure-mode recovery.
+
 ## A/B Testing Guide
 
 ![A/B Tests](public/abtests.png)
@@ -661,13 +786,39 @@ curl -X POST http://localhost:4000/v1/chat/completions \
 | **Scheduler** (owner only) | |
 | `GET /v1/admin/scheduler/jobs` | List registered jobs with last-run state |
 | `POST /v1/admin/scheduler/jobs/:name/run` | Trigger a job immediately |
+| **Audit** (#210) | |
+| `GET /v1/audit-logs` | Tenant-scoped audit events with filters (`action`, `actor`, `since`, `until`, `cursor`, `format=json\|csv`, `limit`) — Team+ |
+| **Spend** (#219) | |
+| `GET /v1/spend/by` | Spend aggregation across `dim=provider\|model\|user\|token\|category` with the cross-cutting quality envelope and period-over-period delta |
+| `GET /v1/spend/trajectory` | MTD + linear-run-rate projection + prior-period total + anomaly flag (Team+) |
+| `GET /v1/spend/drift` | Weight-snapshot change events with per-provider spend mix in the attribution window after each (Enterprise) |
+| `GET /v1/spend/recommendations` | Same-quality cheaper-alternate recommendations ranked by estimated monthly savings (Enterprise) |
+| `GET /v1/spend/budgets`, `PUT /v1/spend/budgets` | Tenant budget CRUD |
+| `GET /v1/spend/export` | CSV export with the same filters as `/by` |
+| **Team** | |
+| `GET /v1/admin/team/members` | List tenant members |
+| `GET /v1/admin/team/invites` | List pending invites |
+| `POST /v1/admin/team/invites` | Create an invite (owner-only, seat-limit enforced) |
+| `DELETE /v1/admin/team/invites/:token` | Revoke a pending invite |
+| **Billing** | |
+| `POST /v1/billing/checkout-session` | Start a Stripe Checkout session |
+| `POST /v1/billing/portal-session` | Start a Stripe Customer Portal session |
+| `GET /v1/billing/subscription` | Current tenant subscription mirror |
+| `POST /v1/webhooks/stripe` | Stripe webhook receiver (HMAC-authenticated via `STRIPE_WEBHOOK_SECRET`) |
 | **Auth** (multi-tenant only) | |
-| `GET /auth/login/google` | Google OAuth login |
-| `GET /auth/login/github` | GitHub OAuth login |
+| `GET /auth/login/google` | Google OAuth login (accepts `?return=&invite_token=`) |
+| `GET /auth/login/github` | GitHub OAuth login (accepts `?return=&invite_token=`) |
+| `POST /auth/magic-link/request` | Request a magic-link email |
+| `POST /auth/magic-link/verify` | Consume a magic-link token and establish session |
+| `GET /auth/saml/discover` | SSO-discover for an email's domain (returns `{sso, startUrl?}`) |
+| `GET /auth/saml/:tenantId/start` | Begin SAML SSO flow for a tenant |
+| `POST /auth/saml/:tenantId/acs` | SAML ACS endpoint (IdP assertion consumer) |
 | `POST /auth/logout` | Sign out |
 | `GET /auth/me` | Current user |
 | **System** | |
 | `GET /health` | Health check + mode |
+
+The authoritative machine-readable spec lives at [`packages/gateway/openapi.yaml`](packages/gateway/openapi.yaml) — import into Yaak, Postman, or Insomnia.
 
 ## Providers
 
