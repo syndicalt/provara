@@ -39,6 +39,7 @@ import { checkBudgetHardStop } from "./billing/budget-alerts.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
 import { messagesHaveImage } from "./providers/types.js";
+import { publish as publishLive, subscribe as subscribeLive, buildPromptPreview, type LiveEvent } from "./live/emitter.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getMode } from "./config.js";
@@ -513,6 +514,25 @@ export async function createRouter(ctx: RouterContext) {
           abTestId: routingResult.abTestId || null,
         })
         .run();
+      publishLive({
+        id: hitId,
+        provider: providerForResp,
+        model: modelForResp,
+        taskType: routingResult.taskType,
+        complexity: routingResult.complexity,
+        routedBy: routingResult.routedBy,
+        cached: true,
+        usedFallback: false,
+        latencyMs: 0,
+        inputTokens,
+        outputTokens,
+        cost: 0,
+        tenantId,
+        userId: attribution.userId,
+        apiTokenId: attribution.apiTokenId,
+        promptPreview: buildPromptPreview(promptJson),
+        createdAt: new Date().toISOString(),
+      });
       c.header("X-Provara-Request-Id", hitId);
       c.header("X-Provara-Cache", cacheSource);
       return c.json({
@@ -728,6 +748,26 @@ export async function createRouter(ctx: RouterContext) {
                   tenantId,
                   userId: attribution.userId,
                   apiTokenId: attribution.apiTokenId,
+                }).then((streamCost) => {
+                  publishLive({
+                    id: requestId,
+                    provider: usedProvider,
+                    model: usedModel,
+                    taskType: routingResult.taskType,
+                    complexity: routingResult.complexity,
+                    routedBy: routingResult.routedBy,
+                    cached: false,
+                    usedFallback,
+                    latencyMs,
+                    inputTokens: usage.inputTokens,
+                    outputTokens: usage.outputTokens,
+                    cost: streamCost,
+                    tenantId,
+                    userId: attribution.userId,
+                    apiTokenId: attribution.apiTokenId,
+                    promptPreview: buildPromptPreview(promptJson),
+                    createdAt: new Date().toISOString(),
+                  });
                 }).catch(() => {});
 
                 if (!skipCache) {
@@ -876,7 +916,7 @@ export async function createRouter(ctx: RouterContext) {
       );
     }
 
-    await logCost(ctx.db, {
+    const costUsd = await logCost(ctx.db, {
       requestId,
       provider: usedProvider,
       model: usedModel,
@@ -885,6 +925,26 @@ export async function createRouter(ctx: RouterContext) {
       tenantId,
       userId: attribution.userId,
       apiTokenId: attribution.apiTokenId,
+    });
+
+    publishLive({
+      id: requestId,
+      provider: usedProvider,
+      model: usedModel,
+      taskType: routingResult.taskType,
+      complexity: routingResult.complexity,
+      routedBy: routingResult.routedBy,
+      cached: false,
+      usedFallback,
+      latencyMs,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
+      cost: costUsd,
+      tenantId,
+      userId: attribution.userId,
+      apiTokenId: attribution.apiTokenId,
+      promptPreview: buildPromptPreview(promptJson),
+      createdAt: new Date().toISOString(),
     });
 
     // Cache the response for future identical requests
@@ -993,6 +1053,57 @@ export async function createRouter(ctx: RouterContext) {
       activeAutoAbTestId: autoMap.get(`${cell.taskType}::${cell.complexity}`) ?? null,
     }));
     return c.json({ cells });
+  });
+
+  // Live traffic tap (#263). SSE stream of completed requests, scoped to the
+  // caller's tenant. In-process pub/sub — the router publishes to an emitter
+  // after writing each `requests` row, this handler subscribes and forwards.
+  // Stream is ephemeral; historical logs stay in `/dashboard/logs`.
+  app.get("/v1/analytics/live", (c) => {
+    const tenantId = getTenantId(c.req.raw);
+
+    const stream = new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(": shiplog-live-connected\n\n"));
+
+        const unsubscribe = subscribeLive((event) => {
+          // Tenant isolation — anonymous tenant (null) only receives its own null events.
+          if (tenantId !== null && event.tenantId !== tenantId) return;
+          if (tenantId === null && event.tenantId !== null) return;
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+          } catch {
+            unsubscribe();
+          }
+        });
+
+        // Keep-alive comment every 20s so proxies don't close the stream
+        const keepAlive = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(": keep-alive\n\n"));
+          } catch {
+            clearInterval(keepAlive);
+          }
+        }, 20_000);
+
+        const abort = () => {
+          clearInterval(keepAlive);
+          unsubscribe();
+          try { controller.close(); } catch {}
+        };
+        c.req.raw.signal.addEventListener("abort", abort);
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
   });
 
   // Scheduler observability (admin-only). Exposes per-job last-run state

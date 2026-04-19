@@ -38,6 +38,16 @@ const navGroups: NavGroup[] = [
         ),
       },
       {
+        href: "/dashboard/live",
+        label: "Live",
+        icon: (
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <circle cx="12" cy="12" r="3" fill="currentColor" />
+            <circle cx="12" cy="12" r="8" strokeOpacity="0.4" />
+          </svg>
+        ),
+      },
+      {
         href: "/dashboard/analytics",
         label: "Analytics",
         icon: (
