@@ -23,6 +23,7 @@ import { createRoutingConfigRoutes } from "./routes/routing-config.js";
 import { createRoutingIsolationRoutes } from "./routes/routing-isolation.js";
 import { createProviderCrudRoutes } from "./routes/providers.js";
 import { createAuthRoutes } from "./routes/auth.js";
+import { createMeRoutes } from "./routes/me.js";
 import { createSamlAuthRoutes } from "./routes/auth-saml.js";
 import { createAuditRoutes } from "./routes/audit.js";
 import { createSpendRoutes } from "./routes/spend.js";
@@ -172,6 +173,8 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/audit-logs/*", adminAuth);
   app.use("/v1/spend", adminAuth);
   app.use("/v1/spend/*", adminAuth);
+  app.use("/v1/me", adminAuth);
+  app.use("/v1/me/*", adminAuth);
 
   // Role-based access (#247). Admin-auth middleware above attaches the
   // session user; these gates restrict by role. Owner is always allowed;
@@ -215,6 +218,10 @@ export async function createRouter(ctx: RouterContext) {
   const readOnly = createReadOnlyMiddleware();
   app.use("/v1/*", readOnly);
   app.use("/v1/chat/completions", readOnly);
+
+  // Self-service profile (#251). No role gate — any authenticated user
+  // manages their own profile, sessions, and can delete their account.
+  app.route("/v1/me", createMeRoutes(ctx.db));
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));

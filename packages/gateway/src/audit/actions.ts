@@ -53,6 +53,12 @@ export const AUDIT_BILLING_CHECKOUT_STARTED = "billing.checkout.started";
 // compliance view uncluttered.
 export const AUDIT_RATE_LIMIT_EXCEEDED = "rate_limit.exceeded";
 
+// --- Profile / self-service (#251) ---
+export const AUDIT_USER_PROFILE_UPDATED = "user.profile.updated";
+export const AUDIT_USER_SESSIONS_REVOKED_ALL = "user.sessions.revoked_all";
+export const AUDIT_USER_SELF_REMOVED = "user.self_removed";
+export const AUDIT_TENANT_DELETED = "tenant.deleted";
+
 /**
  * Convenience union of every canonical action. Runtime validators can
  * use this via `Object.values(AUDIT_ACTIONS).includes(x)`.
@@ -82,6 +88,10 @@ export const AUDIT_ACTIONS = {
   AUDIT_BILLING_SUBSCRIPTION_CANCELED,
   AUDIT_BILLING_CHECKOUT_STARTED,
   AUDIT_RATE_LIMIT_EXCEEDED,
+  AUDIT_USER_PROFILE_UPDATED,
+  AUDIT_USER_SESSIONS_REVOKED_ALL,
+  AUDIT_USER_SELF_REMOVED,
+  AUDIT_TENANT_DELETED,
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
