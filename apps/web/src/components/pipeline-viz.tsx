@@ -247,7 +247,7 @@ export function PipelineVisualization({ adaptivePulseTick = 0 }: PipelineVisuali
   }, [data, adaptivePulseTick, setNodes]);
 
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden" style={{ height: 400 }}>
+    <div className="overflow-hidden" style={{ height: 400 }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
