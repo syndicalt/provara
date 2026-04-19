@@ -2,6 +2,12 @@ import OpenAI from "openai";
 import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
 import { nanoid } from "nanoid";
 
+// Our ChatMessage content is `string | ContentPart[]`, which is structurally
+// compatible with OpenAI's ChatCompletionMessageParam for user messages. The
+// SDK's per-role type discrimination is stricter than what we model, so we
+// pass through with a narrow cast at the boundary.
+type OpenAIMessages = OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+
 export function createOpenAIProvider(apiKey?: string): Provider {
   const client = new OpenAI({
     apiKey: apiKey || process.env.OPENAI_API_KEY,
@@ -40,7 +46,7 @@ export function createOpenAIProvider(apiKey?: string): Provider {
 
       const response = await client.chat.completions.create({
         model: request.model,
-        messages: request.messages,
+        messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
       });
@@ -64,7 +70,7 @@ export function createOpenAIProvider(apiKey?: string): Provider {
     async *stream(request: CompletionRequest): AsyncIterable<StreamChunk> {
       const stream = await client.chat.completions.create({
         model: request.model,
-        messages: request.messages,
+        messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
         stream: true,

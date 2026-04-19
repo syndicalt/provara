@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../providers/types.js";
+import { messageText } from "../providers/types.js";
 import type { TaskType, ClassificationResult } from "./types.js";
 
 const CONFIDENCE_THRESHOLD = 0.6;
@@ -137,10 +138,12 @@ function escapeRegex(s: string): string {
 
 function collectSignals(messages: ChatMessage[]): Signal[] {
   const signals: Signal[] = [];
-  const allText = messages.map((m) => m.content).join("\n").toLowerCase();
-  const rawLastUserMessage = [...messages].reverse().find((m) => m.role === "user")?.content.toLowerCase() || "";
+  const allText = messages.map(messageText).join("\n").toLowerCase();
+  const lastUser = [...messages].reverse().find((m) => m.role === "user");
+  const rawLastUserMessage = lastUser ? messageText(lastUser).toLowerCase() : "";
   const lastUserMessage = rawLastUserMessage.slice(0, USER_MSG_SCAN_LIMIT);
-  const systemMessage = messages.find((m) => m.role === "system")?.content.toLowerCase() || "";
+  const system = messages.find((m) => m.role === "system");
+  const systemMessage = system ? messageText(system).toLowerCase() : "";
 
   // Code blocks are a strong signal
   const codeBlocks = allText.match(CODE_BLOCK_REGEX);
@@ -242,6 +245,7 @@ function resolveSignals(signals: Signal[]): ClassificationResult<TaskType> {
     summarization: 0,
     qa: 0,
     general: 0,
+    vision: 0,
   };
 
   for (const signal of signals) {

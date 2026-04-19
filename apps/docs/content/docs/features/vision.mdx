@@ -1,0 +1,89 @@
+---
+title: Vision / multimodal
+description: Send image content to vision-capable models through the same /v1/chat/completions endpoint.
+---
+
+Provara accepts OpenAI-shape multimodal `content` arrays — a `user` message's `content` can be a plain string **or** an array of parts, where each part is either text or an image URL. The gateway translates into each provider's native format before the upstream call.
+
+```json
+POST /v1/chat/completions
+{
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "What's wrong with this breaker panel?" },
+        { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,..." } }
+      ]
+    }
+  ]
+}
+```
+
+Both http(s) URLs and `data:<mime>;base64,<payload>` URIs are accepted. Data URIs are the portable option — they work across every provider without pre-upload.
+
+## Routing
+
+When any message carries an `image_url` part, the routing engine restricts candidates to models known to accept images. Text-only models are excluded even if cheaper. If no vision-capable provider is registered, the request returns:
+
+```
+502 no_capable_provider
+Request contains image content but no registered vision-capable model is available.
+```
+
+The vision classification goes in its own `(taskType: "vision", complexity: "complex")` cell for adaptive routing, so learning on vision workloads doesn't contaminate text cells and vice-versa. A/B tests are skipped entirely for vision requests — their variants can't be safely routed when a model might be text-only.
+
+## Supported providers and models
+
+| Provider | Vision-capable models |
+|---|---|
+| OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini` |
+| Anthropic | `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5-*` |
+| Google | `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash` |
+| Z.ai | `glm-5v-turbo` |
+| Custom / Ollama | Pass-through — model-gated; see "Custom models" below |
+
+The list lives in `packages/gateway/src/routing/model-capabilities.ts` (`VISION_CAPABLE` set). User-pinned `model` overrides bypass this filter on the assumption that you know what you're doing — the upstream will reject with its own error if the model can't actually see.
+
+## Custom models
+
+For custom (OpenAI-compatible) providers registered via `/dashboard/providers`, set the `modalities` column on the `model_registry` row to `["text", "image"]` to opt the model into the vision candidate pool. The default is `["text"]`.
+
+## Provider translation
+
+The gateway translates our OpenAI-shaped `image_url` parts into each provider's native format:
+
+- **OpenAI, openai-compatible** (Mistral, xAI, Z.ai, Ollama): pass through unchanged. The OpenAI SDK handles the array shape natively; whether the target model actually supports vision is upstream-gated.
+- **Anthropic**: `data:<mime>;base64,<data>` → `{type: "image", source: {type: "base64", media_type, data}}`; plain URLs → `{type: "image", source: {type: "url", url}}`.
+- **Google / Gemini**: data URIs → `{inlineData: {mimeType, data}}`; plain URLs → `{fileData: {mimeType, fileUri}}`. Gemini's `fileData` expects a URI it can fetch — use the Files API upstream if you need long-lived references.
+
+## Cache interaction
+
+Image-bearing requests **skip** both exact-match and semantic caches:
+
+- Exact-match would never hit — image bytes make every prompt unique.
+- Semantic embeddings are text-only in the current release, so a match would ignore the image content entirely.
+
+This means the "Tokens Saved" dashboard metric always stays at 0 for vision traffic. That's expected, not a bug. See [analytics](/docs/features/analytics#cache-analytics) for context.
+
+## Guardrails
+
+Input guardrails run on the text portion of each message only. If a rule fires:
+
+- **Block** — the whole request is rejected (including the image).
+- **Redact** — text parts are replaced with the redacted string; image parts pass through unchanged.
+
+If you need PII scanning inside image content, that's an OCR-first pipeline on the client side before the request reaches the gateway.
+
+## Known limitations
+
+- **Pricing**: the gateway's cost calculation uses the model's per-token text pricing; vision-specific image-token pricing (OpenAI's "detail" tiers, Anthropic's image-tile counts) isn't yet factored in. Cost figures for vision requests are lower bounds, not exact.
+- **Classifier heuristics**: the keyword classifier is text-only. Image-bearing requests short-circuit to `taskType: "vision"` without consulting the classifier — that's correct routing but it does mean mixed image+code requests don't get the "coding" label.
+- **Replay bank**: regression-detection replays stored prompts against candidate models. Image messages can still be replayed (the `data:` URI is preserved in the stored prompt JSON) but the stored prompt row can grow large; operators with high image volume should monitor `requests.prompt` column size.
+- **Playground**: no web upload UI yet — use the API directly for vision testing.
+
+## Related
+
+- [Analytics](/docs/features/analytics) — where vision routing shows up on the dashboard
+- [Adaptive routing](/docs/features/adaptive-routing) — how the `vision` cell learns separately
+- [Semantic cache](/docs/features/semantic-cache) — cache behavior (skipped for vision)

@@ -1,0 +1,1 @@
+ALTER TABLE `model_registry` ADD `modalities` text DEFAULT '["text"]' NOT NULL;

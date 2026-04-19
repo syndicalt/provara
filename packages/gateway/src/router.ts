@@ -38,6 +38,7 @@ import { getRequestAttribution } from "./auth/attribution.js";
 import { checkBudgetHardStop } from "./billing/budget-alerts.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
+import { messagesHaveImage } from "./providers/types.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getMode } from "./config.js";
@@ -347,10 +348,16 @@ export async function createRouter(ctx: RouterContext) {
         if (request.messages[i].role === "user") { lastUserIdx = i; break; }
       }
 
-      // Check each message individually so we can redact in-place
+      // Check each message individually so we can redact in-place. Guardrails
+      // scan text only — image parts are passed through unchanged. If the text
+      // requires redaction we replace each text part with the redacted copy
+      // and leave image parts intact.
       for (let i = 0; i < request.messages.length; i++) {
         const msg = request.messages[i];
-        const inputCheck = checkContent(msg.content, guardrailRulesList, "input");
+        const textForScan = typeof msg.content === "string"
+          ? msg.content
+          : msg.content.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n");
+        const inputCheck = checkContent(textForScan, guardrailRulesList, "input");
 
         if (inputCheck.violations.length > 0) {
           // Only log and notify for the latest user message
@@ -373,14 +380,25 @@ export async function createRouter(ctx: RouterContext) {
 
         // Always redact all messages (so provider never sees PII in history)
         if (inputCheck.action === "redact") {
-          request.messages[i] = { ...msg, content: inputCheck.content };
+          if (typeof msg.content === "string") {
+            request.messages[i] = { ...msg, content: inputCheck.content };
+          } else {
+            // Drop the original text parts, emit one redacted text part at
+            // the front; keep image parts in their original order.
+            const imageParts = msg.content.filter((p) => p.type !== "text");
+            const redactedPart = { type: "text" as const, text: inputCheck.content };
+            request.messages[i] = { ...msg, content: [redactedPart, ...imageParts] };
+          }
         }
       }
     }
 
-    // Determine if caching is eligible
+    // Determine if caching is eligible. Image-bearing requests skip caching
+    // entirely (#256): exact-match would never hit on unique image bytes
+    // and the semantic layer's embedding provider is text-only.
     const noCache = c.req.header("x-provara-no-cache") === "true" || cacheParam === false;
-    const isCacheable = !noCache && (!request.temperature || request.temperature === 0);
+    const hasImageContent = messagesHaveImage(request.messages);
+    const isCacheable = !noCache && !hasImageContent && (!request.temperature || request.temperature === 0);
 
     // Route the request through the intelligent routing engine
     const tokenInfo = getTokenInfo(c.req.raw);
