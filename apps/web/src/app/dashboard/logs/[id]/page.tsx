@@ -305,6 +305,16 @@ export default function RequestDetailPage() {
         </Link>
         <h1 className="text-xl font-bold">Request Detail</h1>
         <code className="text-xs text-zinc-600 font-mono">{request.id}</code>
+        <Link
+          href={`/dashboard/playground?forkFrom=${request.id}`}
+          className="ml-auto px-3 py-1.5 text-xs rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-zinc-200 inline-flex items-center gap-1.5"
+          title="Open this request in the Playground with messages + model pre-filled"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8h9M7.5 12h9m-9 4h6M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Fork to Playground
+        </Link>
       </div>
 
       {/* Metadata grid */}
