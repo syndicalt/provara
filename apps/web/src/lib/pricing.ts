@@ -203,7 +203,7 @@ export const FAQS = [
   },
   {
     q: "How do I talk to a human about Enterprise pricing?",
-    a: "Email legal@provara.xyz — include your expected request volume, team size, and any compliance or SLA requirements. We'll get back within one business day with a tailored quote.",
+    a: "Email legal@corelumen.io — include your expected request volume, team size, and any compliance or SLA requirements. We'll get back within one business day with a tailored quote.",
   },
   {
     q: "How is my routing data isolated on Team and Enterprise?",

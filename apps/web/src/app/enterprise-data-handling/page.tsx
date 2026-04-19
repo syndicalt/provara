@@ -78,7 +78,7 @@ export default function EnterpriseDataHandlingPage() {
             <h2 className="text-lg font-semibold mb-3">Audit log</h2>
             <p className="text-zinc-400 leading-relaxed">
               Every change to your routing isolation toggles is recorded in an append-only audit log with a timestamp, the actor who made the change, the previous value, and the new value. Upon written request to{" "}
-              <a href="mailto:privacy@provara.xyz" className="text-blue-400 hover:text-blue-300">privacy@provara.xyz</a>
+              <a href="mailto:privacy@corelumen.io" className="text-blue-400 hover:text-blue-300">privacy@corelumen.io</a>
               , we will provide a report of toggle changes for your tenant within ten business days.
             </p>
           </section>
@@ -111,7 +111,7 @@ export default function EnterpriseDataHandlingPage() {
             <h2 className="text-lg font-semibold mb-3">Contact</h2>
             <p className="text-zinc-400 leading-relaxed">
               For questions about this addendum or to exercise any right described above, contact{" "}
-              <a href="mailto:legal@provara.xyz" className="text-blue-400 hover:text-blue-300">legal@provara.xyz</a>
+              <a href="mailto:legal@corelumen.io" className="text-blue-400 hover:text-blue-300">legal@corelumen.io</a>
               .
             </p>
           </section>

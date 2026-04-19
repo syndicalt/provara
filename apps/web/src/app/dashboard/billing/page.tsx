@@ -343,7 +343,7 @@ function BillingPageInner() {
           </div>
 
           <div className="mt-4 text-xs text-zinc-500">
-            Need more? <a href="mailto:legal@provara.xyz" className="text-blue-400 hover:text-blue-300">Contact sales</a> for Enterprise pricing (unlimited seats, SLA, dedicated support).
+            Need more? <a href="mailto:legal@corelumen.io" className="text-blue-400 hover:text-blue-300">Contact sales</a> for Enterprise pricing (unlimited seats, SLA, dedicated support).
           </div>
         </section>
       )}

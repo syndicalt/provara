@@ -148,7 +148,7 @@ export default function PrivacyPage() {
             <h2 className="text-lg font-semibold mb-3">Your Rights</h2>
             <p className="text-zinc-400 leading-relaxed">
               You can access, export, or delete your data at any time. To request data deletion or if you have questions about this policy, contact CoreLumen, LLC at{" "}
-              <a href="mailto:privacy@provara.xyz" className="text-blue-400 hover:text-blue-300">privacy@provara.xyz</a>.
+              <a href="mailto:privacy@corelumen.io" className="text-blue-400 hover:text-blue-300">privacy@corelumen.io</a>.
             </p>
           </section>
 

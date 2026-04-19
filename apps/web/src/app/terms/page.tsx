@@ -104,7 +104,7 @@ export default function TermsPage() {
             <h2 className="text-lg font-semibold mb-3">11. Contact</h2>
             <p className="text-zinc-400 leading-relaxed">
               Questions about these terms? Contact CoreLumen, LLC at{" "}
-              <a href="mailto:legal@provara.xyz" className="text-blue-400 hover:text-blue-300">legal@provara.xyz</a>.
+              <a href="mailto:legal@corelumen.io" className="text-blue-400 hover:text-blue-300">legal@corelumen.io</a>.
             </p>
           </section>
         </div>

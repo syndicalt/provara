@@ -928,4 +928,4 @@ Provara is source-available under the **Business Source License 1.1**. See [`LIC
 
 The BSL auto-converts to the MIT License four years after each version is published. Individual versions become fully permissive over time; the commercial-competition restriction applies only during the window.
 
-Provara is operated by CoreLumen, LLC. For commercial licensing questions, contact legal@provara.xyz.
+Provara is operated by CoreLumen, LLC. For commercial licensing questions, contact legal@corelumen.io.
