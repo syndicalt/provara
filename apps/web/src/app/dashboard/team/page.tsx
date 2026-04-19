@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
 import { TierBadge } from "../../../components/tier-badge";
 import { useToast } from "../../../components/toast";
+import { useAuth } from "../../../lib/auth-context";
+
+type Role = "owner" | "admin" | "developer" | "viewer";
 
 interface Member {
   id: string;
@@ -38,6 +41,9 @@ function formatDate(iso: string): string {
 }
 
 export default function TeamPage() {
+  const { user } = useAuth();
+  const viewerRole = (user?.role ?? "viewer") as Role;
+  const viewerId = user?.id ?? "";
   const [members, setMembers] = useState<Member[]>([]);
   const [seats, setSeats] = useState<Seats | null>(null);
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -138,7 +144,13 @@ export default function TeamPage() {
             </thead>
             <tbody>
               {members.map((m) => (
-                <MemberRow key={m.id} member={m} onChanged={load} />
+                <MemberRow
+                  key={m.id}
+                  member={m}
+                  viewerRole={viewerRole}
+                  viewerId={viewerId}
+                  onChanged={load}
+                />
               ))}
             </tbody>
           </table>
@@ -172,6 +184,7 @@ export default function TeamPage() {
 
       {inviteOpen && seats && (
         <InviteModal
+          viewerRole={viewerRole}
           onClose={() => setInviteOpen(false)}
           onCreated={(url) => {
             setInviteOpen(false);
@@ -186,10 +199,35 @@ export default function TeamPage() {
   );
 }
 
-function MemberRow({ member, onChanged }: { member: Member; onChanged: () => void }) {
+function MemberRow({
+  member,
+  viewerRole,
+  viewerId,
+  onChanged,
+}: {
+  member: Member;
+  viewerRole: Role;
+  viewerId: string;
+  onChanged: () => void;
+}) {
   const toast = useToast();
 
-  async function updateRole(newRole: "owner" | "admin" | "developer" | "viewer") {
+  // Permission gating — mirrors the backend policy so the UI never
+  // shows an action the server will refuse. See team.ts PATCH/DELETE.
+  const isSelf = member.id === viewerId;
+  const viewerIsOwner = viewerRole === "owner";
+  // Only owners can touch owner rows; nobody can touch themselves.
+  const canEditRole = !isSelf && (viewerIsOwner || member.role !== "owner");
+  const canRemove = !isSelf && (viewerIsOwner || member.role !== "owner");
+  // Owner tier is only assignable by another owner.
+  const roleOptions: Array<{ value: Role; label: string }> = [
+    ...(viewerIsOwner ? [{ value: "owner" as const, label: "Owner" }] : []),
+    { value: "admin", label: "Admin" },
+    { value: "developer", label: "Developer" },
+    { value: "viewer", label: "Viewer" },
+  ];
+
+  async function updateRole(newRole: Role) {
     const res = await gatewayFetchRaw(`/v1/admin/team/${member.id}`, {
       method: "PATCH",
       body: JSON.stringify({ role: newRole }),
@@ -224,31 +262,44 @@ function MemberRow({ member, onChanged }: { member: Member; onChanged: () => voi
             <div className="w-7 h-7 rounded-full bg-zinc-800" />
           )}
           <div>
-            <div className="text-zinc-200">{member.name || member.email}</div>
+            <div className="text-zinc-200">
+              {member.name || member.email}
+              {isSelf && <span className="ml-2 text-xs text-zinc-500">(you)</span>}
+            </div>
             {member.name && <div className="text-xs text-zinc-500">{member.email}</div>}
           </div>
         </div>
       </td>
       <td className="px-4 py-3">
-        <select
-          value={member.role}
-          onChange={(e) => updateRole(e.target.value as "owner" | "admin" | "developer" | "viewer")}
-          className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
-        >
-          <option value="owner">Owner</option>
-          <option value="admin">Admin</option>
-          <option value="developer">Developer</option>
-          <option value="viewer">Viewer</option>
-        </select>
+        {canEditRole ? (
+          <select
+            value={member.role}
+            onChange={(e) => updateRole(e.target.value as Role)}
+            className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
+          >
+            {/* Include the current role even if it wouldn't normally be
+                in the assignable set (edge: viewer-era history). */}
+            {!roleOptions.some((o) => o.value === member.role) && (
+              <option value={member.role}>{member.role}</option>
+            )}
+            {roleOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        ) : (
+          <span className="text-xs text-zinc-400 capitalize">{member.role}</span>
+        )}
       </td>
       <td className="px-4 py-3 text-zinc-500 text-xs">{formatDate(member.createdAt)}</td>
       <td className="px-4 py-3 text-right">
-        <button
-          onClick={remove}
-          className="text-xs text-zinc-500 hover:text-red-400"
-        >
-          Remove
-        </button>
+        {canRemove ? (
+          <button
+            onClick={remove}
+            className="text-xs text-zinc-500 hover:text-red-400"
+          >
+            Remove
+          </button>
+        ) : null}
       </td>
     </tr>
   );
@@ -299,16 +350,19 @@ function InviteRow({ invite, onChanged }: { invite: Invite; onChanged: () => voi
 
 function InviteModal({
   onClose,
+  viewerRole,
   onCreated,
   onError,
 }: {
+  viewerRole: Role;
   onClose: () => void;
   onCreated: (url: string) => void;
   onError: (msg: string) => void;
 }) {
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"owner" | "admin" | "developer" | "viewer">("developer");
+  const [role, setRole] = useState<Role>("developer");
   const [submitting, setSubmitting] = useState(false);
+  const canInviteOwner = viewerRole === "owner";
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -353,13 +407,15 @@ function InviteModal({
             <label className="block text-xs font-medium text-zinc-400 mb-1.5">Role</label>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value as "owner" | "admin" | "developer" | "viewer")}
+              onChange={(e) => setRole(e.target.value as Role)}
               className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
             >
               <option value="viewer">Viewer — read-only access to dashboards, logs, spend</option>
               <option value="developer">Developer — use the gateway, manage own tokens, edit prompts</option>
               <option value="admin">Admin — everything except billing and tenant deletion</option>
-              <option value="owner">Owner — full access including billing and team</option>
+              {canInviteOwner && (
+                <option value="owner">Owner — full access including billing and team</option>
+              )}
             </select>
           </div>
         </div>

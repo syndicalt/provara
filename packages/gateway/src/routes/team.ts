@@ -49,11 +49,24 @@ export function createTeamRoutes(db: Db) {
     return c.json({ members, seats });
   });
 
-  // Update a member's role (owner only)
+  // Update a member's role. Admin+ required at the router level;
+  // in-handler guards enforce the "owner is pinned" policy:
+  //   - nobody can change their own role (prevents self-demotion or
+  //     self-promotion, and removes the only foot-gun that could leave
+  //     a tenant ownerless)
+  //   - admins cannot touch owner rows (can't demote an owner, can't
+  //     promote anyone to owner — prevents tenant hijacking)
+  //   - the last remaining owner cannot be demoted (sharper,
+  //     explicit invariant; today it's already guaranteed by the
+  //     self-change block, but hard-coding it here means future path
+  //     additions can't accidentally strand a tenant ownerless)
   app.patch("/:id", async (c) => {
     const authUser = getAuthUser(c.req.raw);
-    if (!authUser || authUser.role !== "owner") {
-      return c.json({ error: { message: "Owner access required", type: "auth_error" } }, 403);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required", type: "auth_error" } }, 401);
+    }
+    if (authUser.role !== "owner" && authUser.role !== "admin") {
+      return c.json({ error: { message: "Admin role or higher required.", type: "auth_error" } }, 403);
     }
 
     const targetId = c.req.param("id");
@@ -76,6 +89,34 @@ export function createTeamRoutes(db: Db) {
       return c.json({ error: { message: "Member not found", type: "not_found" } }, 404);
     }
 
+    // Admins cannot demote an owner or create a new owner — keeps
+    // ownership decisions (including the right to transfer or delete
+    // the tenant) in the hands of existing owners.
+    if (authUser.role !== "owner") {
+      if (target.role === "owner") {
+        return c.json({ error: { message: "Only an owner can change an owner's role.", type: "auth_error" } }, 403);
+      }
+      if (body.role === "owner") {
+        return c.json({ error: { message: "Only an owner can promote someone to owner.", type: "auth_error" } }, 403);
+      }
+    }
+
+    // Last-owner invariant: refuse to demote the only remaining owner,
+    // even if the caller is that owner. Keeps the tenant recoverable.
+    if (target.role === "owner" && body.role !== "owner") {
+      const ownerCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(users)
+        .where(and(eq(users.tenantId, authUser.tenantId), eq(users.role, "owner")))
+        .get();
+      if ((ownerCount?.count ?? 0) <= 1) {
+        return c.json(
+          { error: { message: "Cannot demote the last owner. Promote another member to owner first.", type: "validation_error" } },
+          400,
+        );
+      }
+    }
+
     await db.update(users).set({ role: body.role as ValidRole }).where(eq(users.id, targetId)).run();
 
     const updated = await db.select().from(users).where(eq(users.id, targetId)).get();
@@ -94,11 +135,16 @@ export function createTeamRoutes(db: Db) {
     return c.json({ member: updated });
   });
 
-  // Remove a member (owner only)
+  // Remove a member. Same policy as role-change: admin+ at router
+  // level, with in-handler guards for owner-pinning and last-owner
+  // invariant.
   app.delete("/:id", async (c) => {
     const authUser = getAuthUser(c.req.raw);
-    if (!authUser || authUser.role !== "owner") {
-      return c.json({ error: { message: "Owner access required", type: "auth_error" } }, 403);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required", type: "auth_error" } }, 401);
+    }
+    if (authUser.role !== "owner" && authUser.role !== "admin") {
+      return c.json({ error: { message: "Admin role or higher required.", type: "auth_error" } }, 403);
     }
 
     const targetId = c.req.param("id");
@@ -112,6 +158,26 @@ export function createTeamRoutes(db: Db) {
 
     if (!target) {
       return c.json({ error: { message: "Member not found", type: "not_found" } }, 404);
+    }
+
+    // Admins can't remove owners.
+    if (authUser.role !== "owner" && target.role === "owner") {
+      return c.json({ error: { message: "Only an owner can remove an owner.", type: "auth_error" } }, 403);
+    }
+
+    // Last-owner invariant on removal.
+    if (target.role === "owner") {
+      const ownerCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(users)
+        .where(and(eq(users.tenantId, authUser.tenantId), eq(users.role, "owner")))
+        .get();
+      if ((ownerCount?.count ?? 0) <= 1) {
+        return c.json(
+          { error: { message: "Cannot remove the last owner. Promote another member to owner first.", type: "validation_error" } },
+          400,
+        );
+      }
     }
 
     // Clean up rows that hold a FK into users so the final user delete
@@ -186,8 +252,14 @@ export function createTeamRoutes(db: Db) {
   // fallback) and whether the transactional email was sent.
   app.post("/invites", async (c) => {
     const authUser = getAuthUser(c.req.raw);
-    if (!authUser || authUser.role !== "owner") {
-      return c.json({ error: { message: "Owner access required", type: "auth_error" } }, 403);
+    if (!authUser) {
+      return c.json({ error: { message: "Authentication required", type: "auth_error" } }, 401);
+    }
+    // Defense-in-depth: the router mounts this under `requireRole("admin")`
+    // so developers/viewers never reach here in prod, but the handler
+    // check keeps the invariant independent of router wiring.
+    if (authUser.role !== "owner" && authUser.role !== "admin") {
+      return c.json({ error: { message: "Admin role or higher required to invite members.", type: "auth_error" } }, 403);
     }
 
     const VALID_INVITE_ROLES = ["owner", "admin", "developer", "viewer"] as const;
@@ -199,6 +271,11 @@ export function createTeamRoutes(db: Db) {
     const role: InviteRole = VALID_INVITE_ROLES.includes(body.role as InviteRole)
       ? (body.role as InviteRole)
       : "developer";
+
+    // Admins can't invite as owner — matches the PATCH policy.
+    if (authUser.role !== "owner" && role === "owner") {
+      return c.json({ error: { message: "Only an owner can invite someone as owner.", type: "auth_error" } }, 403);
+    }
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return c.json({ error: { message: "Valid email address required.", type: "validation_error" } }, 400);
