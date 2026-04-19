@@ -1,0 +1,57 @@
+---
+title: Adaptive routing
+description: Live-learning EMA over (task_type × complexity × provider × model) cells, updated by real judge and user feedback.
+---
+
+Provara's adaptive router doesn't pre-train a classifier on labeled data. Instead, every piece of quality feedback — user 1–5 ratings and LLM-as-judge scores — nudges a per-cell EMA (exponential moving average). Over time, models that actually produce good answers win more traffic in the cells they're good at.
+
+## Cells
+
+A **cell** is the tuple `(task_type, complexity)`. Provara classifies every incoming prompt into one of 15 cells (5 task types × 3 complexities):
+
+- **task_type:** `coding`, `creative`, `summarization`, `qa`, `general`
+- **complexity:** `simple`, `medium`, `complex`
+
+The classifier is heuristic (keyword + length + pattern signals). It's intentionally simple — adaptive scoring is the layer that makes routing smart. If a model consistently wins on `coding + complex`, the router learns that from outcomes, regardless of whether the classifier's "complex" label is perfect.
+
+## EMA update
+
+On every judged response:
+
+```
+new_score = alpha * judge_score + (1 - alpha) * old_score
+sample_count += 1
+```
+
+`alpha` defaults to `0.1` — new samples nudge the score but don't flip it overnight. Stored in `model_scores` keyed by `(tenant_id, task_type, complexity, provider, model)`, persisted across restarts.
+
+## Routing decision
+
+Given a request and its classified cell, the router:
+
+1. Filters candidates to models with `sample_count >= MIN_SAMPLES` (default 5)
+2. Applies routing weights `{quality, cost, latency}` — defaults per routing profile (`cost`, `balanced`, `quality`), overridable per-token
+3. Scores each candidate: `weights.quality * norm(score) + weights.cost * norm(cost) + weights.latency * norm(latency)`
+4. Picks the top score
+
+**ε-greedy exploration** bypasses the EMA with probability `PROVARA_EXPLORATION_RATE` (default 0.1) and picks uniformly at random, so one model can't win a cell forever without alternatives getting tested.
+
+## Stale cell detection
+
+A cell is **stale** when its most recent update is older than `PROVARA_STALE_AFTER_DAYS` (default 30). Stale cells get a boosted exploration rate (`PROVARA_STALE_EXPLORATION_RATE`, default 0.5) — when traffic arrives, half the time we'll explore off the stale winner. Forces ground-truth refresh without silently trusting an EMA that hasn't updated in months. Dashboard renders stale cells with an amber badge.
+
+## Tuning
+
+| Env var | Default | Effect |
+|---|---|---|
+| `PROVARA_MIN_SAMPLES` | `5` | Minimum samples before a cell routes adaptively |
+| `PROVARA_EXPLORATION_RATE` | `0.1` | Base ε-greedy rate |
+| `PROVARA_STALE_EXPLORATION_RATE` | `0.5` | Boosted rate when the cell is stale |
+| `PROVARA_STALE_AFTER_DAYS` | `30` | Cutoff for staleness |
+| `PROVARA_REGRESSED_EXPLORATION_RATE` | `0.5` | Boosted rate when a regression fires (#163) |
+
+## What this isn't
+
+- **Not a pre-trained classifier.** No training step to maintain, no re-training when new models ship. Quality converges from real outcomes.
+- **Not federated.** EMAs are tenant-scoped; no cross-tenant pooling.
+- **Not real-time ML.** The EMA is a classical online-learning formula — transparent, cheap, auditable.

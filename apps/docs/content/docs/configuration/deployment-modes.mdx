@@ -1,0 +1,49 @@
+---
+title: Deployment modes
+description: Self-hosted vs multi-tenant.
+---
+
+`PROVARA_MODE` flips the gateway between two deployment postures.
+
+## `self_hosted` (default)
+
+Single-tenant. No OAuth, no billing, no tier gates. All intelligence features unlocked. Admin routes protected by `X-Admin-Key` if `PROVARA_ADMIN_SECRET` is set.
+
+```sh
+PROVARA_MODE=self_hosted
+PROVARA_ADMIN_SECRET=<random 32+ bytes>
+PROVARA_MASTER_KEY=&lt;32-byte hex>
+OPENAI_API_KEY=sk-...
+# or add more providers
+```
+
+Fire up `npx turbo dev` and hit `http://localhost:4000`.
+
+## `multi_tenant`
+
+OAuth + sessions + tenancy. Intended for Provara Cloud or for organizations running a multi-user self-hosted deployment.
+
+```sh
+PROVARA_MODE=multi_tenant
+PROVARA_CLOUD=true               # set on Provara Cloud; omit on self-host to skip tier gates
+DATABASE_URL=libsql://...        # must be a real libSQL/Turso DB, not a file
+DATABASE_AUTH_TOKEN=...
+DASHBOARD_URL=https://www.provara.xyz
+OAUTH_REDIRECT_BASE=https://gateway.provara.xyz
+
+# OAuth (required for sign-in)
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GITHUB_OAUTH_CLIENT_ID=...
+GITHUB_OAUTH_CLIENT_SECRET=...
+
+# Email (optional — invites fall back to copy-paste without)
+RESEND_API_KEY=...
+PROVARA_EMAIL_FROM="Provara <noreply@provara.xyz>"
+
+# Stripe (optional on self-hosted multi-tenant; required on Cloud)
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+```
+
+See [Self-host vs Cloud](/docs/getting-started/self-host-vs-cloud) for the full feature-parity picture.

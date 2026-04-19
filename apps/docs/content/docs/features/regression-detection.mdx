@@ -1,0 +1,35 @@
+---
+title: Silent-regression detection
+description: Replay bank + periodic LLM-judge re-eval catches upstream provider degradations that would otherwise go unnoticed.
+---
+
+## Why this exists
+
+When OpenAI silently ships a new `gpt-4o` snapshot that's slightly worse on your workload, you probably won't notice — the model name didn't change, the API didn't change, and average latency looks fine. The regression shows up only if you specifically compare quality on the same prompts over time.
+
+Provara does this automatically.
+
+## How it works
+
+1. **Replay bank** — periodically captures top-quality historical prompts per cell (tenant-scoped), gated by judge-rated ≥ 4 and embedding-based diversity sampling
+2. **Replay execute** — scheduled job re-runs those prompts against the current model-of-record
+3. **Judge compare** — LLM-as-judge scores the fresh response against the original
+4. **Alert** — if the median fresh score drops below a threshold, emit a regression event
+
+## What you get
+
+- Regression events on `/dashboard/quality` (or via `GET /v1/regression/events`)
+- Boosted ε-greedy exploration on affected cells (`PROVARA_REGRESSED_EXPLORATION_RATE`, default 0.5) so alternative models get tested
+- Resolution UI — dismiss as noise or mark resolved with a note
+
+## Opt-in
+
+Feature is behind an opt-in flag per tenant:
+
+```sh
+curl -X POST https://gateway.provara.xyz/v1/regression/opt-in \
+  -H "Authorization: Bearer <token>" \
+  -d '{"enabled": true}'
+```
+
+Free tier is excluded; Pro+ can enable. See the [self-host vs Cloud](/docs/getting-started/self-host-vs-cloud) matrix for tier specifics.

@@ -1,0 +1,112 @@
+---
+title: Environment variables
+description: Every env var the gateway and dashboard accept.
+---
+
+## Required
+
+| Var | Purpose |
+|---|---|
+| `PROVARA_MASTER_KEY` | 32-byte hex key for encrypting provider API keys at rest |
+| `DATABASE_URL` | libSQL / Turso URL (local `.db` file works for dev) |
+| `NEXT_PUBLIC_GATEWAY_URL` | Browser-side gateway URL (dashboard) |
+
+## Provider API keys
+
+Set at least one. Each provider registers only if its key is present.
+
+| Var | Provider |
+|---|---|
+| `OPENAI_API_KEY` | OpenAI |
+| `ANTHROPIC_API_KEY` | Anthropic |
+| `GOOGLE_API_KEY` | Google (Gemini) |
+| `MISTRAL_API_KEY` | Mistral |
+| `XAI_API_KEY` | xAI (Grok) |
+| `ZAI_API_KEY` | Z.ai |
+| `OLLAMA_BASE_URL` | Ollama (defaults to `http://localhost:11434/v1`) |
+
+DB-stored keys (added via `/dashboard/api-keys`) take precedence over env vars. Env vars are for operators; DB keys are for tenants.
+
+## Multi-tenant / SaaS
+
+| Var | Purpose |
+|---|---|
+| `PROVARA_MODE` | `self_hosted` (default) or `multi_tenant` |
+| `PROVARA_CLOUD` | `true` enforces tier gates against Stripe subscription |
+| `DASHBOARD_URL` | Where OAuth callbacks redirect back to |
+| `OAUTH_REDIRECT_BASE` | Gateway's own public URL (used by magic-link etc.) |
+| `PROVARA_ALLOWED_ORIGINS` | Comma-separated CORS allowlist |
+| `PROVARA_OPERATOR_EMAILS` | Comma-separated allowlist of emails that bypass tier gates |
+
+## OAuth providers
+
+| Var | Purpose |
+|---|---|
+| `GOOGLE_OAUTH_CLIENT_ID` | Google OAuth |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth |
+| `GITHUB_OAUTH_CLIENT_ID` | GitHub OAuth |
+| `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth |
+
+## Email (Resend)
+
+| Var | Purpose |
+|---|---|
+| `RESEND_API_KEY` | Transactional email (invites, magic-link, budget alerts, welcome) |
+| `PROVARA_EMAIL_FROM` | Sender address; must be on a Resend-verified domain |
+
+Without these, the gateway falls back gracefully — invites still work via copy-paste link from the dashboard, but no email goes out.
+
+## Stripe
+
+| Var | Purpose |
+|---|---|
+| `STRIPE_SECRET_KEY` | Stripe API key (live or test) |
+| `STRIPE_WEBHOOK_SECRET` | HMAC signing secret for `/v1/webhooks/stripe` |
+| `STRIPE_PRICE_PRO_MONTHLY` | Price ID for Pro tier |
+| `STRIPE_PRICE_TEAM_MONTHLY` | Price ID for Team tier |
+
+## Rate limiting (#192)
+
+| Var | Default | Purpose |
+|---|---|---|
+| `RATE_LIMIT_AUTH_PER_MIN` | `20` | Per-IP cap on `/auth/*` |
+| `RATE_LIMIT_CHAT_RPS` | `200` | Per-IP global DoS floor |
+| `RATE_LIMIT_INVITE_PER_MIN` | `20` | Per-IP cap on invite endpoints |
+
+## Adaptive routing
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PROVARA_MIN_SAMPLES` | `5` | Minimum samples before adaptive routing picks |
+| `PROVARA_EXPLORATION_RATE` | `0.1` | Base ε-greedy exploration |
+| `PROVARA_STALE_EXPLORATION_RATE` | `0.5` | Boosted rate on stale cells |
+| `PROVARA_STALE_AFTER_DAYS` | `30` | Stale cutoff |
+| `PROVARA_REGRESSED_EXPLORATION_RATE` | `0.5` | Boosted rate on regressed cells |
+
+## Semantic cache
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PROVARA_SEMANTIC_CACHE_ENABLED` | `true` | Off-switch for the semantic layer |
+| `PROVARA_SEMANTIC_CACHE_THRESHOLD` | `0.97` | Cosine similarity threshold |
+| `PROVARA_EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `PROVARA_EMBEDDING_PROVIDER` | `openai` | Only `openai` supported |
+
+## Savings recommendations (#219)
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PROVARA_SAVINGS_QUALITY_DELTA` | `0.05` | Max quality drop tolerated for a cheaper alternate |
+
+## Scheduler
+
+| Var | Default | Purpose |
+|---|---|---|
+| `PROVARA_SCHEDULER_ROLE` | unset | Set to `leader` on exactly one replica for multi-replica leader election; unset = single-replica (default) |
+| `PROVARA_AUDIT_RETENTION_INTERVAL_MS` | 24h | Override for testing |
+
+## Admin (self-hosted mode)
+
+| Var | Purpose |
+|---|---|
+| `PROVARA_ADMIN_SECRET` | If set in `self_hosted` mode, dashboard routes require `X-Admin-Key: <secret>` |

@@ -1,0 +1,38 @@
+---
+title: SAML SSO
+description: Enterprise-tier identity-provider integration with IdP-metadata autoconfig and email-domain enforcement.
+---
+
+Provara ships SAML SSO as an Enterprise-tier feature. Tenants on other tiers sign in with magic-link email, Google OAuth, or GitHub OAuth.
+
+## How it's set up
+
+SSO is **ops-managed in v1** — an operator runs a CLI per Enterprise deal rather than the tenant self-serving from the dashboard. The CLI accepts either raw IdP values or an IdP metadata XML file exported from Okta / Azure AD / Google Workspace.
+
+```sh
+tsx packages/gateway/scripts/seed-sso-config.ts \
+  --tenant-id acme-tenant-xyz \
+  --idp-metadata-file ./google-idp-metadata.xml \
+  --email-domains "acme.com,acme.co.uk"
+```
+
+See `packages/gateway/scripts/seed-sso-config.ts` for the full flag set (individual-value mode, encryption requirement, SP entity override, etc.).
+
+## Enforcement
+
+Once a `sso_configs` row exists for a tenant with `status="active"`:
+
+- Members signing in with email domains in `email_domains` are forced through SAML — magic-link and OAuth are refused with `error=sso_required`, which the login page handles by surfacing the SSO start URL
+- Members outside those domains can still use magic-link / OAuth (useful for invited consultants on non-enterprise emails)
+- Operator accounts (`PROVARA_OPERATOR_EMAILS` allowlist) always bypass the SSO gate
+
+## Flow
+
+1. User visits `/login`, enters their email
+2. `/auth/saml/discover` checks if the domain is SSO-enforced, returns `{ sso: true, startUrl: "/auth/saml/<tenant>/start" }`
+3. `/auth/saml/<tenant>/start` issues a SAML AuthnRequest, redirects to the IdP
+4. User authenticates at the IdP
+5. IdP posts assertion to `/auth/saml/<tenant>/acs`
+6. Gateway validates signature, creates session, redirects to dashboard
+
+All supported SPs (Google Workspace, Okta, Azure AD, generic SAML 2.0 IdPs) work with the same code path — the per-tenant `sso_configs` row holds the IdP-specific entity ID, SSO URL, and signing certificate.

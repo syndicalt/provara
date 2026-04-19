@@ -1,0 +1,39 @@
+---
+title: Rate limiting
+description: Per-IP abuse protection + global DoS floor. Pricing-tier quotas are a separate per-month layer.
+---
+
+Two independent layers:
+
+| Layer | Scope | Default | Purpose |
+|---|---|---|---|
+| Per-IP on `/auth/*` | IP | 20 / min | Credential stuffing + invite-token brute force |
+| Per-IP on `/v1/chat/completions` | IP | 200 rps | Global DoS floor |
+| Per-token on `/v1/chat/completions` | API token | `apiTokens.rateLimit` (nullable) | Programmatic budget lever, tenant-configurable |
+
+## 429 response
+
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 23
+X-RateLimit-Limit: 20
+X-RateLimit-Remaining: 0
+
+{"error":{"message":"Rate limit exceeded. Try again shortly.","type":"rate_limit_error"}}
+```
+
+## Audit emission
+
+Blocked calls from **authenticated** callers emit a `rate_limit.exceeded` audit event (see [Audit logs](/docs/features/audit-logs)). To keep sustained bursts from flooding `audit_logs`, emissions are suppressed at 1 event / minute / `(scope, ip, tenant)` tuple. Unauthenticated blocks (anonymous hits on `/auth/*`) log to stdout only.
+
+## Pricing-tier quotas are a separate layer
+
+The pricing page promises **monthly request quotas** (Free 10k / Pro 100k / Team 500k / Enterprise custom). Those are enforced by `requireQuota` middleware + the usage-metering pipeline — not by the rate limiter. Rate limit is per-second abuse protection; quota is per-month billing. They don't interact.
+
+## Tuning
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `RATE_LIMIT_AUTH_PER_MIN` | `20` | Per-IP cap on `/auth/*` |
+| `RATE_LIMIT_CHAT_RPS` | `200` | Per-IP global DoS floor on `/v1/chat/completions` |
+| `RATE_LIMIT_INVITE_PER_MIN` | `20` | Per-IP cap on invite endpoints |

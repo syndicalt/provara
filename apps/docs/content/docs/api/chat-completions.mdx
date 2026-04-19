@@ -1,0 +1,100 @@
+---
+title: Chat completions
+description: OpenAI-compatible /v1/chat/completions endpoint.
+---
+
+Provara's chat completions endpoint is a drop-in for any SDK that speaks OpenAI format.
+
+## Basic
+
+```bash
+curl -X POST https://gateway.provara.xyz/v1/chat/completions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "",
+    "messages": [{"role": "user", "content": "Hello"}]
+  }'
+```
+
+Passing `"model": ""` lets the adaptive router pick. Pass a specific model (e.g. `"claude-sonnet-4-6"`) to pin.
+
+## Streaming
+
+```bash
+curl -X POST https://gateway.provara.xyz/v1/chat/completions \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "",
+    "stream": true,
+    "messages": [{"role": "user", "content": "Tell me a story"}]
+  }'
+```
+
+Fully SSE-compatible. The final `data:` frame before `[DONE]` includes a `_provara` meta object with latency, cost, and routing info.
+
+## Hints
+
+Provara extends the standard request body with optional hints the router uses when `model=""`:
+
+| Field | Values | Effect |
+|---|---|---|
+| `routing_hint` | `coding`, `creative`, `summarization`, `qa`, `general` | Overrides the task-type classifier |
+| `complexity_hint` | `simple`, `medium`, `complex` | Overrides the complexity classifier |
+
+Ignored when `model` is pinned.
+
+## Response envelope
+
+```json
+{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1776534905,
+  "model": "claude-haiku-4-5-20251001",
+  "choices": [...],
+  "usage": { "prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14 },
+  "_provara": {
+    "provider": "anthropic",
+    "latencyMs": 400,
+    "cached": false,
+    "routing": {
+      "taskType": "general",
+      "complexity": "medium",
+      "routedBy": "user-override",
+      "usedFallback": false,
+      "usedLlmFallback": false
+    }
+  }
+}
+```
+
+`_provara` is unique to Provara and safe to ignore if your SDK parses strictly.
+
+## Response headers
+
+| Header | Purpose |
+|---|---|
+| `X-Provara-Request-Id` | The request's id (use for replay / debugging) |
+| `X-Provara-Model` | Model actually served |
+| `X-Provara-Provider` | Provider actually served |
+| `X-Provara-Cost` | Cost in USD |
+| `X-Provara-Latency` | Latency in ms |
+| `X-Provara-Cache` | `exact`, `semantic`, or absent |
+| `X-Provara-Guardrail` | Fired rule name, if any |
+| `X-Provara-Errors` | JSON of provider errors hit during fallback (debug only) |
+| `X-RateLimit-Limit` / `X-RateLimit-Remaining` | Token-scoped rate-limit state |
+
+## Error contract
+
+| HTTP | `error.type` | When |
+|---|---|---|
+| 401 | `auth_error` | Missing / invalid bearer or session |
+| 402 | `insufficient_tier` | Feature gated by subscription |
+| 402 | `budget_exceeded` | Tenant's budget hard-stop fired |
+| 402 | `spend_limit_error` | Per-token spend limit exceeded |
+| 429 | `rate_limit_error` | IP or token rate limit exhausted |
+| 429 | `quota_exhausted` | Monthly request quota hit (Free tier) |
+| 400 | `guardrail_error` | Input blocked by a guardrail rule |
+| 502 | `provider_error` | All fallback providers failed |
