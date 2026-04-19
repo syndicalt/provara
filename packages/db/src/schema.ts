@@ -107,6 +107,10 @@ export const modelRegistry = sqliteTable("model_registry", {
     .notNull()
     .default("builtin"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  /** JSON array of modalities the model accepts as input. `["text"]` for
+   *  text-only, `["text","image"]` for vision-capable. Used by the routing
+   *  engine to filter candidate models when a request carries image parts. */
+  modalities: text("modalities").notNull().default('["text"]'),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

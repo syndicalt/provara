@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../providers/types.js";
+import { messageText } from "../providers/types.js";
 import type { Complexity, ClassificationResult } from "./types.js";
 
 const CONFIDENCE_THRESHOLD = 0.6;
@@ -74,9 +75,10 @@ function estimateTokens(text: string): number {
 }
 
 function gatherSignals(messages: ChatMessage[]): ComplexitySignals {
-  const allText = messages.map((m) => m.content).join("\n");
+  const allText = messages.map(messageText).join("\n");
   const userMessages = messages.filter((m) => m.role === "user");
-  const lastUserMessage = userMessages[userMessages.length - 1]?.content || "";
+  const lastUserMsg = userMessages[userMessages.length - 1];
+  const lastUserMessage = lastUserMsg ? messageText(lastUserMsg) : "";
   const lastLower = lastUserMessage.toLowerCase();
 
   const codeBlocks = allText.match(/```[\s\S]*?```/g);

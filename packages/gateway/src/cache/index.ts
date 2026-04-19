@@ -1,5 +1,6 @@
 import type { CompletionResponse } from "../providers/types.js";
 import type { ChatMessage } from "../providers/types.js";
+import { messageText } from "../providers/types.js";
 
 interface CacheEntry {
   response: CompletionResponse;
@@ -12,7 +13,7 @@ const MAX_ENTRIES = 1000;
 const cache = new Map<string, CacheEntry>();
 
 function hashKey(messages: ChatMessage[], provider: string, model: string): string {
-  const raw = `${provider}::${model}::` + messages.map((m) => `${m.role}:${m.content}`).join("|");
+  const raw = `${provider}::${model}::` + messages.map((m) => `${m.role}:${messageText(m)}`).join("|");
   let hash = 0;
   for (let i = 0; i < raw.length; i++) {
     hash = ((hash << 5) - hash + raw.charCodeAt(i)) | 0;

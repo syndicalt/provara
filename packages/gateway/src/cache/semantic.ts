@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import type { Db } from "@provara/db";
 import { semanticCache } from "@provara/db";
 import type { ChatMessage, CompletionResponse } from "../providers/types.js";
+import { messageText } from "../providers/types.js";
 import {
   cosineSimilarity,
   decodeEmbedding,
@@ -46,7 +47,7 @@ function tenantKey(tenantId: string | null, provider: string, model: string): st
 export function hashSystemPrompt(messages: ChatMessage[]): string {
   const sys = messages
     .filter((m) => m.role === "system")
-    .map((m) => m.content)
+    .map(messageText)
     .join("\n");
   let hash = 0;
   for (let i = 0; i < sys.length; i++) {
@@ -133,7 +134,8 @@ export async function createSemanticCache(db: Db, embeddings: EmbeddingProvider)
     model: string,
   ): Promise<{ row: CacheRow; similarity: number } | null> {
     if (!isCacheEligible(messages)) return null;
-    const userMsg = messages.find((m) => m.role === "user")?.content ?? "";
+    const userMessage = messages.find((m) => m.role === "user");
+    const userMsg = userMessage ? messageText(userMessage) : "";
     if (looksPersonalized(userMsg)) return null;
 
     const key = tenantKey(tenantId, provider, model);
@@ -180,7 +182,8 @@ export async function createSemanticCache(db: Db, embeddings: EmbeddingProvider)
     response: CompletionResponse,
   ): Promise<void> {
     if (!isCacheEligible(messages)) return;
-    const userMsg = messages.find((m) => m.role === "user")?.content ?? "";
+    const userMessage = messages.find((m) => m.role === "user");
+    const userMsg = userMessage ? messageText(userMessage) : "";
     if (!userMsg) return;
 
     const vec = await embeddings.embed(userMsg);

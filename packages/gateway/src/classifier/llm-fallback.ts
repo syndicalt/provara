@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../providers/types.js";
+import { messageText } from "../providers/types.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { TaskType, Complexity } from "./types.js";
 import { getPricing } from "../cost/index.js";
@@ -29,7 +30,7 @@ Complexity definitions:
 
 // Simple hash for cache keys
 function hashMessages(messages: ChatMessage[]): string {
-  const content = messages.map((m) => `${m.role}:${m.content}`).join("|");
+  const content = messages.map((m) => `${m.role}:${messageText(m)}`).join("|");
   let hash = 0;
   for (let i = 0; i < content.length; i++) {
     const char = content.charCodeAt(i);
@@ -58,7 +59,7 @@ function findCheapestModel(registry: ProviderRegistry): { provider: string; mode
   return cheapest ? { provider: cheapest.provider, model: cheapest.model } : null;
 }
 
-const VALID_TASK_TYPES: TaskType[] = ["coding", "creative", "summarization", "qa", "general"];
+const VALID_TASK_TYPES: TaskType[] = ["coding", "creative", "summarization", "qa", "general", "vision"];
 const VALID_COMPLEXITIES: Complexity[] = ["simple", "medium", "complex"];
 
 function parseClassification(raw: string): LlmClassification | null {
@@ -100,7 +101,7 @@ export async function classifyWithLlm(
 
   const classificationMessages: ChatMessage[] = [
     { role: "system", content: CLASSIFICATION_PROMPT },
-    { role: "user", content: lastUserMessage.content },
+    { role: "user", content: messageText(lastUserMessage) },
   ];
 
   try {

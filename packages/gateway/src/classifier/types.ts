@@ -1,4 +1,4 @@
-export type TaskType = "coding" | "creative" | "summarization" | "qa" | "general";
+export type TaskType = "coding" | "creative" | "summarization" | "qa" | "general" | "vision";
 export type Complexity = "simple" | "medium" | "complex";
 
 export interface ClassificationResult<T> {

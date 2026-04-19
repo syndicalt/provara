@@ -165,6 +165,7 @@ Endpoint: `GET /v1/analytics/cache/savings`.
 - Enable the semantic layer (see [semantic-cache](/docs/features/semantic-cache)) — exact-match only hits verbatim-identical prompts.
 - Lower `PROVARA_SEMANTIC_CACHE_THRESHOLD` if your prompts paraphrase a lot.
 - **The exact-match cache is in-memory, per-process, 5-min TTL, 1000-entry LRU.** It dies on every gateway restart, so fresh deploys start at 0% exact hit rate regardless of prior traffic.
+- **Image-bearing requests skip both cache layers** (see [vision](/docs/features/vision)). If your workload is mostly vision, Tokens Saved stays at 0 by design — that's not a configuration problem to solve.
 
 ### Savings by model
 

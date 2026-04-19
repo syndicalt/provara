@@ -1,6 +1,27 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
+import type { Provider, CompletionRequest, CompletionResponse, StreamChunk, ChatMessage } from "./types.js";
+import { messageText } from "./types.js";
 import { nanoid } from "nanoid";
+
+type GooglePart =
+  | { text: string }
+  | { inlineData: { mimeType: string; data: string } }
+  | { fileData: { mimeType: string; fileUri: string } };
+
+function toGoogleParts(content: ChatMessage["content"]): GooglePart[] {
+  if (typeof content === "string") return [{ text: content }];
+  return content.map<GooglePart>((part) => {
+    if (part.type === "text") return { text: part.text };
+    const url = part.image_url.url;
+    const dataMatch = url.match(/^data:([^;]+);base64,(.+)$/);
+    if (dataMatch) {
+      return { inlineData: { mimeType: dataMatch[1], data: dataMatch[2] } };
+    }
+    // Gemini's fileData expects a URI it can fetch (typically a Files API
+    // handle); pass through and let the upstream reject if unsupported.
+    return { fileData: { mimeType: "image/*", fileUri: url } };
+  });
+}
 
 const GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -41,14 +62,14 @@ export function createGoogleProvider(apiKey?: string): Provider {
       const systemMessage = request.messages.find((m) => m.role === "system");
       const model = genAI.getGenerativeModel({
         model: request.model,
-        ...(systemMessage && { systemInstruction: systemMessage.content }),
+        ...(systemMessage && { systemInstruction: messageText(systemMessage) }),
       });
 
       const contents = request.messages
         .filter((m) => m.role !== "system")
         .map((m) => ({
           role: m.role === "assistant" ? "model" : "user",
-          parts: [{ text: m.content }],
+          parts: toGoogleParts(m.content),
         }));
 
       const result = await model.generateContent({ contents });
@@ -72,14 +93,14 @@ export function createGoogleProvider(apiKey?: string): Provider {
       const systemMessage = request.messages.find((m) => m.role === "system");
       const model = genAI.getGenerativeModel({
         model: request.model,
-        ...(systemMessage && { systemInstruction: systemMessage.content }),
+        ...(systemMessage && { systemInstruction: messageText(systemMessage) }),
       });
 
       const contents = request.messages
         .filter((m) => m.role !== "system")
         .map((m) => ({
           role: m.role === "assistant" ? "model" : "user",
-          parts: [{ text: m.content }],
+          parts: toGoogleParts(m.content),
         }));
 
       const result = await model.generateContentStream({ contents });

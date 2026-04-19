@@ -2,6 +2,8 @@ import OpenAI from "openai";
 import type { Provider, CompletionRequest, CompletionResponse, StreamChunk } from "./types.js";
 import { nanoid } from "nanoid";
 
+type OpenAIMessages = OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+
 export interface OpenAICompatibleConfig {
   name: string;
   baseURL: string;
@@ -40,7 +42,7 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
 
       const response = await client.chat.completions.create({
         model: request.model,
-        messages: request.messages,
+        messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
       });
@@ -64,7 +66,7 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
     async *stream(request: CompletionRequest): AsyncIterable<StreamChunk> {
       const stream = await client.chat.completions.create({
         model: request.model,
-        messages: request.messages,
+        messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
         stream: true,

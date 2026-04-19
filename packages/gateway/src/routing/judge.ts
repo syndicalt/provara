@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../providers/types.js";
+import { messageText } from "../providers/types.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Db } from "@provara/db";
 import { appConfig, feedback } from "@provara/db";
@@ -197,7 +198,7 @@ export function createJudge(registry: ProviderRegistry, db: Db, adaptive: Adapti
       { role: "system", content: JUDGE_PROMPT },
       {
         role: "user",
-        content: `**User's prompt:**\n${lastUserMessage.content}\n\n**Assistant's response:**\n${ctx.responseContent}`,
+        content: `**User's prompt:**\n${messageText(lastUserMessage)}\n\n**Assistant's response:**\n${ctx.responseContent}`,
       },
     ];
 

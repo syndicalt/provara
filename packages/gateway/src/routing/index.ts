@@ -1,4 +1,5 @@
 import type { ChatMessage } from "../providers/types.js";
+import { messagesHaveImage } from "../providers/types.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Db } from "@provara/db";
 import { abTests, abTestVariants } from "@provara/db";
@@ -12,7 +13,7 @@ import { createBoostTable } from "./adaptive/migrations.js";
 import { createRegressionCellTable } from "./adaptive/regression.js";
 import { getPricing } from "../cost/index.js";
 import { getRoutingConfig } from "./config.js";
-import { isStructuredOutputReliable } from "./model-capabilities.js";
+import { isStructuredOutputReliable, isVisionCapable } from "./model-capabilities.js";
 
 export type { RoutingResult, RouteTarget } from "./types.js";
 export { type RoutingProfile } from "./adaptive/index.js";
@@ -141,6 +142,24 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
   async function route(request: RoutingRequest): Promise<RoutingResult> {
     let allFallbacks = buildDynamicFallbacks(config.registry);
 
+    // Vision filter (#256). When any message carries an image part, the
+    // router restricts candidates to vision-capable models. Auto-detected
+    // from the messages — no caller opt-in needed. User-pinned
+    // provider+model is respected as always; pinning is an explicit "I
+    // know what I'm doing" signal and the upstream will reject if the
+    // target can't actually handle images.
+    const hasImage = messagesHaveImage(request.messages);
+    if (hasImage && !(request.provider && request.model) && !request.model) {
+      allFallbacks = allFallbacks.filter((t) => isVisionCapable(t.model));
+      if (allFallbacks.length === 0) {
+        throw new NoCapableProviderError(
+          "Request contains image content but no registered vision-capable model is available. " +
+            "Register a capable model (gpt-4o, claude-sonnet-4-6, gemini-2.5-pro, etc.) and ensure " +
+            "its provider has a configured API key.",
+        );
+      }
+    }
+
     // Structured-output filter (#233). When the caller has signaled (or
     // we auto-detected) that the response must match a JSON schema, the
     // router narrows every candidate pool to models we've marked as
@@ -203,7 +222,12 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     // always win over the classifier — the hints are an explicit claim that
     // the caller knows better than the heuristic (e.g. a schema-heavy
     // request where a short user message still demands a capable model).
-    const classification = await classifyRequest(request.messages, config.registry);
+    // Images short-circuit: the classifier's keyword heuristics are text-only
+    // and running them over image placeholders produces noise. Vision goes
+    // in its own cell for adaptive learning.
+    const classification = hasImage
+      ? { taskType: "vision" as TaskType, complexity: "complex" as Complexity, taskConfidence: 1, complexityConfidence: 1, usedLlmFallback: false }
+      : await classifyRequest(request.messages, config.registry);
     const taskType: TaskType = request.routingHint || classification.taskType;
     const complexity: Complexity = request.complexityHint || classification.complexity;
 
@@ -219,9 +243,14 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     const schemaFilter = request.requiresStructuredOutput
       ? (target: RouteTarget) => isStructuredOutputReliable(target.model)
       : null;
+    const visionFilter = hasImage
+      ? (target: RouteTarget) => isVisionCapable(target.model)
+      : null;
 
-    // A/B test candidate (may or may not run before adaptive based on config)
-    const abResult = await findActiveAbTest(taskType, complexity);
+    // A/B test candidate (may or may not run before adaptive based on config).
+    // Vision requests skip A/B entirely — variants might point at a text-only
+    // model and we'd have no safe way to honor the experiment.
+    const abResult = hasImage ? null : await findActiveAbTest(taskType, complexity);
     const adaptiveResult = await adaptive.getBestModel(
       taskType,
       complexity,
@@ -253,7 +282,11 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
       };
     }
 
-    if (adaptiveResult && (!schemaFilter || schemaFilter(adaptiveResult.target))) {
+    if (
+      adaptiveResult &&
+      (!schemaFilter || schemaFilter(adaptiveResult.target)) &&
+      (!visionFilter || visionFilter(adaptiveResult.target))
+    ) {
       const { target, via } = adaptiveResult;
       return {
         provider: target.provider,
