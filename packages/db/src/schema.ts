@@ -149,6 +149,10 @@ export const requests = sqliteTable("requests", {
   userId: text("user_id"),
   apiTokenId: text("api_token_id"),
   abTestId: text("ab_test_id").references(() => abTests.id),
+  /** Prompt version id when the request was resolved from a prompt template
+   *  via `/v1/prompts/:id/resolve` (#264). Enables canary vs stable EMA
+   *  tracking for prompt rollouts. Null for ad-hoc chat completions. */
+  promptVersionId: text("prompt_version_id"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -327,6 +331,48 @@ export const promptVersions = sqliteTable("prompt_versions", {
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
+});
+
+/**
+ * Prompt canary rollouts (#264). A rollout serves a canary version to a
+ * percentage of `/v1/prompts/:id/resolve` calls, with the remainder served
+ * by the current stable version. Quality feedback on canary traffic is
+ * tracked via `requests.prompt_version_id`, and the scheduler evaluates
+ * promotion criteria hourly.
+ *
+ * Lifecycle: active → (promoted | reverted). Exactly one active rollout
+ * per prompt template at a time; the API rejects a second start while
+ * another is active.
+ *
+ * `criteria` JSON shape: `{ min_samples: number, max_avg_score_delta: number,
+ * window_hours: number }`. A rollout is auto-promoted when both canary
+ * samples >= min_samples AND (avg_canary_score - avg_stable_score) >=
+ * max_avg_score_delta (i.e. the canary didn't drop more than the threshold).
+ */
+export const promptRollouts = sqliteTable("prompt_rollouts", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  templateId: text("template_id")
+    .notNull()
+    .references(() => promptTemplates.id),
+  canaryVersionId: text("canary_version_id")
+    .notNull()
+    .references(() => promptVersions.id),
+  stableVersionId: text("stable_version_id")
+    .notNull()
+    .references(() => promptVersions.id),
+  rolloutPct: integer("rollout_pct").notNull(),
+  criteria: text("criteria", { mode: "json" })
+    .$type<{ min_samples: number; max_avg_score_delta: number; window_hours: number }>()
+    .notNull(),
+  status: text("status", { enum: ["active", "promoted", "reverted"] })
+    .notNull()
+    .default("active"),
+  startedAt: integer("started_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  completedAt: integer("completed_at", { mode: "timestamp" }),
+  completionReason: text("completion_reason"),
 });
 
 export const modelScores = sqliteTable("model_scores", {
