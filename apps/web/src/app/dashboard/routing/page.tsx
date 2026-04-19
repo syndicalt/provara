@@ -25,7 +25,7 @@ interface Distribution {
   byComplexity: { complexity: string | null; count: number }[];
 }
 
-const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general"];
+const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general", "vision"];
 const COMPLEXITIES = ["simple", "medium", "complex"];
 
 function BarChart({ data, labelKey, valueKey }: { data: Record<string, unknown>[]; labelKey: string; valueKey: string }) {

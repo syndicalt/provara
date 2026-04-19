@@ -5,6 +5,7 @@ const colors: Record<string, string> = {
   summarization: "bg-green-900/50 text-green-300",
   qa: "bg-amber-900/50 text-amber-300",
   general: "bg-zinc-800 text-zinc-300",
+  vision: "bg-pink-900/50 text-pink-300",
   simple: "bg-emerald-900/50 text-emerald-300",
   medium: "bg-yellow-900/50 text-yellow-300",
   complex: "bg-red-900/50 text-red-300",

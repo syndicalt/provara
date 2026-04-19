@@ -136,12 +136,67 @@ function formatCost(cost: number | null): string {
   return `$${cost.toFixed(4)}`;
 }
 
-function formatMessages(promptJson: string): { role: string; content: string }[] {
+type MessageContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+type StoredMessage = { role: string; content: string | MessageContentPart[] };
+
+function formatMessages(promptJson: string): StoredMessage[] {
   try {
     const parsed = JSON.parse(promptJson);
     if (Array.isArray(parsed)) return parsed;
   } catch {}
   return [{ role: "user", content: promptJson }];
+}
+
+/** Render a message's content. Text stays as a wrapped <pre>; image_url parts
+ *  render as thumbnails that click-to-expand. Data URIs render inline (already
+ *  local to the browser); http(s) URLs render as a link with the domain shown
+ *  — the browser fetches, the dashboard server never sees the bytes. */
+function MessageContent({ content }: { content: string | MessageContentPart[] }) {
+  if (typeof content === "string") {
+    return (
+      <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
+        {content}
+      </pre>
+    );
+  }
+  return (
+    <div className="space-y-3">
+      {content.map((part, i) => {
+        if (part.type === "text") {
+          return (
+            <pre key={i} className="text-sm text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
+              {part.text}
+            </pre>
+          );
+        }
+        if (part.type === "image_url") {
+          const url = part.image_url.url;
+          const isDataUri = url.startsWith("data:");
+          const label = isDataUri
+            ? url.slice(0, 30) + "…"
+            : (() => {
+                try { return new URL(url).hostname; } catch { return "external image"; }
+              })();
+          return (
+            <div key={i} className="space-y-1">
+              <p className="text-xs text-zinc-500 font-mono">image · {label}</p>
+              <a href={url} target="_blank" rel="noopener noreferrer">
+                <img
+                  src={url}
+                  alt="prompt attachment"
+                  loading="lazy"
+                  className="max-h-64 rounded border border-zinc-700 object-contain bg-zinc-800"
+                />
+              </a>
+            </div>
+          );
+        }
+        return null;
+      })}
+    </div>
+  );
 }
 
 export default function RequestDetailPage() {
@@ -384,9 +439,7 @@ export default function RequestDetailPage() {
             }`}>
               {msg.role}
             </p>
-            <pre className="text-sm text-zinc-300 whitespace-pre-wrap font-sans leading-relaxed">
-              {msg.content}
-            </pre>
+            <MessageContent content={msg.content} />
           </div>
         ))}
       </div>
