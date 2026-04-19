@@ -153,6 +153,14 @@ const outcomeStats: OutcomeStat[] = [
   },
 ];
 
+// The `/demo` route lives on the gateway (it has to set the session
+// cookie before the dashboard loads), not on the web app. Build the
+// full URL from the same env var all other gateway calls use so
+// self-host deployments — where gateway and web may share an origin
+// — also work.
+const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "";
+const demoUrl = `${GATEWAY_URL}/demo`;
+
 const providerLogos: Record<string, React.ReactNode> = {
   OpenAI: (
     <svg viewBox="0 0 24 24" fill="currentColor" className="w-6 h-6">
@@ -229,12 +237,12 @@ export default function Home() {
                 >
                   Start free
                 </Link>
-                <Link
-                  href="/demo"
+                <a
+                  href={demoUrl}
                   className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg font-medium transition-colors"
                 >
                   See it live →
-                </Link>
+                </a>
                 <a
                   href="https://github.com/syndicalt/provara"
                   target="_blank"
