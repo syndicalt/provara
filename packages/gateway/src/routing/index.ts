@@ -219,16 +219,26 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     }
 
     // Classify the request. Caller-supplied `routingHint` / `complexityHint`
-    // always win over the classifier — the hints are an explicit claim that
+    // normally win over the classifier — the hints are an explicit claim that
     // the caller knows better than the heuristic (e.g. a schema-heavy
     // request where a short user message still demands a capable model).
     // Images short-circuit: the classifier's keyword heuristics are text-only
     // and running them over image placeholders produces noise. Vision goes
     // in its own cell for adaptive learning.
+    //
+    // Image presence beats the caller's taskType hint (#256): the hint is a
+    // text-content heuristic, but having an image_url part is a structural
+    // fact about the request. Without this override a caller like Ampline
+    // that sends `routing_hint: "qa"` on every estimate pollutes the qa cell
+    // with vision samples and leaves the vision cell permanently empty on
+    // the routing matrix. Complexity hint still wins — "complex" vs "medium"
+    // vision is a meaningful distinction the caller may want to preserve.
     const classification = hasImage
       ? { taskType: "vision" as TaskType, complexity: "complex" as Complexity, taskConfidence: 1, complexityConfidence: 1, usedLlmFallback: false }
       : await classifyRequest(request.messages, config.registry);
-    const taskType: TaskType = request.routingHint || classification.taskType;
+    const taskType: TaskType = hasImage
+      ? "vision"
+      : request.routingHint || classification.taskType;
     const complexity: Complexity = request.complexityHint || classification.complexity;
 
     const { abTestPreempts } = getRoutingConfig();
