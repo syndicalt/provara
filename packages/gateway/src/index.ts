@@ -212,6 +212,23 @@ await scheduler.schedule({
   },
 });
 
+// Public demo tenant reseed (#229). Daily wipe + reseed so demo
+// visitors see fresh, consistent data and no one-off mutations leak
+// across browsing sessions even though read-only middleware should
+// prevent them outright.
+if (process.env.PROVARA_DEMO_ENABLED === "true") {
+  await scheduler.schedule({
+    name: "demo-reseed",
+    intervalMs: 24 * 60 * 60 * 1000,
+    initialDelayMs: 30_000,
+    handler: async () => {
+      const { reseedDemoTenant } = await import("./demo/seed.js");
+      await reseedDemoTenant(db);
+      console.log("[demo-reseed] t_demo refreshed");
+    },
+  });
+}
+
 scheduler.start();
 
 // Discover available models from each provider's API at startup

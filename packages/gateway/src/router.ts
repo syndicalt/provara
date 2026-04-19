@@ -13,6 +13,8 @@ import { createApiKeyRoutes } from "./routes/api-keys.js";
 import { createAuthMiddleware, getTokenInfo } from "./auth/middleware.js";
 import { createAdminMiddleware, requireRole } from "./auth/admin.js";
 import { createTenantMiddleware } from "./auth/tenant.js";
+import { createReadOnlyMiddleware } from "./middleware/read-only.js";
+import { createDemoRoutes } from "./routes/demo.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createConversationRoutes } from "./routes/conversations.js";
@@ -177,6 +179,20 @@ export async function createRouter(ctx: RouterContext) {
 
   // Tenant middleware — enforces tenant context in multi_tenant mode
   app.use("/v1/*", createTenantMiddleware(ctx.db));
+
+  // Public demo tenant (#229). Read-only session for anonymous visitors.
+  // Mounted AFTER tenant middleware so /v1/* writes from demo sessions
+  // are blocked, but BEFORE any feature routes.
+  if (getMode() === "multi_tenant") {
+    app.route("/demo", createDemoRoutes(ctx.db));
+  }
+
+  // Read-only session enforcement (#229). Applies to all /v1/* writes
+  // and the chat-completions hot path — demo sessions can browse the
+  // seeded data freely but can't create, mutate, or burn LLM tokens.
+  const readOnly = createReadOnlyMiddleware();
+  app.use("/v1/*", readOnly);
+  app.use("/v1/chat/completions", readOnly);
 
   // Mount A/B test CRUD routes
   app.route("/v1/ab-tests", createAbTestRoutes(ctx.db));
