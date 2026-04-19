@@ -227,7 +227,7 @@ export async function upsertUserFromSso(
       firstName: params.firstName,
       lastName: params.lastName,
       tenantId: params.tenantId,
-      role: "member",
+      role: "developer",
       createdAt: new Date(),
     })
     .run();

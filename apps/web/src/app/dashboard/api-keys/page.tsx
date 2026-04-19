@@ -249,9 +249,9 @@ export default function ApiKeysPage() {
 
       {forbidden && (
         <div className="bg-amber-900/30 border border-amber-800 rounded-lg p-4">
-          <h3 className="font-medium text-amber-200 mb-1">Owner access required</h3>
+          <h3 className="font-medium text-amber-200 mb-1">Admin access required</h3>
           <p className="text-sm text-amber-300/80">
-            Provider API keys are managed by tenant owners. Ask an owner on your team to add or rotate keys.
+            Provider API keys are shared across the whole tenant, so only Owners and Admins can add or rotate them. Ask an owner on your team if you need a new provider wired up.
           </p>
         </div>
       )}

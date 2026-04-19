@@ -131,7 +131,7 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
       firstName: id.split("_")[2] ?? "Demo",
       lastName: "Demo",
       tenantId,
-      role: id === "u_demo_visitor" ? "owner" : "member",
+      role: id === "u_demo_visitor" ? "owner" : "developer",
       createdAt: new Date(now.getTime() - 60 * DAY_MS),
     }).run();
   }
@@ -594,7 +594,7 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
     token: "inv_demo_pending_carol",
     tenantId,
     invitedEmail: "carol@demo.provara.xyz",
-    invitedRole: "member",
+    invitedRole: "developer",
     invitedByUserId: "u_demo_visitor",
     expiresAt: new Date(now.getTime() + 5 * DAY_MS),
     consumedAt: null,

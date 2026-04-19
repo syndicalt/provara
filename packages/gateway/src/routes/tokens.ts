@@ -5,16 +5,41 @@ import { eq, and, gte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { generateToken, hashToken, maskToken } from "../auth/tokens.js";
 import { getTenantId, tenantFilter } from "../auth/tenant.js";
-import { getAuthUser } from "../auth/admin.js";
+import { getAuthUser, getAuthRole } from "../auth/admin.js";
 import { invalidateAuthCache } from "./../auth/middleware.js";
 
 export function createTokenRoutes(db: Db) {
   const app = new Hono();
 
+  /**
+   * Token-ownership scope (#247). Owners and Admins see every token on
+   * the tenant. Developers only see and mutate tokens they created; the
+   * filter combines with the tenant filter via AND in the caller.
+   * Historical tokens with `createdByUserId = NULL` are treated as
+   * unowned — invisible to Developers, visible to Owners/Admins so they
+   * can reassign or revoke.
+   */
+  function ownershipFilter(req: Request) {
+    const role = getAuthRole(req);
+    const user = getAuthUser(req);
+    if (role === "developer" && user) {
+      return eq(apiTokens.createdByUserId, user.id);
+    }
+    return undefined;
+  }
+
+  function combine(...clauses: Array<ReturnType<typeof eq> | undefined>) {
+    const filtered = clauses.filter((c): c is NonNullable<typeof c> => c !== undefined);
+    if (filtered.length === 0) return undefined;
+    if (filtered.length === 1) return filtered[0];
+    return and(...filtered);
+  }
+
   // List all tokens (masked)
   app.get("/", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const tokens = await db.select().from(apiTokens).where(tenantFilter(apiTokens.tenant, tenantId)).all();
+    const where = combine(tenantFilter(apiTokens.tenant, tenantId), ownershipFilter(c.req.raw));
+    const tokens = await db.select().from(apiTokens).where(where).all();
     return c.json({
       tokens: tokens.map((t) => ({
         id: t.id,
@@ -36,8 +61,11 @@ export function createTokenRoutes(db: Db) {
   app.get("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const tenantClause = tenantFilter(apiTokens.tenant, tenantId);
-    const tokenWhere = tenantClause ? and(eq(apiTokens.id, id), tenantClause) : eq(apiTokens.id, id);
+    const tokenWhere = combine(
+      eq(apiTokens.id, id),
+      tenantFilter(apiTokens.tenant, tenantId),
+      ownershipFilter(c.req.raw),
+    );
     const token = await db.select().from(apiTokens).where(tokenWhere).get();
 
     if (!token) {
@@ -140,6 +168,7 @@ export function createTokenRoutes(db: Db) {
         routingProfile: body.routingProfile || "balanced",
         routingWeights: body.routingWeights ? JSON.stringify(body.routingWeights) : null,
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+        createdByUserId: authUser?.id || null,
       })
       .run();
     invalidateAuthCache();
@@ -178,8 +207,11 @@ export function createTokenRoutes(db: Db) {
       expiresAt?: string | null;
     }>();
 
-    const tenantClause = tenantFilter(apiTokens.tenant, tenantId);
-    const tokenWhere = tenantClause ? and(eq(apiTokens.id, id), tenantClause) : eq(apiTokens.id, id);
+    const tokenWhere = combine(
+      eq(apiTokens.id, id),
+      tenantFilter(apiTokens.tenant, tenantId),
+      ownershipFilter(c.req.raw),
+    );
     const token = await db.select().from(apiTokens).where(tokenWhere).get();
     if (!token) {
       return c.json({ error: { message: "Token not found", type: "not_found" } }, 404);
@@ -212,8 +244,11 @@ export function createTokenRoutes(db: Db) {
   app.delete("/:id", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const { id } = c.req.param();
-    const tenantClause = tenantFilter(apiTokens.tenant, tenantId);
-    const tokenWhere = tenantClause ? and(eq(apiTokens.id, id), tenantClause) : eq(apiTokens.id, id);
+    const tokenWhere = combine(
+      eq(apiTokens.id, id),
+      tenantFilter(apiTokens.tenant, tenantId),
+      ownershipFilter(c.req.raw),
+    );
     const token = await db.select().from(apiTokens).where(tokenWhere).get();
 
     if (!token) {

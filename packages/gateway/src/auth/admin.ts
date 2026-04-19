@@ -141,11 +141,40 @@ export function createAdminMiddleware(db?: Db) {
 }
 
 /**
+ * Role names. Historical rows may still carry the legacy "member"
+ * value until the #247 migration backfills them to "developer"; the
+ * middleware normalizes "member" → "developer" at read-time so the
+ * code after the migration can assume the 4-role set.
+ */
+export type Role = "owner" | "admin" | "developer" | "viewer";
+
+function normalizeRole(raw: string): Role {
+  if (raw === "member") return "developer";
+  if (raw === "owner" || raw === "admin" || raw === "developer" || raw === "viewer") {
+    return raw;
+  }
+  // Unknown role = most restricted. Defensive; should never happen once
+  // the migration has run.
+  return "viewer";
+}
+
+export function getAuthRole(req: Request): Role | null {
+  const user = getAuthUser(req);
+  return user ? normalizeRole(user.role) : null;
+}
+
+/**
  * Role middleware — restricts access to users with the required role.
  * Must run after createAdminMiddleware (which attaches the user).
  * In self_hosted mode, this is a no-op.
+ *
+ * Accepts either a single role or an array. Owner is always allowed.
+ * Legacy single-role callers like `requireRole("owner")` remain valid.
  */
-export function requireRole(role: "owner" | "member") {
+export function requireRole(role: Role | Role[]) {
+  const allowed = new Set<Role>(Array.isArray(role) ? role : [role]);
+  allowed.add("owner"); // owner is always allowed
+
   return async (c: Context, next: Next) => {
     if (getMode() !== "multi_tenant") {
       return next();
@@ -159,18 +188,19 @@ export function requireRole(role: "owner" | "member") {
       );
     }
 
-    // Owner has access to everything
-    if (user.role === "owner") {
+    const normalized = normalizeRole(user.role);
+    if (allowed.has(normalized)) {
       return next();
     }
 
-    // Member can only access member-level routes
-    if (role === "member") {
-      return next();
-    }
-
+    const requiredList = Array.from(allowed).join(", ");
     return c.json(
-      { error: { message: "Insufficient permissions. Owner access required.", type: "auth_error" } },
+      {
+        error: {
+          message: `Insufficient permissions. Required role: ${requiredList}.`,
+          type: "auth_error",
+        },
+      },
       403
     );
   };

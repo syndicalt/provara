@@ -10,7 +10,7 @@ interface Member {
   email: string;
   name: string | null;
   avatarUrl: string | null;
-  role: "owner" | "member";
+  role: "owner" | "admin" | "developer" | "viewer";
   createdAt: string;
 }
 
@@ -27,7 +27,7 @@ interface Seats {
 interface Invite {
   token: string;
   invitedEmail: string;
-  invitedRole: "owner" | "member";
+  invitedRole: "owner" | "admin" | "developer" | "viewer";
   invitedByUserId: string;
   expiresAt: string;
   createdAt: string;
@@ -189,7 +189,7 @@ export default function TeamPage() {
 function MemberRow({ member, onChanged }: { member: Member; onChanged: () => void }) {
   const toast = useToast();
 
-  async function updateRole(newRole: "owner" | "member") {
+  async function updateRole(newRole: "owner" | "admin" | "developer" | "viewer") {
     const res = await gatewayFetchRaw(`/v1/admin/team/${member.id}`, {
       method: "PATCH",
       body: JSON.stringify({ role: newRole }),
@@ -232,11 +232,13 @@ function MemberRow({ member, onChanged }: { member: Member; onChanged: () => voi
       <td className="px-4 py-3">
         <select
           value={member.role}
-          onChange={(e) => updateRole(e.target.value as "owner" | "member")}
+          onChange={(e) => updateRole(e.target.value as "owner" | "admin" | "developer" | "viewer")}
           className="bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500"
         >
           <option value="owner">Owner</option>
-          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+          <option value="developer">Developer</option>
+          <option value="viewer">Viewer</option>
         </select>
       </td>
       <td className="px-4 py-3 text-zinc-500 text-xs">{formatDate(member.createdAt)}</td>
@@ -305,7 +307,7 @@ function InviteModal({
   onError: (msg: string) => void;
 }) {
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"owner" | "member">("member");
+  const [role, setRole] = useState<"owner" | "admin" | "developer" | "viewer">("developer");
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(e: React.FormEvent) {
@@ -351,11 +353,13 @@ function InviteModal({
             <label className="block text-xs font-medium text-zinc-400 mb-1.5">Role</label>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value as "owner" | "member")}
+              onChange={(e) => setRole(e.target.value as "owner" | "admin" | "developer" | "viewer")}
               className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500"
             >
-              <option value="member">Member — can use the gateway and view dashboards</option>
-              <option value="owner">Owner — full admin access including billing and team</option>
+              <option value="viewer">Viewer — read-only access to dashboards, logs, spend</option>
+              <option value="developer">Developer — use the gateway, manage own tokens, edit prompts</option>
+              <option value="admin">Admin — everything except billing and tenant deletion</option>
+              <option value="owner">Owner — full access including billing and team</option>
             </select>
           </div>
         </div>
