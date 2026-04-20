@@ -39,7 +39,15 @@ function PlaygroundInner() {
   const [input, setInput] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showConversations, setShowConversations] = useState(true);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+  // Persist activeConversationId to sessionStorage alongside the message
+  // transcript in useChatSession. Without this, a hard refresh re-hydrated
+  // messages but lost the conversation ID, so the auto-save effect below
+  // saw `activeConversationId === null` and called `saved.create(...)`,
+  // duplicating the conversation on every refresh.
+  const [activeConversationId, setActiveConversationId] = useSessionPersist<string | null>(
+    "pg:activeConversationId",
+    null,
+  );
   const inputRef = useRef<ChatInputHandle>(null);
 
   const session = useChatSession();
