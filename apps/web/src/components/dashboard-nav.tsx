@@ -1,8 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserMenu } from "./user-menu";
+
+const COLLAPSED_GROUPS_STORAGE_KEY = "provara:nav:collapsed-groups";
 
 interface NavItem {
   href: string;
@@ -180,24 +183,6 @@ const navGroups: NavGroup[] = [
         ),
       },
       {
-        href: "/dashboard/billing",
-        label: "Billing",
-        icon: (
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 8.25h19.5M2.25 9h19.5m-16.5 5.25h6m-6 2.25h3m-3.75 3h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5z" />
-          </svg>
-        ),
-      },
-      {
-        href: "/dashboard/team",
-        label: "Team",
-        icon: (
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
-          </svg>
-        ),
-      },
-      {
         href: "/dashboard/audit",
         label: "Audit",
         icon: (
@@ -212,10 +197,45 @@ const navGroups: NavGroup[] = [
 
 export function DashboardNav() {
   const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   function isActive(href: string) {
     if (href === "/dashboard") return pathname === "/dashboard";
     return pathname.startsWith(href);
+  }
+
+  function groupContainsActiveRoute(group: NavGroup) {
+    return group.items.some((item) => isActive(item.href));
+  }
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(COLLAPSED_GROUPS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        setCollapsed(new Set(parsed.filter((v): v is string => typeof v === "string")));
+      }
+    } catch {
+      // Ignore malformed storage; start expanded.
+    }
+  }, []);
+
+  function toggleGroup(label: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      try {
+        window.localStorage.setItem(
+          COLLAPSED_GROUPS_STORAGE_KEY,
+          JSON.stringify(Array.from(next)),
+        );
+      } catch {
+        // Non-fatal; state still lives in memory for the session.
+      }
+      return next;
+    });
   }
 
   return (
@@ -228,30 +248,50 @@ export function DashboardNav() {
       </div>
 
       {/* Nav groups */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-6">
-        {navGroups.map((group) => (
-          <div key={group.label}>
-            <p className="px-2 mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-600">
-              {group.label}
-            </p>
-            <div className="space-y-0.5">
-              {group.items.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm transition-colors ${
-                    isActive(item.href)
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-                  }`}
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
+        {navGroups.map((group) => {
+          // Active group is always expanded regardless of persisted state.
+          const isExpanded = !collapsed.has(group.label) || groupContainsActiveRoute(group);
+          return (
+            <div key={group.label}>
+              <button
+                type="button"
+                onClick={() => toggleGroup(group.label)}
+                aria-expanded={isExpanded}
+                className="flex items-center justify-between w-full px-2 mb-2 text-xs font-semibold uppercase tracking-widest text-zinc-600 hover:text-zinc-400 transition-colors"
+              >
+                <span>{group.label}</span>
+                <svg
+                  className={`w-3 h-3 transition-transform ${isExpanded ? "" : "-rotate-90"}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
                 >
-                  {item.icon}
-                  {item.label}
-                </Link>
-              ))}
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+              {isExpanded && (
+                <div className="space-y-0.5">
+                  {group.items.map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-2.5 px-2 py-1.5 rounded-md text-sm transition-colors ${
+                        isActive(item.href)
+                          ? "bg-zinc-800 text-zinc-100"
+                          : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+                      }`}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* User menu at bottom */}
