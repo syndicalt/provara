@@ -69,18 +69,20 @@ export function ConversationSidebar({
               }`}
               onClick={() => onSelect(c.id)}
             >
-              <div className="flex items-start justify-between gap-2">
-                <p className="text-xs text-zinc-200 truncate leading-snug">{c.title}</p>
+              <div className="flex items-start justify-between gap-1">
+                <p className="text-xs text-zinc-200 truncate leading-snug flex-1 min-w-0 pt-1">{c.title}</p>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     if (confirm(`Delete "${c.title}"?`)) onDelete(c.id);
                   }}
-                  className="opacity-0 group-hover:opacity-100 text-zinc-500 hover:text-red-400 text-xs transition-opacity"
+                  className="shrink-0 w-7 h-7 flex items-center justify-center rounded opacity-30 group-hover:opacity-100 text-zinc-400 hover:text-red-400 hover:bg-zinc-800 transition-opacity"
                   aria-label="Delete conversation"
                 >
-                  ×
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
               <p className="text-[10px] text-zinc-500 mt-0.5">{relativeTime(c.updatedAt)}</p>
