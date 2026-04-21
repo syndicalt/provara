@@ -8,6 +8,7 @@ import type { ProviderRegistry } from "../providers/index.js";
 import type { ChatMessage } from "../providers/types.js";
 import { logCost } from "../cost/index.js";
 import { classifyRequest } from "../classifier/index.js";
+import { resolveJudgeTarget } from "../routing/judge.js";
 
 /** Special sentinel target: runs the Provara classifier instead of a model.
  *  Output shape is "taskType/complexity" (e.g. "coding/medium") for
@@ -87,25 +88,9 @@ function parseJudgeResponse(raw: string): number | null {
   return null;
 }
 
-function pickJudgeTarget(registry: ProviderRegistry): { provider: string; model: string } | null {
-  // Prefer a known reliable grader; fall back to any available provider.
-  const preferred: { provider: string; models: string[] }[] = [
-    { provider: "openai", models: ["gpt-4.1-mini", "gpt-4o-mini"] },
-    { provider: "anthropic", models: ["claude-haiku-4-5-20251001"] },
-  ];
-  for (const pref of preferred) {
-    const provider = registry.get(pref.provider);
-    if (!provider) continue;
-    for (const model of pref.models) {
-      if (provider.models.includes(model)) return { provider: pref.provider, model };
-    }
-  }
-  const first = registry.list()[0];
-  if (first && first.models.length > 0) {
-    return { provider: first.name, model: first.models[0] };
-  }
-  return null;
-}
+// Judge target is resolved via the shared resolveJudgeTarget helper so Evals
+// respects the dashboard-pinned judge config (routing/judge.ts). Previously
+// we hardcoded an openai/anthropic preference list here and ignored the pin.
 
 /** Produce the target's output for a case. For normal targets this is a
  *  chat completion; for the classifier sentinel it's the predicted labels
@@ -176,7 +161,7 @@ async function executeRun(
     return;
   }
 
-  const judgeTarget = scorer === "llm-judge" ? pickJudgeTarget(registry) : null;
+  const judgeTarget = scorer === "llm-judge" ? resolveJudgeTarget(registry) : null;
   const CONCURRENCY = 4;
   let totalScoreSum = 0;
   let totalScoreCount = 0;

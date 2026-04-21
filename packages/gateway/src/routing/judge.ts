@@ -167,7 +167,12 @@ export interface JudgeContext {
   model: string;
 }
 
-function resolveJudgeTarget(registry: ProviderRegistry): { provider: string; model: string } | null {
+/** Resolve the judge target for this run. Honors the dashboard-pinned
+ *  (provider, model) from the global judge config; falls back to cheapest
+ *  available if the pin isn't in the registry. Shared between the main
+ *  quality-judging path and the Evals runner so both respect the same
+ *  operator config. */
+export function resolveJudgeTarget(registry: ProviderRegistry): { provider: string; model: string } | null {
   if (judgeProvider && judgeModel) {
     const pinned = registry.get(judgeProvider);
     if (pinned && pinned.models.includes(judgeModel)) {
