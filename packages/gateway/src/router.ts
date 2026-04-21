@@ -67,6 +67,28 @@ interface RouterContext {
   scheduler?: Scheduler;
 }
 
+// The OpenAI SDK wraps network failures in APIConnectionError with the
+// generic message "Connection error.", burying the real cause on `.cause`
+// (an undici/fetch error with code + message). HTTP errors surface as
+// APIError subclasses with `status`. Unwrap both so provider failures
+// produce actionable log lines like:
+//   "Connection error. (caused by ECONNRESET: socket hang up)"
+//   "429 Rate limit exceeded"
+function describeProviderError(err: unknown): string {
+  if (!(err instanceof Error)) return String(err);
+  const parts: string[] = [];
+  const status = (err as { status?: number }).status;
+  if (typeof status === "number") parts.push(`${status}`);
+  parts.push(err.message);
+  const cause = (err as { cause?: unknown }).cause;
+  if (cause instanceof Error) {
+    const code = (cause as { code?: string }).code;
+    const causeMsg = code ? `${code}: ${cause.message}` : cause.message;
+    parts.push(`(caused by ${causeMsg})`);
+  }
+  return parts.join(" ");
+}
+
 export async function createRouter(ctx: RouterContext) {
   const app = new Hono();
   const routingEngine = await createRoutingEngine({ registry: ctx.registry, db: ctx.db });
@@ -843,14 +865,14 @@ export async function createRouter(ctx: RouterContext) {
         } catch (err) {
           lastError = err;
           failedProviders.add(attempt.provider);
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = describeProviderError(err);
           attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
           console.warn(`Provider ${attempt.provider}/${attempt.model} stream failed:`, msg);
           continue;
         }
       }
 
-      const errMsg = lastError instanceof Error ? lastError.message : "All providers failed";
+      const errMsg = lastError ? describeProviderError(lastError) : "All providers failed";
       return c.json({ error: { message: errMsg, type: "provider_error" } }, 502);
     }
 
@@ -884,7 +906,7 @@ export async function createRouter(ctx: RouterContext) {
       } catch (err) {
         lastError = err;
         failedProviders.add(attempt.provider);
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = describeProviderError(err);
         attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
         console.warn(`Provider ${attempt.provider}/${attempt.model} failed:`, msg);
         continue;
