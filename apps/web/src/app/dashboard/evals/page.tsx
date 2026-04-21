@@ -280,7 +280,18 @@ export default function EvalsPage() {
             </select>
             <select
               value={runProviderModel}
-              onChange={(e) => setRunProviderModel(e.target.value)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setRunProviderModel(v);
+                // Classifier output is a label string — judge-grading it makes
+                // no sense (always scores 1/5). Auto-flip to exact-match when
+                // the classifier is picked; flip back to judge for model
+                // targets if the user previously had classifier selected.
+                if (v === CLASSIFIER_TARGET) setRunScorer("exact-match");
+                else if (runScorer === "exact-match" && runProviderModel === CLASSIFIER_TARGET) {
+                  setRunScorer("llm-judge");
+                }
+              }}
               className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
             >
               <option value="">Target…</option>
