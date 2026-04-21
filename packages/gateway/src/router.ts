@@ -696,7 +696,227 @@ export async function createRouter(ctx: RouterContext) {
     const failedProviders = new Set<string>();
     const attemptErrors: { provider: string; model: string; error: string }[] = [];
 
-    // --- Streaming path ---
+    // --- Streaming path (user-pinned, single attempt) ---
+    // Open the SSE response immediately and emit keepalive comments while
+    // waiting for the provider's first chunk. Non-pinned routes use the
+    // fail-fast pattern below, which delays the response until we know the
+    // primary works so we can swap providers on failure. For a user-pinned
+    // route there's no fallback to swap to (#282 → empty fallbacks), and
+    // cloud ingress proxies close idle HTTPS connections after ~30s —
+    // self-hosted inference (cold Qwen3-36B, DeepSeek-R1) can easily take
+    // 60s+ for the first byte. Keepalives let the cold-start complete
+    // instead of failing with a browser "network error".
+    if (
+      request.stream &&
+      routingResult.routedBy === "user-override" &&
+      attempts.length === 1
+    ) {
+      const attempt = attempts[0];
+      const provider = ctx.registry.get(attempt.provider);
+      if (!provider) {
+        return c.json(
+          { error: { message: `Pinned provider "${attempt.provider}" not registered`, type: "provider_error" } },
+          502,
+        );
+      }
+
+      const usedProvider = attempt.provider;
+      const usedModel = attempt.model;
+      const usedFallback = false;
+      const requestId = nanoid();
+      const start = performance.now();
+
+      const sseStream = new ReadableStream({
+        async start(controller) {
+          const encoder = new TextEncoder();
+          let fullContent = "";
+          let usage = { inputTokens: 0, outputTokens: 0 };
+
+          // SSE comments ":..." are legal keepalives ignored by parsers.
+          // Cleared on the first real chunk or in finally{}.
+          const keepalive = setInterval(() => {
+            try { controller.enqueue(encoder.encode(": keepalive\n\n")); } catch { /* stream closed */ }
+          }, 10_000);
+
+          const emitChunk = (chunk: { content: string; done: boolean; usage?: { inputTokens: number; outputTokens: number } }) => {
+            fullContent += chunk.content;
+            if (chunk.usage) usage = chunk.usage;
+            const sseData = JSON.stringify({
+              id: `chatcmpl-${requestId}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: usedModel,
+              choices: [{
+                index: 0,
+                delta: chunk.done ? {} : { content: chunk.content },
+                finish_reason: chunk.done ? "stop" : null,
+              }],
+            });
+            controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
+          };
+
+          try {
+            // Immediate byte so the client sees the stream is alive even
+            // before the provider warms up.
+            controller.enqueue(encoder.encode(": connecting\n\n"));
+
+            let firstReceived = false;
+            for await (const chunk of provider.stream({ ...request, model: attempt.model })) {
+              if (!firstReceived) {
+                clearInterval(keepalive);
+                firstReceived = true;
+              }
+              emitChunk(chunk);
+            }
+
+            const streamLatencyMs = Math.round(performance.now() - start);
+            const streamCost = calculateCost(usedModel, usage.inputTokens, usage.outputTokens);
+            const metaEvent = JSON.stringify({
+              _provara: {
+                model: usedModel,
+                provider: usedProvider,
+                latencyMs: streamLatencyMs,
+                cost: streamCost,
+                usage,
+              },
+            });
+            controller.enqueue(encoder.encode(`data: ${metaEvent}\n\n`));
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            controller.close();
+
+            await ctx.db.insert(requests).values({
+              id: requestId,
+              provider: usedProvider,
+              model: usedModel,
+              prompt: promptJson,
+              response: fullContent,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              latencyMs: streamLatencyMs,
+              taskType: routingResult.taskType,
+              complexity: routingResult.complexity,
+              routedBy: routingResult.routedBy,
+              usedFallback,
+              fallbackErrors: null,
+              tenantId,
+              userId: attribution.userId,
+              apiTokenId: attribution.apiTokenId,
+              abTestId: routingResult.abTestId || null,
+              promptVersionId: promptVersionId || null,
+            }).run();
+
+            if (routingResult.taskType && routingResult.complexity) {
+              routingEngine.adaptive.updateLatency(
+                routingResult.taskType,
+                routingResult.complexity,
+                usedProvider,
+                usedModel,
+                streamLatencyMs,
+              );
+            }
+
+            logCost(ctx.db, {
+              requestId,
+              provider: usedProvider,
+              model: usedModel,
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              tenantId,
+              userId: attribution.userId,
+              apiTokenId: attribution.apiTokenId,
+            }).then((streamCost2) => {
+              publishLive({
+                id: requestId,
+                provider: usedProvider,
+                model: usedModel,
+                taskType: routingResult.taskType,
+                complexity: routingResult.complexity,
+                routedBy: routingResult.routedBy,
+                cached: false,
+                usedFallback,
+                latencyMs: streamLatencyMs,
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cost: streamCost2,
+                tenantId,
+                userId: attribution.userId,
+                apiTokenId: attribution.apiTokenId,
+                promptPreview: buildPromptPreview(promptJson),
+                createdAt: new Date().toISOString(),
+              });
+            }).catch(() => {});
+
+            if (!skipCache) {
+              const completedResponse: CompletionResponse = {
+                id: requestId,
+                provider: usedProvider,
+                model: usedModel,
+                content: fullContent,
+                usage,
+                latencyMs: streamLatencyMs,
+              };
+              putCache(request.messages, usedProvider, usedModel, completedResponse);
+              if (semanticCache) {
+                void semanticCache
+                  .put(request.messages, tenantId, usedProvider, usedModel, completedResponse)
+                  .catch((err) => {
+                    console.warn(
+                      "[semantic-cache] writeback failed:",
+                      err instanceof Error ? err.message : err,
+                    );
+                  });
+              }
+            }
+
+            judge.maybeJudge({
+              requestId,
+              tenantId,
+              messages: request.messages,
+              responseContent: fullContent,
+              taskType: routingResult.taskType,
+              complexity: routingResult.complexity,
+              provider: usedProvider,
+              model: usedModel,
+            }).catch(() => {});
+          } catch (err) {
+            // The response headers are already committed, so we can't 502
+            // — instead emit a structured error event in the stream that
+            // the client renders as a real error message. Without this
+            // the browser sees only an abrupt close ("network error").
+            const msg = describeProviderError(err);
+            console.warn(`Provider ${usedProvider}/${usedModel} pinned stream failed:`, msg);
+            logProviderErrorStack(err, `${usedProvider}/${usedModel} pinned stream`);
+            try {
+              const errorEvent = JSON.stringify({ error: { message: msg, type: "provider_error" } });
+              controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            } catch { /* stream already closed */ }
+            try { controller.close(); } catch { /* already closed */ }
+          } finally {
+            clearInterval(keepalive);
+          }
+        },
+      });
+
+      const streamHeaders: Record<string, string> = {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Provara-Model": usedModel,
+        "X-Provara-Provider": usedProvider,
+        "X-Provara-Request-Id": requestId,
+        // Disable intermediate buffering so SSE events stream in real time.
+        // Nginx honors this; Cloudflare Enterprise does too. Harmless where
+        // unrecognized.
+        "X-Accel-Buffering": "no",
+      };
+      if (guardrailViolations.size > 0) {
+        streamHeaders["X-Provara-Guardrail"] = JSON.stringify([...guardrailViolations]);
+      }
+      return new Response(sseStream, { headers: streamHeaders });
+    }
+
+    // --- Streaming path (fail-fast for adaptive / multi-attempt routes) ---
     if (request.stream) {
       let usedProvider = routingResult.provider;
       let usedModel = routingResult.model;
