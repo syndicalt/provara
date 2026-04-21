@@ -94,7 +94,7 @@ describe("routing engine", () => {
   });
 
   describe("fallback chain", () => {
-    it("excludes the chosen target from the fallback list", async () => {
+    it("returns an empty fallback list for explicit (provider, model) pins so the pin is honored strictly", async () => {
       const db = await makeTestDb();
       const registry = makeFakeRegistry([
         makeFakeProvider({ name: "openai", models: ["gpt-4.1-nano"] }),
@@ -108,15 +108,7 @@ describe("routing engine", () => {
         model: "claude-sonnet-4-6",
       });
 
-      expect(
-        result.fallbacks.some(
-          (t) => t.provider === "anthropic" && t.model === "claude-sonnet-4-6",
-        ),
-      ).toBe(false);
-      // But openai/gpt-4.1-nano should appear as a valid fallback target
-      expect(
-        result.fallbacks.some((t) => t.provider === "openai" && t.model === "gpt-4.1-nano"),
-      ).toBe(true);
+      expect(result.fallbacks).toEqual([]);
     });
   });
 
