@@ -1,90 +1,166 @@
 ---
 title: Evals
-description: Upload a JSONL dataset, run it against a model, get per-case judge scores. Prevent prompt/model regressions before they ship, not after.
+description: Run a dataset of prompts against a model (or Provara's own classifier), score each result, and get an aggregate — your golden test set and your prod quality monitor on the same loop.
 ---
 
 **Tier**: Intelligence (paid). Self-host and cloud tenants without a Pro+ subscription get a `402` with an upgrade payload.
 
-Provara's replay bank, judge, and model registry already score quality on production traffic. Evals is the same loop applied to a curated dataset you control — a golden test set that regressions must pass to ship.
+## What Evals actually does
 
-**Positioning**: your prod quality monitor and your pre-deploy regression check run on the same judge, same models, same scoring. No drift between what "good" means in staging vs. production.
+You give Evals three things:
 
-## Quickstart
+1. A **dataset** — a list of prompts, each optionally labeled with an expected answer.
+2. A **target** — the thing you want to test. Usually a `(provider, model)` pair like `openai/gpt-4o`, but it can also be Provara's own built-in classifier.
+3. A **scorer** — how to decide if the target did well on each prompt.
 
-1. Go to `/dashboard/evals`
-2. Click **Upload dataset**, paste JSONL (one case per line):
-   ```json
-   {"input": [{"role": "user", "content": "What's 2+2?"}]}
-   {"input": [{"role": "user", "content": "Summarize: the sky is blue because of Rayleigh scattering."}]}
-   {"input": [{"role": "user", "content": "Write a haiku about caching."}]}
-   ```
-3. Pick a dataset + a (provider, model) pair, click **Run**
-4. The run executes cases in batches of 4; judge scores each output on a 1–5 scale
-5. Open the run detail to watch progress, drill into individual cases, inspect scores + outputs
+Provara runs every prompt against the target, scores each result, stores outputs + scores + cost, and shows you a per-case breakdown plus an aggregate. Runs are idempotent and replayable — the same dataset, rerun tomorrow, tells you whether anything drifted.
 
-## Case format
+The point: **your regression check and your prod quality monitor run on the same scoring logic, against the same models, in the same plane**. No drift between what "good" means in staging and in production.
 
-Each JSONL line is a JSON object:
+## When you'd reach for it
+
+- **Pre-deploy regression check.** Before flipping a prompt version or migrating a model, rerun the canonical dataset and confirm scores didn't drop.
+- **Accuracy on a classifier or extractor.** You have prompts with a *known-correct* answer (a label, a field value, a JSON schema). You want to know how often the system gets it right.
+- **Model comparison.** Same dataset, same scorer, two models — see which one is actually better on *your* traffic shape, not on someone else's benchmark.
+- **Quality baseline.** Lock in a numeric bar a new model needs to clear before you trust it in production.
+
+## The three concepts
+
+### Dataset
+
+A JSONL file where each line is one test case:
 
 | Field | Required | Description |
 |---|---|---|
-| `input` | yes | `ChatMessage[]` — the messages array you'd normally POST to `/v1/chat/completions` |
-| `expected` | no | String reference output. Not yet used for pass/fail; reserved for a follow-up that adds exact/fuzzy matching. |
-| `metadata` | no | Arbitrary object. Useful for tagging cases by category, source, ticket number, etc. |
+| `input` | yes | `ChatMessage[]` — exactly what you'd POST to `/v1/chat/completions`. Text or multimodal. |
+| `expected` | sometimes | The correct answer. Used by the match-based scorers. Ignored by the LLM judge. |
+| `metadata` | no | Arbitrary object. Handy for tagging cases (category, source, ticket ID). |
 
-`ChatMessage.content` can be a string or the multimodal `ContentPart[]` shape — evals with image inputs work the same as production vision requests (see [vision](/docs/features/vision)).
+Example — mixed dataset with open-ended cases and labeled cases:
 
-## Judge scoring
+```json
+{"input":[{"role":"user","content":"summarize the attached report in one paragraph"}]}
+{"input":[{"role":"user","content":"extract the invoice total from this email"}],"expected":"$1,247.50"}
+{"input":[{"role":"user","content":"is this message spam? yes or no"}],"expected":"no"}
+```
 
-Each output is graded by a small, cheap model (default: `gpt-4.1-mini` → `claude-haiku-4-5-*` → first available). The judge prompt asks for a 1–5 score considering accuracy, relevance, clarity, and completeness. Failed parses or unreachable judges leave `score: null` — these cases count toward the run's progress but not toward the average.
+### Target
 
-**Aggregate score**: simple average across cases with a non-null score. Live-updating as each case completes, so long-running datasets show real-time convergence instead of a final reveal.
+What you're testing. Two kinds:
+
+- **A model** — pick any `(provider, model)` pair from your registered providers. Provara sends each case's `input` as a completion request and captures the response. Costs tokens.
+- **The Provara classifier** — Provara has an internal classifier that labels every production request with a `taskType` (coding / creative / summarization / qa / general / vision) and a `complexity` (simple / medium / complex). You can evaluate its accuracy by picking **Provara classifier** as the target. It runs in-process (zero tokens, zero cost) and emits a label like `coding/medium (conf=0.84/0.71)` per case.
+
+### Scorer
+
+How Evals decides whether the target did well on a case. Three options:
+
+- **LLM judge (1–5)** — a cheap grader model reads the prompt + response and rates quality from 1 (terrible) to 5 (excellent). Subjective but captures nuance. The judge model honors the dashboard-pinned judge config (`/dashboard/routing` → Judge); falls back to cheapest-available if the pin isn't registered.
+- **Exact match (pass/fail)** — the target's output must equal the case's `expected` field exactly (whitespace-trimmed, first token). 5 = pass, 1 = fail.
+- **Regex match (pass/fail)** — the target's output must match a JS regex stored in `expected`. 5 = pass, 1 = fail.
+
+## Which scorer should I use?
+
+| Situation | Scorer | Why |
+|---|---|---|
+| Open-ended chat response, subjective quality | **LLM judge** | There's no single "right" answer — the judge approximates human taste. |
+| Classifier, label extraction, category | **Exact match** | There IS a right answer. Match-based is faster, cheaper, deterministic. |
+| Structured field extraction with variation | **Regex match** | Accept multiple valid forms (e.g. `\$?1,?247(\.\d{2})?`). |
+| Provara classifier as target | **Exact match** | Classifier output is a label. LLM-judging a label always fails (see below). |
+| Code output compared to a reference | **LLM judge** | Exact match rarely helps (whitespace, variable names). Judge with a clear system prompt on the dataset. |
+
+**The trap everyone hits once:** picking **Provara classifier** as the target and leaving the scorer on **LLM judge**. The classifier outputs a label like `"coding/medium"`, not a chat response. The judge (correctly) sees that label as a terrible answer to "refactor this function" and scores it 1/5 every time. The dashboard auto-switches to Exact match when you pick the classifier target specifically to prevent this — but if your JSONL has cases where `expected` is missing, match-scored cases will all fail too, so always set an `expected` label per case.
+
+## Quickstart
+
+1. Open `/dashboard/evals`.
+2. Click **Create dataset**, paste JSONL (one case per line):
+   ```json
+   {"input":[{"role":"user","content":"what is the capital of France"}],"expected":"Paris"}
+   {"input":[{"role":"user","content":"is this spam: congrats you won"}],"expected":"yes"}
+   ```
+3. Pick the **dataset**, **target**, and **scorer**. Click **Run**.
+4. The run executes cases in batches of 4. The run detail page updates live — each case lands with its score and the raw output for inspection.
+5. When complete, you get an aggregate: an average 1–5 for LLM-judge runs, or a pass rate (% of cases where score = 5) for match-based runs.
+
+## Evaluating the Provara classifier
+
+Build a dataset where each case's `expected` is the correct `taskType/complexity` label:
+
+```json
+{"input":[{"role":"user","content":"write me a python one-liner to reverse a string"}],"expected":"coding/simple"}
+{"input":[{"role":"user","content":"summarize this research paper and extract the three main claims"}],"expected":"summarization/medium"}
+{"input":[{"role":"user","content":"design a sharded queue with exactly once semantics and backpressure"}],"expected":"coding/complex"}
+```
+
+Pick **Provara classifier** as the target (the scorer will auto-switch to **Exact match**). The aggregate becomes a classifier-accuracy number on your labeled set; the per-case view shows the predicted label plus the confidence the classifier had. Cases where the classifier got it wrong are the exact examples worth studying to improve the heuristic keywords or LLM-fallback prompt.
+
+## Aggregate semantics
+
+- **LLM judge runs** — the aggregate is the simple average across cases with a non-null score. Failed parses or unreachable judges leave `score: null`; those count toward progress but not the average.
+- **Match-based runs** — the aggregate is `((avgScore - 1) / 4) × 100%`, which collapses to the pass rate when scores are always 1 or 5. Displayed as e.g. `64% pass`.
+
+Both update live during the run so long datasets don't wait for a final reveal.
 
 ## API
 
 Same endpoints the dashboard uses:
 
 ```
-POST /v1/evals/datasets           { name, description?, jsonl }
-GET  /v1/evals/datasets           list
-GET  /v1/evals/datasets/:id       detail + first 5 cases preview
-DELETE /v1/evals/datasets/:id     cascades to dependent runs + results
+POST   /v1/evals/datasets             { name, description?, jsonl }
+GET    /v1/evals/datasets             list
+GET    /v1/evals/datasets/:id         detail + first 5 cases preview
+POST   /v1/evals/datasets/:id/cases   append a case (used by "Save as eval case")
+DELETE /v1/evals/datasets/:id         cascades to dependent runs + results
 
-POST /v1/evals/runs               { datasetId, provider, model }
-GET  /v1/evals/runs               list (last 50)
-GET  /v1/evals/runs/:id           run + all results + completedCases
+POST /v1/evals/runs                   { datasetId, provider, model, scorer? }
+GET  /v1/evals/runs                   list (last 50)
+GET  /v1/evals/runs/:id               run + all results + completedCases
 ```
 
-A run POST returns immediately (`202 Accepted` with `{ runId, status: "queued" }`); the executor works in the background and writes results as they complete. Poll `/runs/:id` to track progress.
+`scorer` is optional and defaults to `llm-judge`. Valid values: `llm-judge`, `exact-match`, `regex-match`.
+
+`POST /v1/evals/runs` returns immediately (`202 Accepted` with `{ runId, status: "queued" }`); the executor works in the background. Poll `/runs/:id` to track progress.
+
+To run against the Provara classifier: `{"provider": "provara", "model": "classifier", "scorer": "exact-match"}`.
 
 ## Cost accounting
 
-Eval runs write rows to `cost_logs` with a `requestId` of `eval-<runId>-<caseIndex>`. They show up on your spend dashboard alongside production traffic, but don't contaminate the adaptive router's EMA — evals deliberately skip the `/v1/chat/completions` path so feedback from evals doesn't get mixed with feedback from real users.
+Model-target runs write rows to `cost_logs` with a `requestId` of `eval-<runId>-<caseIndex>`. They appear on your spend dashboard alongside production traffic but don't contaminate the adaptive router's EMA — evals deliberately skip the `/v1/chat/completions` path so eval feedback doesn't mix with live feedback.
 
-## Out of scope (MVP)
-
-Deferred to follow-ups:
-
-- **CLI + GitHub Action** — run a dataset against a candidate (provider, model) in CI, block the PR on regression. Primary distribution unlock.
-- **Prompt-version variants** — same dataset, two prompt versions, compare scores
-- **Pass/fail with expected outputs** — exact, fuzzy, or model-graded matching against `expected`
-- **Side-by-side run comparison** — two completed runs, delta per case + aggregate
-
-Track them under issues tagged with `feature` + related to #262.
+Classifier-target runs cost $0 — the classifier runs in-process.
 
 ## Building datasets from production traffic
 
 The fastest way to seed a dataset is from real requests that went through Provara:
 
-1. Open `/dashboard/logs`, find the request you want to use as a test case
-2. Click **Fork to Playground** (top-right of the detail page)
-3. Edit the prompt / settings / model if you want, rerun
-4. Click **Save as eval case** in the top bar — pick an existing dataset or create a new one inline
+1. Open `/dashboard/logs`, find the request you want to use as a test case.
+2. Click **Fork to Playground** (top-right of the detail page).
+3. Edit the prompt / settings / model if you want, rerun.
+4. Click **Save as eval case** in the top bar — pick an existing dataset or create a new one inline.
 
-Each saved case stores the user→assistant exchange as a single JSONL line with `expected` set to the observed response. Run the dataset later against any candidate model to catch regressions before they ship.
+Each saved case stores the user→assistant exchange as a single JSONL line with `expected` set to the observed response. Run the dataset later against a candidate model to catch regressions before they ship.
+
+## Roadmap
+
+Shipped:
+
+- Dataset CRUD + JSONL parsing
+- Run executor with bounded concurrency
+- LLM judge, exact-match, regex-match scorers
+- Classifier target
+- Live aggregate updates
+- Save-from-playground flow
+
+Deferred:
+
+- **CLI + GitHub Action** — run a dataset against a candidate target in CI, block the PR on regression. Primary distribution unlock.
+- **Prompt-version variants** — same dataset, two prompt versions, compare scores side-by-side.
+- **Side-by-side run comparison UI** — two completed runs, per-case delta + aggregate delta.
+- **Fuzzy match scorer** — between exact and LLM judge; useful when "close enough" counts (token-level similarity, BLEU, etc.).
 
 ## Related
 
 - [Adaptive routing](/docs/features/adaptive-routing) — judge scoring for live traffic
-- [Regression detection](/docs/features/regression-detection) — replay bank for post-hoc regression catch; evals are the pre-deploy counterpart
+- [Silent-regression detection](/docs/features/regression-detection) — replay bank for post-hoc regression catch; evals are the pre-deploy counterpart
 - [Analytics](/docs/features/analytics) — where eval cost shows up on the dashboard
