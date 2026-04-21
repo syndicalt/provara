@@ -185,6 +185,10 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
     const overrideComplexity: Complexity = request.complexityHint || "medium";
 
     if (request.provider && request.model) {
+      // Explicit pin — honor it strictly. An empty fallback chain surfaces
+      // errors instead of silently swapping providers, which defeats the
+      // whole point of pinning (and produced surprising "I pinned X but got
+      // Y" reports from the Playground).
       return {
         provider: request.provider,
         model: request.model,
@@ -193,9 +197,7 @@ export async function createRoutingEngine(config: RoutingEngineConfig) {
         routedBy: "user-override",
         usedFallback: false,
         usedLlmFallback: false,
-        fallbacks: allFallbacks.filter(
-          (t) => !(t.provider === request.provider && t.model === request.model)
-        ),
+        fallbacks: [],
       };
     }
 
