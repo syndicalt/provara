@@ -24,6 +24,7 @@ Set at least one. Each provider registers only if its key is present.
 | `XAI_API_KEY` | xAI (Grok) |
 | `ZAI_API_KEY` | Z.ai |
 | `OLLAMA_BASE_URL` | Ollama (defaults to `http://localhost:11434/v1`) |
+| `OLLAMA_API_KEY` | Ollama (only for authenticated/remote hosts) |
 
 DB-stored keys (added via `/dashboard/api-keys`) take precedence over env vars. Env vars are for operators; DB keys are for tenants.
 

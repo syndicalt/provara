@@ -24,6 +24,7 @@ const KNOWN_KEYS = [
   { name: "MISTRAL_API_KEY", provider: "mistral", placeholder: "..." },
   { name: "XAI_API_KEY", provider: "xai", placeholder: "xai-..." },
   { name: "ZAI_API_KEY", provider: "zai", placeholder: "..." },
+  { name: "OLLAMA_API_KEY", provider: "ollama", placeholder: "sk-ollama-... (remote only)" },
 ];
 
 function AddKeyForm({ onSaved }: { onSaved: () => void }) {

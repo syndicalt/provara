@@ -46,6 +46,7 @@ export async function createProviderRegistry(config?: RegistryConfig): Promise<P
     const mistralKey = dbKeys["MISTRAL_API_KEY"] || process.env.MISTRAL_API_KEY;
     const xaiKey = dbKeys["XAI_API_KEY"] || process.env.XAI_API_KEY;
     const zaiKey = dbKeys["ZAI_API_KEY"] || process.env.ZAI_API_KEY;
+    const ollamaKey = dbKeys["OLLAMA_API_KEY"] || process.env.OLLAMA_API_KEY;
 
     if (openaiKey) providers.push(createOpenAIProvider(openaiKey));
     if (anthropicKey) providers.push(createAnthropicProvider(anthropicKey));
@@ -54,8 +55,9 @@ export async function createProviderRegistry(config?: RegistryConfig): Promise<P
     if (xaiKey) providers.push(createXAIProvider(xaiKey));
     if (zaiKey) providers.push(createZAIProvider(zaiKey));
 
-    // Ollama is always available (local)
-    providers.push(createOllamaProvider());
+    // Ollama is always available (local or remote). OLLAMA_API_KEY is
+    // optional — unauthenticated local instances ignore the bearer header.
+    providers.push(createOllamaProvider(undefined, ollamaKey));
 
     // Load custom providers from DB
     const customProviders = (await config?.getCustomProviders?.()) || [];
