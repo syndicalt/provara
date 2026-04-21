@@ -6,6 +6,8 @@ import Link from "next/link";
 import { gatewayClientFetch } from "../../../../../lib/gateway-client";
 import { formatCost, formatLatency } from "../../../../../lib/format";
 
+type Scorer = "llm-judge" | "exact-match" | "regex-match";
+
 interface Run {
   id: string;
   datasetId: string;
@@ -14,9 +16,28 @@ interface Run {
   status: "queued" | "running" | "completed" | "failed";
   avgScore: number | null;
   totalCost: number | null;
+  scorer: Scorer;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
+}
+
+const SCORER_LABELS: Record<Scorer, string> = {
+  "llm-judge": "LLM judge",
+  "exact-match": "Exact match",
+  "regex-match": "Regex match",
+};
+
+function formatScore(score: number | null, scorer: Scorer): string {
+  if (score === null) return "—";
+  if (scorer === "llm-judge") return `${score}/5`;
+  return score === 5 ? "pass" : "fail";
+}
+
+function formatAggregate(avg: number | null, scorer: Scorer): string {
+  if (avg === null) return "—";
+  if (scorer === "llm-judge") return avg.toFixed(2);
+  return `${Math.round(((avg - 1) / 4) * 100)}%`;
 }
 
 interface Result {
@@ -32,11 +53,15 @@ interface Result {
   createdAt: string;
 }
 
-function scoreColor(score: number | null) {
+function scoreColor(score: number | null, scorer: Scorer = "llm-judge") {
   if (score === null) return "text-zinc-500";
-  if (score >= 4) return "text-emerald-400";
-  if (score >= 3) return "text-yellow-400";
-  return "text-red-400";
+  if (scorer === "llm-judge") {
+    if (score >= 4) return "text-emerald-400";
+    if (score >= 3) return "text-yellow-400";
+    return "text-red-400";
+  }
+  // Match-based scorers: 5 = pass, 1 = fail
+  return score === 5 ? "text-emerald-400" : "text-red-400";
 }
 
 function extractPromptPreview(inputJson: string, maxChars = 160): string {
@@ -141,19 +166,23 @@ export default function EvalRunPage() {
       </div>
 
       {/* Summary */}
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5 grid grid-cols-2 sm:grid-cols-4 gap-6">
+      <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5 grid grid-cols-2 sm:grid-cols-5 gap-6">
         <div>
-          <p className="text-xs text-zinc-500 mb-1">Model</p>
+          <p className="text-xs text-zinc-500 mb-1">Target</p>
           <p className="text-sm font-mono text-zinc-200">{run.provider} / {run.model}</p>
+        </div>
+        <div>
+          <p className="text-xs text-zinc-500 mb-1">Scorer</p>
+          <p className="text-sm text-zinc-200">{SCORER_LABELS[run.scorer] ?? run.scorer}</p>
         </div>
         <div>
           <p className="text-xs text-zinc-500 mb-1">Status</p>
           <p className="text-sm text-zinc-200 capitalize">{run.status}</p>
         </div>
         <div>
-          <p className="text-xs text-zinc-500 mb-1">Avg score</p>
-          <p className={`text-lg font-semibold ${scoreColor(run.avgScore)}`}>
-            {run.avgScore !== null ? run.avgScore.toFixed(2) : "—"}
+          <p className="text-xs text-zinc-500 mb-1">{run.scorer === "llm-judge" ? "Avg score" : "Pass rate"}</p>
+          <p className={`text-lg font-semibold ${scoreColor(run.avgScore, run.scorer)}`}>
+            {formatAggregate(run.avgScore, run.scorer)}
           </p>
         </div>
         <div>
@@ -196,8 +225,8 @@ export default function EvalRunPage() {
                     className="w-full px-4 py-3 flex items-center gap-4 hover:bg-zinc-900/80 text-left"
                   >
                     <span className="text-xs text-zinc-600 font-mono w-8">#{r.caseIndex}</span>
-                    <span className={`text-sm font-semibold w-10 ${scoreColor(r.score)}`}>
-                      {r.score !== null ? `${r.score}/5` : "—"}
+                    <span className={`text-sm font-semibold w-16 ${scoreColor(r.score, run.scorer)}`}>
+                      {formatScore(r.score, run.scorer)}
                     </span>
                     <span className="flex-1 text-xs text-zinc-400 truncate">
                       {extractPromptPreview(r.input)}

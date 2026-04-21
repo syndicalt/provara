@@ -942,6 +942,14 @@ export const evalRuns = sqliteTable("eval_runs", {
    *  each time results land so the UI can render a live-updating number. */
   avgScore: real("avg_score"),
   totalCost: real("total_cost"),
+  /** Scoring strategy for this run. `llm-judge` preserves the original 1-5
+   *  judge-grading behavior. `exact-match` and `regex-match` compare the
+   *  target's output against the case's `expected` field and produce 5
+   *  (pass) or 1 (fail) — enables golden-label evaluation for classifiers
+   *  and structured outputs, where LLM-as-judge is the wrong tool. */
+  scorer: text("scorer", { enum: ["llm-judge", "exact-match", "regex-match"] })
+    .notNull()
+    .default("llm-judge"),
   startedAt: integer("started_at", { mode: "timestamp" }),
   completedAt: integer("completed_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" })

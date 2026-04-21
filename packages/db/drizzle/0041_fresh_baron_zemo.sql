@@ -1,0 +1,1 @@
+ALTER TABLE `eval_runs` ADD `scorer` text DEFAULT 'llm-judge' NOT NULL;

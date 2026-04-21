@@ -13,6 +13,8 @@ interface Dataset {
   createdAt: string;
 }
 
+type Scorer = "llm-judge" | "exact-match" | "regex-match";
+
 interface Run {
   id: string;
   datasetId: string;
@@ -22,10 +24,18 @@ interface Run {
   status: "queued" | "running" | "completed" | "failed";
   avgScore: number | null;
   totalCost: number | null;
+  scorer: Scorer;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
 }
+
+const CLASSIFIER_TARGET = "provara/classifier";
+const SCORER_LABELS: Record<Scorer, string> = {
+  "llm-judge": "LLM judge (1-5)",
+  "exact-match": "Exact match (pass/fail)",
+  "regex-match": "Regex match (pass/fail)",
+};
 
 interface ProviderInfo {
   name: string;
@@ -63,6 +73,7 @@ export default function EvalsPage() {
   // Run form
   const [runDatasetId, setRunDatasetId] = useState("");
   const [runProviderModel, setRunProviderModel] = useState("");
+  const [runScorer, setRunScorer] = useState<Scorer>("llm-judge");
   const [runError, setRunError] = useState<string | null>(null);
   const [runSubmitting, setRunSubmitting] = useState(false);
 
@@ -132,7 +143,7 @@ export default function EvalsPage() {
     try {
       const res = await gatewayFetchRaw("/v1/evals/runs", {
         method: "POST",
-        body: JSON.stringify({ datasetId: runDatasetId, provider, model }),
+        body: JSON.stringify({ datasetId: runDatasetId, provider, model, scorer: runScorer }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -140,6 +151,7 @@ export default function EvalsPage() {
       }
       setRunDatasetId("");
       setRunProviderModel("");
+      setRunScorer("llm-judge");
       fetchAll();
     } catch (err) {
       setRunError(err instanceof Error ? err.message : String(err));
@@ -253,7 +265,7 @@ export default function EvalsPage() {
       {datasets.length > 0 && (
         <form onSubmit={handleRun} className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5 space-y-3">
           <h2 className="text-sm font-semibold text-zinc-200">Start a run</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
             <select
               value={runDatasetId}
               onChange={(e) => setRunDatasetId(e.target.value)}
@@ -271,14 +283,30 @@ export default function EvalsPage() {
               onChange={(e) => setRunProviderModel(e.target.value)}
               className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
             >
-              <option value="">Provider / Model…</option>
-              {providers.flatMap((p) =>
-                p.models.map((m) => (
-                  <option key={`${p.name}/${m}`} value={`${p.name}/${m}`}>
-                    {p.name} / {m}
-                  </option>
-                )),
-              )}
+              <option value="">Target…</option>
+              <optgroup label="Provara internals">
+                <option value={CLASSIFIER_TARGET}>Provara classifier</option>
+              </optgroup>
+              {providers.map((p) => (
+                <optgroup key={p.name} label={p.name}>
+                  {p.models.map((m) => (
+                    <option key={`${p.name}/${m}`} value={`${p.name}/${m}`}>
+                      {m}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <select
+              value={runScorer}
+              onChange={(e) => setRunScorer(e.target.value as Scorer)}
+              className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm"
+            >
+              {(Object.keys(SCORER_LABELS) as Scorer[]).map((s) => (
+                <option key={s} value={s}>
+                  {SCORER_LABELS[s]}
+                </option>
+              ))}
             </select>
             <button
               type="submit"
@@ -288,6 +316,11 @@ export default function EvalsPage() {
               {runSubmitting ? "Queuing…" : "Run"}
             </button>
           </div>
+          {runProviderModel === CLASSIFIER_TARGET && runScorer === "llm-judge" && (
+            <div className="text-xs text-amber-400 bg-amber-950/30 border border-amber-900/40 rounded px-3 py-2">
+              Classifier target outputs a label like <code>coding/medium</code>. Pair it with <strong>Exact match</strong> and set each case's <code>expected</code> to the correct label.
+            </div>
+          )}
           {runError && (
             <div className="text-xs text-red-400 bg-red-950/30 border border-red-900/40 rounded px-3 py-2">
               {runError}
@@ -309,9 +342,10 @@ export default function EvalsPage() {
               <thead className="bg-zinc-900/60 text-xs text-zinc-500">
                 <tr>
                   <th className="px-4 py-2 text-left font-medium">Dataset</th>
-                  <th className="px-4 py-2 text-left font-medium">Model</th>
+                  <th className="px-4 py-2 text-left font-medium">Target</th>
+                  <th className="px-4 py-2 text-left font-medium">Scorer</th>
                   <th className="px-4 py-2 text-left font-medium">Status</th>
-                  <th className="px-4 py-2 text-right font-medium">Avg score</th>
+                  <th className="px-4 py-2 text-right font-medium">Score</th>
                   <th className="px-4 py-2 text-right font-medium">Cost</th>
                   <th className="px-4 py-2 text-right font-medium">Created</th>
                 </tr>
@@ -327,9 +361,16 @@ export default function EvalsPage() {
                     <td className="px-4 py-2 font-mono text-xs text-zinc-300">
                       {r.provider} / {r.model}
                     </td>
+                    <td className="px-4 py-2 text-xs text-zinc-400">
+                      {SCORER_LABELS[r.scorer]?.split(" ")[0] ?? r.scorer}
+                    </td>
                     <td className="px-4 py-2"><StatusBadge status={r.status} /></td>
                     <td className="px-4 py-2 text-right text-zinc-300">
-                      {r.avgScore !== null ? r.avgScore.toFixed(2) : "—"}
+                      {r.avgScore === null
+                        ? "—"
+                        : r.scorer === "llm-judge"
+                          ? r.avgScore.toFixed(2)
+                          : `${Math.round(((r.avgScore - 1) / 4) * 100)}% pass`}
                     </td>
                     <td className="px-4 py-2 text-right text-zinc-400">
                       {r.totalCost !== null ? formatCost(r.totalCost) : "—"}

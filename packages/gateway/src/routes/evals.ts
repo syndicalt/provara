@@ -7,6 +7,19 @@ import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { ChatMessage } from "../providers/types.js";
 import { logCost } from "../cost/index.js";
+import { classifyRequest } from "../classifier/index.js";
+
+/** Special sentinel target: runs the Provara classifier instead of a model.
+ *  Output shape is "taskType/complexity" (e.g. "coding/medium") for
+ *  exact-match scoring against a labeled golden set. */
+const CLASSIFIER_PROVIDER = "provara";
+const CLASSIFIER_MODEL = "classifier";
+const isClassifierTarget = (provider: string, model: string) =>
+  provider === CLASSIFIER_PROVIDER && model === CLASSIFIER_MODEL;
+
+type Scorer = "llm-judge" | "exact-match" | "regex-match";
+
+const SCORERS: ReadonlySet<Scorer> = new Set(["llm-judge", "exact-match", "regex-match"] as const);
 
 /**
  * Evals (#262). Upload a JSONL dataset, run it against a (provider, model)
@@ -94,12 +107,56 @@ function pickJudgeTarget(registry: ProviderRegistry): { provider: string; model:
   return null;
 }
 
+/** Produce the target's output for a case. For normal targets this is a
+ *  chat completion; for the classifier sentinel it's the predicted labels
+ *  formatted as "taskType/complexity". Returns output + token usage for
+ *  cost logging. */
+async function runTarget(
+  registry: ProviderRegistry,
+  target: { provider: string; model: string },
+  messages: ChatMessage[],
+): Promise<{ output: string; inputTokens: number; outputTokens: number }> {
+  if (isClassifierTarget(target.provider, target.model)) {
+    const result = await classifyRequest(messages, registry);
+    // Confidence is folded into the output as a suffix so the raw label is
+    // the first token (clean for exact-match), while operators eyeballing
+    // results can still see how confident the classifier was.
+    const conf = `${result.taskConfidence.toFixed(2)}/${result.complexityConfidence.toFixed(2)}`;
+    const fallback = result.usedLlmFallback ? " [llm-fallback]" : "";
+    return {
+      output: `${result.taskType}/${result.complexity} (conf=${conf})${fallback}`,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+  }
+
+  const provider = registry.get(target.provider);
+  if (!provider) throw new Error(`Provider "${target.provider}" not registered`);
+  const resp = await provider.complete({
+    model: target.model,
+    messages,
+    temperature: 0,
+  });
+  return {
+    output: resp.content,
+    inputTokens: resp.usage.inputTokens,
+    outputTokens: resp.usage.outputTokens,
+  };
+}
+
+/** Extract just the first token of classifier output for matching, so
+ *  "coding/medium (conf=0.84/0.71)" compares equal to expected "coding/medium". */
+function normalizeForMatch(output: string): string {
+  return output.split(/\s+/)[0].trim();
+}
+
 async function executeRun(
   db: Db,
   registry: ProviderRegistry,
   runId: string,
   datasetCases: DatasetCase[],
   target: { provider: string; model: string },
+  scorer: Scorer,
   tenantId: string | null,
 ): Promise<void> {
   await db
@@ -108,8 +165,9 @@ async function executeRun(
     .where(eq(evalRuns.id, runId))
     .run();
 
-  const provider = registry.get(target.provider);
-  if (!provider) {
+  // Validate target availability upfront. Classifier target always OK
+  // (classifier is in-process); model targets need a registered provider.
+  if (!isClassifierTarget(target.provider, target.model) && !registry.get(target.provider)) {
     await db
       .update(evalRuns)
       .set({ status: "failed", completedAt: new Date() })
@@ -118,7 +176,7 @@ async function executeRun(
     return;
   }
 
-  const judgeTarget = pickJudgeTarget(registry);
+  const judgeTarget = scorer === "llm-judge" ? pickJudgeTarget(registry) : null;
   const CONCURRENCY = 4;
   let totalScoreSum = 0;
   let totalScoreCount = 0;
@@ -132,21 +190,49 @@ async function executeRun(
     let errorStr: string | null = null;
     let caseCost = 0;
     try {
-      const resp = await provider!.complete({
-        model: target.model,
-        messages: c.input,
-        temperature: 0,
-      });
-      output = resp.content;
-      caseCost = await logCost(db, {
-        requestId: `eval-${runId}-${caseIndex}`,
-        provider: target.provider,
-        model: target.model,
-        inputTokens: resp.usage.inputTokens,
-        outputTokens: resp.usage.outputTokens,
-        tenantId,
-      });
-      if (judgeTarget) {
+      const { output: targetOutput, inputTokens, outputTokens } = await runTarget(
+        registry,
+        target,
+        c.input,
+      );
+      output = targetOutput;
+      if (inputTokens > 0 || outputTokens > 0) {
+        caseCost = await logCost(db, {
+          requestId: `eval-${runId}-${caseIndex}`,
+          provider: target.provider,
+          model: target.model,
+          inputTokens,
+          outputTokens,
+          tenantId,
+        });
+      }
+
+      // Scorer dispatch. Each produces a 1-5 score + judgeSource label that
+      // tells the UI how the score was derived (for non-judge scorers, this
+      // records the strategy name — `exact-match` or `regex-match:<pattern>`).
+      if (scorer === "exact-match") {
+        const expected = (c.expected ?? "").trim();
+        if (!expected) {
+          judgeSource = "exact-match:no-expected";
+        } else {
+          const actual = normalizeForMatch(output);
+          score = actual === expected ? 5 : 1;
+          judgeSource = "exact-match";
+        }
+      } else if (scorer === "regex-match") {
+        const pattern = (c.expected ?? "").trim();
+        if (!pattern) {
+          judgeSource = "regex-match:no-expected";
+        } else {
+          try {
+            const re = new RegExp(pattern);
+            score = re.test(output) ? 5 : 1;
+            judgeSource = `regex-match:${pattern}`;
+          } catch {
+            judgeSource = "regex-match:invalid-pattern";
+          }
+        }
+      } else if (judgeTarget) {
         try {
           const judgeProvider = registry.get(judgeTarget.provider);
           if (judgeProvider) {
@@ -396,13 +482,16 @@ export function createEvalRoutes(db: Db, registry: ProviderRegistry) {
 
   app.post("/runs", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const body = await c.req.json<{ datasetId?: string; provider?: string; model?: string }>();
+    const body = await c.req.json<{ datasetId?: string; provider?: string; model?: string; scorer?: string }>();
     if (!body.datasetId || !body.provider || !body.model) {
       return c.json(
         { error: { message: "`datasetId`, `provider`, `model` are required", type: "validation_error" } },
         400,
       );
     }
+    const scorer: Scorer = body.scorer && SCORERS.has(body.scorer as Scorer)
+      ? (body.scorer as Scorer)
+      : "llm-judge";
     const tc = tenantFilter(evalDatasets.tenantId, tenantId);
     const dataset = await db
       .select()
@@ -412,7 +501,9 @@ export function createEvalRoutes(db: Db, registry: ProviderRegistry) {
     if (!dataset) {
       return c.json({ error: { message: "Dataset not found", type: "not_found" } }, 404);
     }
-    if (!registry.get(body.provider)) {
+    // Classifier target is always runnable (in-process). Model targets need
+    // the provider registered.
+    if (!isClassifierTarget(body.provider, body.model) && !registry.get(body.provider)) {
       return c.json(
         {
           error: {
@@ -433,6 +524,7 @@ export function createEvalRoutes(db: Db, registry: ProviderRegistry) {
         datasetId: body.datasetId,
         provider: body.provider,
         model: body.model,
+        scorer,
       })
       .run();
 
@@ -457,7 +549,7 @@ export function createEvalRoutes(db: Db, registry: ProviderRegistry) {
         500,
       );
     }
-    void executeRun(db, registry, runId, cases, { provider: body.provider, model: body.model }, tenantId).catch(
+    void executeRun(db, registry, runId, cases, { provider: body.provider, model: body.model }, scorer, tenantId).catch(
       async (err) => {
         console.error(`[evals] run ${runId} crashed:`, err instanceof Error ? err.message : err);
         await db
