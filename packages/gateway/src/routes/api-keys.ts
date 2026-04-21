@@ -170,14 +170,23 @@ export async function getDecryptedKeys(db: Db): Promise<Record<string, string>> 
 
   for (const k of keys) {
     try {
-      // Defensive trim: existing rows saved before the POST-handler trim may
-      // carry a trailing newline from a paste, which node-fetch rejects as an
-      // illegal HTTP header value.
-      result[k.name] = decrypt({
+      const raw = decrypt({
         encrypted: k.encryptedValue,
         iv: k.iv,
         authTag: k.authTag,
-      }).trim();
+      });
+      // HTTP header values must be visible ASCII (0x21-0x7E) + SP/HTAB.
+      // Strip anything outside that range — any stored key that carries an
+      // embedded CR/LF or other control char from a bad paste would
+      // otherwise crash node-fetch's Headers validator (#287 root cause).
+      // The trim handles edge whitespace; the replace handles embedded.
+      const sanitized = raw.replace(/[^\x20-\x7E\t]/g, "").trim();
+      if (sanitized !== raw) {
+        console.warn(
+          `[api-keys] key "${k.name}" had ${raw.length - sanitized.length} illegal char(s) stripped on read — update the entry to remove them`,
+        );
+      }
+      result[k.name] = sanitized;
     } catch {
       // Skip keys that can't be decrypted
     }

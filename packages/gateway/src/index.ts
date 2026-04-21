@@ -31,11 +31,14 @@ await runMigrations(db, resolve(process.cwd(), "packages/db/drizzle"));
 await hydrateJudgeConfig(db);
 await hydrateRoutingConfig(db);
 
-const dbKeys = await getDecryptedKeys(db);
+// Re-fetch dbKeys on every registry load() so dashboard edits take effect on
+// /v1/providers/reload without requiring a full restart.
 const registry = await createProviderRegistry({
-  getKeys: () => dbKeys,
+  getKeys: () => getDecryptedKeys(db),
   getCustomProviders: () => loadCustomProviders(db),
 });
+// Snapshot for the router, which uses it for the embedding provider lookup.
+const dbKeys = await getDecryptedKeys(db);
 const scheduler = createScheduler(db);
 
 // Intelligence-tier scheduler jobs only register on Cloud deployments (#168).
