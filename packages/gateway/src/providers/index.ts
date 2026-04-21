@@ -59,12 +59,17 @@ export async function createProviderRegistry(config?: RegistryConfig): Promise<P
     // optional — unauthenticated local instances ignore the bearer header.
     providers.push(createOllamaProvider(undefined, ollamaKey));
 
-    // Load custom providers from DB
+    // Load custom providers from DB. A custom with the same name (case-
+    // insensitive) as a built-in replaces it — admins creating a custom
+    // named e.g. "ollama" want their override to win, not be silently dropped.
     const customProviders = (await config?.getCustomProviders?.()) || [];
     for (const cp of customProviders) {
-      // Skip if a built-in provider already exists with this name
-      if (!providers.some((p) => p.name === cp.name)) {
-        providers.push(createOpenAICompatibleProvider(cp));
+      const idx = providers.findIndex((p) => p.name.toLowerCase() === cp.name.toLowerCase());
+      const provider = createOpenAICompatibleProvider(cp);
+      if (idx >= 0) {
+        providers[idx] = provider;
+      } else {
+        providers.push(provider);
       }
     }
   }

@@ -63,11 +63,23 @@ export function createProviderCrudRoutes(db: Db) {
       );
     }
 
-    // Resolve API key for validation
+    // Resolve API key for validation. apiKeyRef must be a name that exists in
+    // the api_keys table — reject raw secrets pasted into the field.
     let apiKey = "";
     if (body.apiKeyRef) {
       const keys = await getDecryptedKeys(db);
-      apiKey = keys[body.apiKeyRef] || "";
+      if (!(body.apiKeyRef in keys)) {
+        return c.json(
+          {
+            error: {
+              message: `No API key named "${body.apiKeyRef}" found. Add it on the API Keys page first, then reference it here by name (do not paste the raw secret).`,
+              type: "validation_error",
+            },
+          },
+          400
+        );
+      }
+      apiKey = keys[body.apiKeyRef];
     }
 
     // Validate OpenAI compatibility before saving
@@ -144,6 +156,21 @@ export function createProviderCrudRoutes(db: Db) {
     const provider = await db.select().from(customProviders).where(whereClause).get();
     if (!provider) {
       return c.json({ error: { message: "Provider not found", type: "not_found" } }, 404);
+    }
+
+    if (body.apiKeyRef !== undefined && body.apiKeyRef !== null && body.apiKeyRef !== "") {
+      const keys = await getDecryptedKeys(db);
+      if (!(body.apiKeyRef in keys)) {
+        return c.json(
+          {
+            error: {
+              message: `No API key named "${body.apiKeyRef}" found. Add it on the API Keys page first, then reference it here by name (do not paste the raw secret).`,
+              type: "validation_error",
+            },
+          },
+          400
+        );
+      }
     }
 
     const updates: Record<string, unknown> = {};

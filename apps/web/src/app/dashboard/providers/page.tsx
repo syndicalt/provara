@@ -18,6 +18,19 @@ interface CustomProvider {
   createdAt: string;
 }
 
+// An apiKeyRef is meant to be a short symbolic name (e.g. "OLLAMA_API_KEY").
+// If a user pastes a raw secret into the field instead, we mask it — the
+// plaintext shouldn't be visible on a shared dashboard.
+function looksLikeRawKey(ref: string): boolean {
+  return ref.length > 40 || /^sk-|^xai-|^AIza/.test(ref);
+}
+
+function maskApiKeyRef(ref: string): string {
+  if (!looksLikeRawKey(ref)) return ref;
+  if (ref.length <= 8) return "••••";
+  return `${ref.slice(0, 4)}••••${ref.slice(-4)}`;
+}
+
 const WELL_KNOWN_PROVIDERS = [
   { name: "together", baseURL: "https://api.together.xyz/v1", keyName: "TOGETHER_API_KEY" },
   { name: "groq", baseURL: "https://api.groq.com/openai/v1", keyName: "GROQ_API_KEY" },
@@ -248,7 +261,12 @@ function CustomProviderCard({ provider, onUpdate }: { provider: CustomProvider; 
       </div>
       <p className="text-xs text-zinc-500 font-mono mb-1">{provider.baseURL}</p>
       {provider.apiKeyRef && (
-        <p className="text-xs text-zinc-500 mb-1">Key: <code className="bg-zinc-800 px-1 rounded">{provider.apiKeyRef}</code></p>
+        <p className="text-xs text-zinc-500 mb-1">
+          Key: <code className="bg-zinc-800 px-1 rounded">{maskApiKeyRef(provider.apiKeyRef)}</code>
+          {looksLikeRawKey(provider.apiKeyRef) && (
+            <span className="ml-2 text-amber-400">⚠ raw key stored — edit to use a reference name</span>
+          )}
+        </p>
       )}
       <p className="text-xs text-zinc-400">
         {provider.models.length > 0 ? provider.models.join(", ") : "No models — run discovery"}
