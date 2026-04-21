@@ -68,25 +68,36 @@ interface RouterContext {
 }
 
 // The OpenAI SDK wraps network failures in APIConnectionError with the
-// generic message "Connection error.", burying the real cause on `.cause`
-// (an undici/fetch error with code + message). HTTP errors surface as
-// APIError subclasses with `status`. Unwrap both so provider failures
-// produce actionable log lines like:
-//   "Connection error. (caused by ECONNRESET: socket hang up)"
-//   "429 Rate limit exceeded"
+// generic message "Connection error.", burying the real cause on `.cause`.
+// HTTP errors surface as APIError subclasses with `status`. Unwrap both,
+// redact anything that looks like a bearer secret (some underlying errors
+// inexplicably contain raw auth headers in their message — don't trust
+// the stack not to leak), and prefer structural fields (name, code,
+// status) over free-text messages where possible.
+const SECRET_PATTERN = /(?:Bearer\s+[A-Za-z0-9][A-Za-z0-9\-_.=]{8,}|sk-[A-Za-z0-9\-_]{6,}|xai-[A-Za-z0-9\-_]{6,}|AIza[A-Za-z0-9\-_]{10,})/g;
+
+function redactSecrets(s: string): string {
+  return s.replace(SECRET_PATTERN, "[redacted]");
+}
+
 function describeProviderError(err: unknown): string {
-  if (!(err instanceof Error)) return String(err);
+  if (!(err instanceof Error)) return redactSecrets(String(err));
   const parts: string[] = [];
   const status = (err as { status?: number }).status;
+  const code = (err as { code?: string }).code;
   if (typeof status === "number") parts.push(`${status}`);
-  parts.push(err.message);
+  if (code) parts.push(`[${code}]`);
+  parts.push(err.name !== "Error" ? `${err.name}: ${err.message}` : err.message);
   const cause = (err as { cause?: unknown }).cause;
   if (cause instanceof Error) {
-    const code = (cause as { code?: string }).code;
-    const causeMsg = code ? `${code}: ${cause.message}` : cause.message;
-    parts.push(`(caused by ${causeMsg})`);
+    const causeCode = (cause as { code?: string }).code;
+    const causeParts: string[] = [];
+    if (causeCode) causeParts.push(causeCode);
+    if (cause.name !== "Error") causeParts.push(cause.name);
+    causeParts.push(cause.message);
+    parts.push(`(caused by ${causeParts.join(": ")})`);
   }
-  return parts.join(" ");
+  return redactSecrets(parts.join(" "));
 }
 
 export async function createRouter(ctx: RouterContext) {
