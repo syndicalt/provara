@@ -25,6 +25,7 @@ const KNOWN_KEYS = [
   { name: "XAI_API_KEY", provider: "xai", placeholder: "xai-..." },
   { name: "ZAI_API_KEY", provider: "zai", placeholder: "..." },
   { name: "OLLAMA_API_KEY", provider: "ollama", placeholder: "sk-ollama-... (remote only)" },
+  { name: "OLLAMA_BASE_URL", provider: "ollama", placeholder: "https://ollama.example.com/v1" },
 ];
 
 function AddKeyForm({ onSaved }: { onSaved: () => void }) {
