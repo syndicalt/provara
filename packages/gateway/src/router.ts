@@ -82,10 +82,11 @@ function redactSecrets(s: string): string {
 
 // Emit a redacted stack trace for the whole error chain so we can identify
 // *where* a surprising cause (e.g. a TypeError with a bearer-string message)
-// is being thrown from — undici internals, an outbound proxy, or our own
-// code. Kept separate from describeProviderError so the short summary still
-// fits cleanly in single-line logs.
+// is being thrown from. Heavy for steady-state prod, so gated behind
+// PROVARA_DEBUG_PROVIDER_ERRORS — enable only when actively diagnosing.
+// The short summary from describeProviderError is always logged.
 function logProviderErrorStack(err: unknown, label: string): void {
+  if (process.env.PROVARA_DEBUG_PROVIDER_ERRORS !== "true") return;
   const chain: string[] = [];
   let cur: unknown = err;
   let depth = 0;
