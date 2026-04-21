@@ -12,6 +12,28 @@ export interface OpenAICompatibleConfig {
 }
 
 export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): Provider {
+  // Validate apiKey and baseURL at construction time. Some configurations
+  // carry control chars (CR/LF/NUL) from bad pastes or env-var escaping;
+  // node-fetch would otherwise throw deep inside the SDK with an opaque
+  // "Connection error." when we actually call the provider. Log loudly
+  // here so operators can pinpoint the offending entry.
+  if (config.apiKey) {
+    const illegal = config.apiKey.match(/[^\x20-\x7E\t]/g);
+    if (illegal) {
+      const codes = [...new Set(illegal.map((c) => `0x${c.charCodeAt(0).toString(16).padStart(2, "0")}`))].join(",");
+      console.warn(
+        `[provider:${config.name}] apiKey contains ${illegal.length} illegal header char(s) [${codes}] — the OpenAI SDK will reject this as "not a legal HTTP header value". Re-enter the key via /dashboard/api-keys.`,
+      );
+    }
+  }
+  if (config.baseURL) {
+    try {
+      new URL(config.baseURL);
+    } catch {
+      console.warn(`[provider:${config.name}] baseURL is not a valid URL: ${JSON.stringify(config.baseURL)}`);
+    }
+  }
+
   const client = new OpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseURL,
