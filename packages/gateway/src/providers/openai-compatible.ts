@@ -73,12 +73,17 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
       });
 
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content || "";
-        const done = chunk.choices[0]?.finish_reason === "stop";
+        const choice = chunk.choices[0];
+        if (!choice) continue;
 
-        // Skip empty non-final chunks
-        if (!delta && !done) continue;
+        const delta = choice.delta?.content || "";
+        const done = choice.finish_reason === "stop";
 
+        // Don't skip empty-content chunks. Thinking models (Ollama's Qwen3,
+        // DeepSeek-R1 etc.) stream reasoning with content:"" for the whole
+        // thinking pass — sometimes 30+ seconds — before any visible content.
+        // Dropping those starves the router's first-chunk timeout and kills
+        // the connection with a spurious "Connection error".
         yield {
           content: delta,
           done,
