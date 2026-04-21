@@ -47,6 +47,7 @@ export async function createProviderRegistry(config?: RegistryConfig): Promise<P
     const xaiKey = dbKeys["XAI_API_KEY"] || process.env.XAI_API_KEY;
     const zaiKey = dbKeys["ZAI_API_KEY"] || process.env.ZAI_API_KEY;
     const ollamaKey = dbKeys["OLLAMA_API_KEY"] || process.env.OLLAMA_API_KEY;
+    const ollamaBaseURL = dbKeys["OLLAMA_BASE_URL"] || process.env.OLLAMA_BASE_URL;
 
     if (openaiKey) providers.push(createOpenAIProvider(openaiKey));
     if (anthropicKey) providers.push(createAnthropicProvider(anthropicKey));
@@ -57,7 +58,7 @@ export async function createProviderRegistry(config?: RegistryConfig): Promise<P
 
     // Ollama is always available (local or remote). OLLAMA_API_KEY is
     // optional — unauthenticated local instances ignore the bearer header.
-    providers.push(createOllamaProvider(undefined, ollamaKey));
+    providers.push(createOllamaProvider(ollamaBaseURL, ollamaKey));
 
     // Load custom providers from DB. A custom with the same name (case-
     // insensitive) as a built-in replaces it — admins creating a custom
