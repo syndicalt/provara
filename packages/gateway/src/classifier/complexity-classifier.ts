@@ -13,6 +13,11 @@ const MEDIUM_INDICATORS = [
   "best practices", "guidelines", "recommendations",
   "key points", "3-page", "multi-page", "document",
   "enterprise", "large-scale", "real-world",
+  // Structural code changes (moderate scope, not trivial)
+  "refactor", "refactoring", "port this", "migrate this",
+  // Medium-depth summarization / research reading
+  "research paper", "academic paper", "peer-reviewed", "abstract and conclusion",
+  "main claims", "key findings", "critical analysis", "literature review",
   // Creative complexity — world-building, genre, setting
   "story", "narrative", "chapter",
   "set on", "set in", "takes place",
@@ -27,13 +32,36 @@ const COMPLEX_INDICATORS = [
   // Deep technical concepts
   "optimize", "optimization", "architecture", "distributed",
   "concurrent", "parallel", "async", "synchronization",
-  "b-tree", "red-black tree", "graph", "dynamic programming",
+  "b-tree", "b+ tree", "red-black tree", "graph", "dynamic programming",
   "machine learning", "neural network", "transformer",
   "cryptography", "encryption", "authentication",
   "microservice", "kubernetes", "scalability",
   "compiler", "parser", "interpreter", "garbage collector",
   "database design", "schema design", "normalization",
   "proof", "theorem", "mathematical", "derivation",
+  // Distributed systems & messaging (#293 UAT miss: "sharded queue with
+  // exactly once semantics and backpressure" landed as simple because none
+  // of these domain terms were in the list).
+  "sharded", "sharding", "partitioning", "replication",
+  "exactly once", "exactly-once", "at-least-once", "at least once",
+  "idempotent", "backpressure", "eventual consistency", "strong consistency",
+  "consensus", "paxos", "quorum", "leader election",
+  "two-phase commit", "saga pattern", "service mesh", "circuit breaker",
+  // Databases (beyond the generic "database design")
+  "mvcc", "isolation level", "serializable isolation", "read committed",
+  "write-ahead log", "lsm tree", "query planner", "query optimizer",
+  "columnar", "olap", "oltp", "schema migration",
+  // Concurrency internals
+  "race condition", "deadlock", "lock-free", "wait-free",
+  "compare-and-swap", "actor model", "work stealing",
+  // ML / vector search (#293 UAT miss: "HNSW over IVF" landed as simple)
+  "hnsw", "ivf", "vector search", "vector database",
+  "embeddings", "fine-tune", "fine-tuning", "quantization",
+  "gradient descent", "backpropagation", "self-attention",
+  "attention mechanism", "retrieval-augmented", "lora adapter",
+  "approximate nearest neighbor",
+  // Security / identity
+  "mtls", "zero-knowledge proof", "hmac", "saml sso", "oidc",
   // Scope indicators
   "full", "complete", "comprehensive", "production",
   "end-to-end", "from scratch", "entire", "whole system",
@@ -156,10 +184,21 @@ function scoreComplexity(signals: ComplexitySignals): ClassificationResult<Compl
   if (signals.codeBlockCount > 2) score += 2;
   else if (signals.codeBlockCount > 0) score += 1;
 
-  // Content-based complexity signals
-  if (signals.complexIndicatorCount >= 4) score += 3;
-  else if (signals.complexIndicatorCount >= 2) score += 2;
-  else if (signals.complexIndicatorCount >= 1) score += 1;
+  // Content-based complexity signals. Bumped from 3/2/1 to 4/3/1.5 so a
+  // short-but-dense prompt ("how does HNSW work vs IVF") can actually reach
+  // complex on jargon alone — previously capped at +3 which, combined with
+  // the short-prompt token penalty, always landed such prompts in medium.
+  if (signals.complexIndicatorCount >= 4) score += 4;
+  else if (signals.complexIndicatorCount >= 2) score += 3;
+  else if (signals.complexIndicatorCount >= 1) score += 1.5;
+
+  // Domain-density boost: a short prompt with multiple jargon hits is a
+  // domain-expert question that needs a capable model even though the
+  // prose is brief. Prevents "HNSW vs IVF" (5 words, 2 jargon terms)
+  // from being outvoted by the short-prompt word-count signal.
+  if (signals.complexIndicatorCount >= 2 && signals.tokenEstimate < 50) {
+    score += 1.5;
+  }
 
   // Medium indicators
   if (signals.mediumIndicatorCount >= 3) score += 3;
@@ -173,8 +212,11 @@ function scoreComplexity(signals: ComplexitySignals): ClassificationResult<Compl
   if (signals.simpleIndicatorCount >= 2) score -= 2;
   else if (signals.simpleIndicatorCount >= 1) score -= 1;
 
-  // Word count signals
-  if (signals.wordCount <= 5) score -= 1;
+  // Word count signals. Short prompts get penalized to keep trivial "hi"
+  // type questions out of medium — but only when they lack technical
+  // jargon. "HNSW vs IVF" is 5 words and correctly deserves medium/complex
+  // despite its length.
+  if (signals.wordCount <= 5 && signals.complexIndicatorCount === 0) score -= 1;
   else if (signals.wordCount >= 15) score += 1;
   else if (signals.wordCount >= 10) score += 0.5;
 
