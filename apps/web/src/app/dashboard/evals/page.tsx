@@ -181,7 +181,7 @@ export default function EvalsPage() {
           onClick={() => setUploadOpen(!uploadOpen)}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-md text-sm font-medium"
         >
-          {uploadOpen ? "Cancel" : "Upload dataset"}
+          {uploadOpen ? "Cancel" : "Create dataset"}
         </button>
       </div>
 
@@ -241,7 +241,7 @@ export default function EvalsPage() {
         <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-widest">Datasets</h2>
         {datasets.length === 0 ? (
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg py-10 text-center text-sm text-zinc-500">
-            No datasets yet. Upload JSONL above to get started.
+            No datasets yet. Paste JSONL above to get started.
           </div>
         ) : (
           <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg divide-y divide-zinc-800/60">
