@@ -67,7 +67,19 @@ export function createApiKeyRoutes(db: Db) {
       );
     }
 
-    const { encrypted, iv, authTag } = encrypt(body.value);
+    // Trim whitespace/newlines before storing. A trailing \n from a pasted
+    // value makes the stored key invalid as an HTTP header value (node-fetch
+    // rejects it with "... is not a legal HTTP header value"), which
+    // surfaces deep in the SDK as an opaque Connection error.
+    const trimmedValue = body.value.trim();
+    if (!trimmedValue) {
+      return c.json(
+        { error: { message: "value cannot be empty or whitespace-only", type: "validation_error" } },
+        400
+      );
+    }
+
+    const { encrypted, iv, authTag } = encrypt(trimmedValue);
 
     // Upsert: if a key with this name exists, update it
     const existing = await db
@@ -96,7 +108,7 @@ export function createApiKeyRoutes(db: Db) {
           id: existing.id,
           name: body.name,
           provider: body.provider,
-          maskedValue: maskKey(body.value),
+          maskedValue: maskKey(trimmedValue),
         },
         updated: true,
       });
@@ -121,7 +133,7 @@ export function createApiKeyRoutes(db: Db) {
           id,
           name: body.name,
           provider: body.provider,
-          maskedValue: maskKey(body.value),
+          maskedValue: maskKey(trimmedValue),
         },
         updated: false,
       },
@@ -158,11 +170,14 @@ export async function getDecryptedKeys(db: Db): Promise<Record<string, string>> 
 
   for (const k of keys) {
     try {
+      // Defensive trim: existing rows saved before the POST-handler trim may
+      // carry a trailing newline from a paste, which node-fetch rejects as an
+      // illegal HTTP header value.
       result[k.name] = decrypt({
         encrypted: k.encryptedValue,
         iv: k.iv,
         authTag: k.authTag,
-      });
+      }).trim();
     } catch {
       // Skip keys that can't be decrypted
     }
