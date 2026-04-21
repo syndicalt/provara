@@ -22,7 +22,7 @@ Providers auto-register at gateway startup based on:
 1. **Env vars** — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.
 2. **DB-stored keys** — added via `/dashboard/api-keys`, encrypted with `PROVARA_MASTER_KEY`. DB keys take precedence over env vars.
 
-Ollama is always registered (points at `OLLAMA_BASE_URL`, default `http://localhost:11434/v1`).
+Ollama is always registered (points at `OLLAMA_BASE_URL`, default `http://localhost:11434/v1`). Set `OLLAMA_API_KEY` only if your Ollama host requires bearer auth (e.g. a remote deployment).
 
 ## Adding a provider
 

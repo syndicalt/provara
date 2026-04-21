@@ -34,6 +34,7 @@ OpenAI, Anthropic, Google, Mistral, xAI, Z.ai, Ollama. Each adapter lives in `pa
 - `XAI_API_KEY`
 - `ZAI_API_KEY`
 - `OLLAMA_BASE_URL` (defaults to `http://localhost:11434/v1`)
+- `OLLAMA_API_KEY` (optional; only for authenticated/remote Ollama hosts)
 
 Ollama is always registered. DB-stored keys (encrypted with `PROVARA_MASTER_KEY`) take precedence over env vars.
 

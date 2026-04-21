@@ -888,6 +888,7 @@ PROVARA_EMAIL_FROM="Provara <noreply@yourdomain.com>"
 | `XAI_API_KEY` | No | Or manage via dashboard |
 | `ZAI_API_KEY` | No | Or manage via dashboard |
 | `OLLAMA_BASE_URL` | No | Default: `http://localhost:11434/v1` |
+| `OLLAMA_API_KEY` | No | Only needed for authenticated/remote Ollama hosts |
 | `GOOGLE_CLIENT_ID` | Multi-tenant | Google OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | Multi-tenant | Google OAuth client secret |
 | `GITHUB_CLIENT_ID` | Multi-tenant | GitHub OAuth client ID |
