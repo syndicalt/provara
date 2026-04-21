@@ -685,7 +685,13 @@ export async function createRouter(ctx: RouterContext) {
       ...routingResult.fallbacks,
     ];
 
-    const CONNECT_TIMEOUT_MS = 10_000;  // For initial connection / first chunk
+    // First-chunk timeout for adaptive/ab-test routing, where we want to fail
+    // over fast if the primary is dead. When the user explicitly pinned the
+    // provider (user-override → empty fallbacks), there's nothing to fail
+    // over to — honor the pin with a generous timeout that covers cold
+    // model-load on self-hosted Ollama/vLLM (Qwen3-36B etc. can take 30-60s
+    // to stream a first chunk on a cold start).
+    const CONNECT_TIMEOUT_MS = routingResult.routedBy === "user-override" ? 120_000 : 10_000;
     const COMPLETION_TIMEOUT_MS = 120_000; // For full non-streaming response
     const failedProviders = new Set<string>();
     const attemptErrors: { provider: string; model: string; error: string }[] = [];
