@@ -150,6 +150,7 @@ export function useChatSession() {
         let fullContent = "";
         let responseModel = "";
         let streamMeta: { latencyMs?: number; cost?: number; usage?: { inputTokens: number; outputTokens: number } } = {};
+        let inStreamError: string | null = null;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -169,6 +170,14 @@ export function useChatSession() {
                 streamMeta = parsed._provara;
                 continue;
               }
+              // Pinned-streaming routes can fail after response headers are
+              // already sent (cold-start timeout, mid-stream provider error).
+              // The gateway emits a structured error event so we can render
+              // a real message instead of a raw "network error".
+              if (parsed.error?.message) {
+                inStreamError = parsed.error.message;
+                continue;
+              }
               if (!responseModel && parsed.model) responseModel = parsed.model;
               const delta = parsed.choices?.[0]?.delta?.content || "";
               fullContent += delta;
@@ -177,6 +186,17 @@ export function useChatSession() {
               // ignore malformed chunks
             }
           }
+        }
+
+        if (inStreamError && !fullContent) {
+          const errMessages: ChatMessage[] = [
+            ...workingMessages,
+            { role: "assistant", content: `Error: ${inStreamError}` },
+          ];
+          setMessages(errMessages);
+          setStreamingContent("");
+          persistMessages(errMessages);
+          return;
         }
 
         const finalMessages: ChatMessage[] = [
