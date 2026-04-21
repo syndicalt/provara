@@ -80,6 +80,27 @@ function redactSecrets(s: string): string {
   return s.replace(SECRET_PATTERN, "[redacted]");
 }
 
+// Emit a redacted stack trace for the whole error chain so we can identify
+// *where* a surprising cause (e.g. a TypeError with a bearer-string message)
+// is being thrown from — undici internals, an outbound proxy, or our own
+// code. Kept separate from describeProviderError so the short summary still
+// fits cleanly in single-line logs.
+function logProviderErrorStack(err: unknown, label: string): void {
+  const chain: string[] = [];
+  let cur: unknown = err;
+  let depth = 0;
+  while (cur instanceof Error && depth < 4) {
+    const header = `[${cur.constructor?.name || cur.name || "Error"}]`;
+    const code = (cur as { code?: string }).code;
+    const stack = cur.stack?.split("\n").slice(0, 5).join("\n") ?? "(no stack)";
+    chain.push(`${header}${code ? ` code=${code}` : ""}\n${stack}`);
+    cur = (cur as { cause?: unknown }).cause;
+    depth++;
+  }
+  if (chain.length === 0) return;
+  console.warn(`[provider-error-stack ${label}]\n${redactSecrets(chain.join("\n--- caused by ---\n"))}`);
+}
+
 function describeProviderError(err: unknown): string {
   if (!(err instanceof Error)) return redactSecrets(String(err));
   const parts: string[] = [];
@@ -879,6 +900,7 @@ export async function createRouter(ctx: RouterContext) {
           const msg = describeProviderError(err);
           attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
           console.warn(`Provider ${attempt.provider}/${attempt.model} stream failed:`, msg);
+          logProviderErrorStack(err, `${attempt.provider}/${attempt.model} stream`);
           continue;
         }
       }
@@ -920,6 +942,7 @@ export async function createRouter(ctx: RouterContext) {
         const msg = describeProviderError(err);
         attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
         console.warn(`Provider ${attempt.provider}/${attempt.model} failed:`, msg);
+        logProviderErrorStack(err, `${attempt.provider}/${attempt.model}`);
         continue;
       }
     }
