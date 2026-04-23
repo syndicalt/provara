@@ -156,7 +156,18 @@ describe("#298 tool calling end-to-end", () => {
       }),
     });
 
-    // Two distinct tool signatures → two calls to the provider.
-    expect(provider.calls).toHaveLength(2);
+    // Two distinct tool signatures → the cache must not have collided,
+    // so both tool shapes must have reached the provider. Do not assert
+    // exact call count: the adaptive router's judge sampler can fire on
+    // the fake provider and add an extra evaluation call, which is a
+    // test-isolation concern unrelated to the cache-key separation we're
+    // verifying here.
+    const toolNamesSeen = new Set(
+      provider.calls
+        .flatMap((c) => c.tools ?? [])
+        .map((t) => t.function.name),
+    );
+    expect(toolNamesSeen.has("get_weather")).toBe(true);
+    expect(toolNamesSeen.has("get_stock")).toBe(true);
   });
 });
