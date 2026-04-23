@@ -153,6 +153,10 @@ export const requests = sqliteTable("requests", {
    *  via `/v1/prompts/:id/resolve` (#264). Enables canary vs stable EMA
    *  tracking for prompt rollouts. Null for ad-hoc chat completions. */
   promptVersionId: text("prompt_version_id"),
+  /** Number of tool_calls in the response. Zero for non-tool responses, null
+   *  for historical rows predating #298. Populated on successful uncached
+   *  completions so analytics can slice agentic traffic without parsing JSON. */
+  toolCallsCount: integer("tool_calls_count"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),

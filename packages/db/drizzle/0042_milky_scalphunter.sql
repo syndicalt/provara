@@ -1,0 +1,1 @@
+ALTER TABLE `requests` ADD `tool_calls_count` integer;
