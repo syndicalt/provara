@@ -1377,8 +1377,18 @@ export async function createRouter(ctx: RouterContext) {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: responseContent },
-          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: responseContent,
+            ...(response.tool_calls && response.tool_calls.length > 0
+              ? { tool_calls: response.tool_calls }
+              : {}),
+          },
+          finish_reason:
+            response.finish_reason ??
+            (response.tool_calls && response.tool_calls.length > 0
+              ? "tool_calls"
+              : "stop"),
         },
       ],
       usage: {
