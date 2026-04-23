@@ -16,9 +16,59 @@ export interface ImagePart {
 
 export type ContentPart = TextPart | ImagePart;
 
+/** OpenAI-compatible tool-calling shape. Mirrors
+ *  https://platform.openai.com/docs/api-reference/chat/create field-for-field
+ *  so any SDK that targets OpenAI works against the gateway unchanged. */
+export interface ToolFunction {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  strict?: boolean;
+}
+
+export interface ToolDefinition {
+  type: "function";
+  function: ToolFunction;
+}
+
+export type ToolChoice =
+  | "none"
+  | "auto"
+  | "required"
+  | { type: "function"; function: { name: string } };
+
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+/** Streaming tool-call delta. `index` is required so clients can reassemble
+ *  parallel tool calls; all other fields arrive incrementally. */
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  type?: "function";
+  function?: { name?: string; arguments?: string };
+}
+
+export type FinishReason =
+  | "stop"
+  | "length"
+  | "tool_calls"
+  | "content_filter"
+  | "function_call";
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
+  /** The OpenAI wire format allows `null` on assistant messages that carry only
+   *  `tool_calls`. Internally we normalize that to `""` at the adapter/router
+   *  boundary so downstream code (classifier, PII scan, cache key, DB logging)
+   *  can treat content as a non-nullable text source. */
   content: string | ContentPart[];
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  name?: string;
 }
 
 /** Flatten a message's content to the text portion only. Image parts are replaced
@@ -47,6 +97,9 @@ export interface CompletionRequest {
   max_tokens?: number;
   stream?: boolean;
   routing_hint?: "coding" | "creative" | "summarization" | "qa" | "general" | "vision";
+  tools?: ToolDefinition[];
+  tool_choice?: ToolChoice;
+  parallel_tool_calls?: boolean;
 }
 
 export interface CompletionResponse {
@@ -54,6 +107,8 @@ export interface CompletionResponse {
   provider: string;
   model: string;
   content: string;
+  tool_calls?: ToolCall[];
+  finish_reason?: FinishReason;
   usage: {
     inputTokens: number;
     outputTokens: number;
@@ -64,6 +119,8 @@ export interface CompletionResponse {
 export interface StreamChunk {
   content: string;
   done: boolean;
+  tool_calls?: ToolCallDelta[];
+  finish_reason?: FinishReason;
   usage?: {
     inputTokens: number;
     outputTokens: number;

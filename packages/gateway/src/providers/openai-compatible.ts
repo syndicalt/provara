@@ -62,21 +62,41 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
       const start = performance.now();
 
+      // Tool-calling passthrough: the four providers this helper backs
+      // (Mistral, xAI, Z.ai, Ollama) all expose OpenAI-compatible tool
+      // fields. Ollama is model-gated upstream — an unsupported model
+      // returns a 400 from Ollama itself, which surfaces to the caller
+      // unchanged. Do not try to simulate tool calling locally.
       const response = await client.chat.completions.create({
         model: request.model,
         messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
+        tools: request.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+        tool_choice: request.tool_choice as OpenAI.Chat.Completions.ChatCompletionToolChoiceOption | undefined,
+        parallel_tool_calls: request.parallel_tool_calls,
       });
 
       const latencyMs = Math.round(performance.now() - start);
       const choice = response.choices[0];
+      const toolCalls = choice?.message?.tool_calls;
 
       return {
         id: nanoid(),
         provider: config.name,
         model: request.model,
         content: choice?.message?.content || "",
+        tool_calls: toolCalls && toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              type: "function" as const,
+              function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+              },
+            }))
+          : undefined,
+        finish_reason: (choice?.finish_reason ?? undefined) as CompletionResponse["finish_reason"],
         usage: {
           inputTokens: response.usage?.prompt_tokens || 0,
           outputTokens: response.usage?.completion_tokens || 0,
@@ -91,6 +111,9 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
         messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
+        tools: request.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+        tool_choice: request.tool_choice as OpenAI.Chat.Completions.ChatCompletionToolChoiceOption | undefined,
+        parallel_tool_calls: request.parallel_tool_calls,
         stream: true,
       });
 
@@ -99,7 +122,11 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
         if (!choice) continue;
 
         const delta = choice.delta?.content || "";
-        const done = choice.finish_reason === "stop";
+        // `done` fires on any terminal finish_reason — not just "stop" — so
+        // streams that end on "tool_calls" or "length" still close cleanly.
+        const finishReason = choice.finish_reason;
+        const done = finishReason != null;
+        const toolCallDeltas = choice.delta?.tool_calls;
 
         // Don't skip empty-content chunks. Thinking models (Ollama's Qwen3,
         // DeepSeek-R1 etc.) stream reasoning with content:"" for the whole
@@ -109,6 +136,20 @@ export function createOpenAICompatibleProvider(config: OpenAICompatibleConfig): 
         yield {
           content: delta,
           done,
+          tool_calls: toolCallDeltas && toolCallDeltas.length > 0
+            ? toolCallDeltas.map((d) => ({
+                index: d.index,
+                id: d.id,
+                type: d.type,
+                function: d.function
+                  ? {
+                      name: d.function.name,
+                      arguments: d.function.arguments,
+                    }
+                  : undefined,
+              }))
+            : undefined,
+          finish_reason: (finishReason ?? undefined) as StreamChunk["finish_reason"],
           usage: chunk.usage
             ? {
                 inputTokens: chunk.usage.prompt_tokens || 0,

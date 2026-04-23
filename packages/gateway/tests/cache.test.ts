@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getCached, putCache, cacheStats } from "../src/cache/index.js";
-import type { CompletionResponse } from "../src/providers/types.js";
+import type { CompletionResponse, ToolDefinition } from "../src/providers/types.js";
 
 function makeResponse(provider: string, model: string, content: string): CompletionResponse {
   return {
@@ -68,6 +68,61 @@ describe("cache", () => {
     } finally {
       Date.now = originalNow;
     }
+  });
+
+  it("does NOT return a cross-tools hit — identical messages, different tools miss", () => {
+    const messages = [{ role: "user" as const, content: "what is the weather" }];
+    const weatherTool: ToolDefinition = {
+      type: "function",
+      function: {
+        name: "get_weather",
+        description: "Get current weather for a city",
+        parameters: { type: "object", properties: { city: { type: "string" } } },
+      },
+    };
+    const stockTool: ToolDefinition = {
+      type: "function",
+      function: {
+        name: "get_stock_price",
+        description: "Get current stock price",
+        parameters: { type: "object", properties: { ticker: { type: "string" } } },
+      },
+    };
+    const resp = makeResponse("openai", "gpt-4.1-nano", "tool answer");
+
+    putCache(messages, "openai", "gpt-4.1-nano", resp, undefined, [weatherTool]);
+
+    // Same (messages, provider, model) but different tools → must miss.
+    expect(getCached(messages, "openai", "gpt-4.1-nano", [stockTool])).toBeNull();
+    // Same (messages, provider, model) but no tools → must also miss.
+    expect(getCached(messages, "openai", "gpt-4.1-nano")).toBeNull();
+    // Same tools → must hit.
+    expect(getCached(messages, "openai", "gpt-4.1-nano", [weatherTool])).not.toBeNull();
+  });
+
+  it("uses stable key ordering — reordered tool JSON keys still hit the cache", () => {
+    const messages = [{ role: "user" as const, content: "stable-key-test" }];
+    const originalTool: ToolDefinition = {
+      type: "function",
+      function: {
+        name: "lookup",
+        description: "Look something up",
+        parameters: { type: "object", properties: { id: { type: "string" } } },
+      },
+    };
+    // Same tool reconstructed with keys in a different insertion order.
+    const reorderedTool: ToolDefinition = {
+      function: {
+        parameters: { properties: { id: { type: "string" } }, type: "object" },
+        description: "Look something up",
+        name: "lookup",
+      },
+      type: "function",
+    };
+    const resp = makeResponse("openai", "gpt-4.1-nano", "stable");
+
+    putCache(messages, "openai", "gpt-4.1-nano", resp, undefined, [originalTool]);
+    expect(getCached(messages, "openai", "gpt-4.1-nano", [reorderedTool])).not.toBeNull();
   });
 
   it("reports size via cacheStats", () => {

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { ProviderRegistry, CompletionRequest, CompletionResponse } from "./providers/index.js";
+import type { ProviderRegistry, CompletionRequest, CompletionResponse, StreamChunk } from "./providers/index.js";
 import type { Db } from "@provara/db";
 import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
@@ -377,7 +377,6 @@ export async function createRouter(ctx: RouterContext) {
        */
       requires_structured_output?: boolean;
       response_format?: { type?: string };
-      tools?: unknown[];
     }>();
     const {
       provider: providerName,
@@ -386,10 +385,11 @@ export async function createRouter(ctx: RouterContext) {
       cache: cacheParam,
       requires_structured_output,
       response_format,
-      tools,
       prompt_version_id: promptVersionId,
       ...rest
     } = body;
+    // `rest` carries `tools`, `tool_choice`, `parallel_tool_calls` through to
+    // the provider adapter untouched. Do not destructure them out.
     const request = rest as CompletionRequest;
 
     // Validate hints at the edge. The TypeScript types constrain these to
@@ -419,7 +419,7 @@ export async function createRouter(ctx: RouterContext) {
     const autoDetectStructured =
       response_format?.type === "json_schema" ||
       response_format?.type === "json_object" ||
-      (Array.isArray(tools) && tools.length > 0);
+      (Array.isArray(request.tools) && request.tools.length > 0);
     const requiresStructuredOutput =
       typeof requires_structured_output === "boolean"
         ? requires_structured_output
@@ -446,6 +446,12 @@ export async function createRouter(ctx: RouterContext) {
       // and leave image parts intact.
       for (let i = 0; i < request.messages.length; i++) {
         const msg = request.messages[i];
+        // Skip role: "tool" messages. Their content is structured JSON output
+        // from a tool execution; regex-based redaction can corrupt that JSON
+        // and break the next turn of the assistant. Assistant messages that
+        // carry tool_calls still get their string content redacted, but the
+        // spread-preserve of `...msg` below keeps tool_calls arguments intact.
+        if (msg.role === "tool") continue;
         const textForScan = typeof msg.content === "string"
           ? msg.content
           : msg.content.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n");
@@ -558,6 +564,8 @@ export async function createRouter(ctx: RouterContext) {
       inputTokens: number,
       outputTokens: number,
       hitId: string,
+      toolCalls?: CompletionResponse["tool_calls"],
+      finishReason?: CompletionResponse["finish_reason"],
     ) => {
       await ctx.db
         .insert(requests)
@@ -614,8 +622,12 @@ export async function createRouter(ctx: RouterContext) {
         choices: [
           {
             index: 0,
-            message: { role: "assistant", content },
-            finish_reason: "stop",
+            message: {
+              role: "assistant",
+              content,
+              ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+            },
+            finish_reason: finishReason ?? (toolCalls && toolCalls.length > 0 ? "tool_calls" : "stop"),
           },
         ],
         usage: {
@@ -640,7 +652,13 @@ export async function createRouter(ctx: RouterContext) {
     };
 
     if (!skipCache) {
-      const cached = getCached(request.messages, routingResult.provider, routingResult.model);
+      const cached = getCached(
+        request.messages,
+        routingResult.provider,
+        routingResult.model,
+        request.tools,
+        request.tool_choice,
+      );
       if (cached) {
         return returnCachedHit(
           cached.content,
@@ -650,12 +668,19 @@ export async function createRouter(ctx: RouterContext) {
           cached.usage.inputTokens,
           cached.usage.outputTokens,
           nanoid(),
+          cached.tool_calls,
+          cached.finish_reason,
         );
       }
 
       // Semantic cache is best-effort: any error (embedding API down, quota,
-      // timeout) falls through to the LLM path silently.
-      if (semanticCache) {
+      // timeout) falls through to the LLM path silently. Skip it entirely
+      // when the request carries tools — semantic similarity of the prompt
+      // does not imply identical tool contracts, and the DB row does not
+      // preserve tool_calls, so a "hit" would silently strip the tool call
+      // the client actually asked for.
+      const requestHasTools = Array.isArray(request.tools) && request.tools.length > 0;
+      if (semanticCache && !requestHasTools) {
         try {
           const match = await semanticCache.get(
             request.messages,
@@ -732,6 +757,11 @@ export async function createRouter(ctx: RouterContext) {
           const encoder = new TextEncoder();
           let fullContent = "";
           let usage = { inputTokens: 0, outputTokens: 0 };
+          // Track unique tool-call indexes surfaced across chunks so the
+          // final `requests` row can record how many tool calls the model
+          // emitted on this turn. Deltas for the same index arrive across
+          // multiple chunks as the `function.arguments` JSON streams in.
+          const streamToolCallIndexes = new Set<number>();
 
           // SSE comments ":..." are legal keepalives ignored by parsers.
           // Cleared on the first real chunk or in finally{}.
@@ -739,9 +769,24 @@ export async function createRouter(ctx: RouterContext) {
             try { controller.enqueue(encoder.encode(": keepalive\n\n")); } catch { /* stream closed */ }
           }, 10_000);
 
-          const emitChunk = (chunk: { content: string; done: boolean; usage?: { inputTokens: number; outputTokens: number } }) => {
+          const emitChunk = (chunk: StreamChunk) => {
             fullContent += chunk.content;
             if (chunk.usage) usage = chunk.usage;
+            if (chunk.tool_calls) {
+              for (const d of chunk.tool_calls) streamToolCallIndexes.add(d.index);
+            }
+            // Forward the provider's real finish_reason when it arrives so
+            // OpenAI-SDK clients see "tool_calls" vs "stop" correctly. Fall
+            // back to "stop" only when a chunk signals done without an
+            // explicit reason (defensive — all adapters should set one).
+            const sseDelta: Record<string, unknown> = chunk.done ? {} : {};
+            if (!chunk.done && chunk.content) sseDelta.content = chunk.content;
+            if (chunk.tool_calls && chunk.tool_calls.length > 0) {
+              sseDelta.tool_calls = chunk.tool_calls;
+            }
+            const finishReasonForSse = chunk.done
+              ? chunk.finish_reason ?? "stop"
+              : null;
             const sseData = JSON.stringify({
               id: `chatcmpl-${requestId}`,
               object: "chat.completion.chunk",
@@ -749,8 +794,8 @@ export async function createRouter(ctx: RouterContext) {
               model: usedModel,
               choices: [{
                 index: 0,
-                delta: chunk.done ? {} : { content: chunk.content },
-                finish_reason: chunk.done ? "stop" : null,
+                delta: sseDelta,
+                finish_reason: finishReasonForSse,
               }],
             });
             controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
@@ -804,6 +849,7 @@ export async function createRouter(ctx: RouterContext) {
               apiTokenId: attribution.apiTokenId,
               abTestId: routingResult.abTestId || null,
               promptVersionId: promptVersionId || null,
+              toolCallsCount: streamToolCallIndexes.size,
             }).run();
 
             if (routingResult.taskType && routingResult.complexity) {
@@ -856,7 +902,15 @@ export async function createRouter(ctx: RouterContext) {
                 usage,
                 latencyMs: streamLatencyMs,
               };
-              putCache(request.messages, usedProvider, usedModel, completedResponse);
+              putCache(
+                request.messages,
+                usedProvider,
+                usedModel,
+                completedResponse,
+                undefined,
+                request.tools,
+                request.tool_choice,
+              );
               if (semanticCache) {
                 void semanticCache
                   .put(request.messages, tenantId, usedProvider, usedModel, completedResponse)
@@ -1077,7 +1131,15 @@ export async function createRouter(ctx: RouterContext) {
                     usage,
                     latencyMs,
                   };
-                  putCache(request.messages, usedProvider, usedModel, completedResponse);
+                  putCache(
+                    request.messages,
+                    usedProvider,
+                    usedModel,
+                    completedResponse,
+                    undefined,
+                    request.tools,
+                    request.tool_choice,
+                  );
                   if (semanticCache) {
                     void semanticCache
                       .put(request.messages, tenantId, usedProvider, usedModel, completedResponse)
@@ -1204,6 +1266,7 @@ export async function createRouter(ctx: RouterContext) {
         apiTokenId: attribution.apiTokenId,
         abTestId: routingResult.abTestId || null,
         promptVersionId: promptVersionId || null,
+        toolCallsCount: response.tool_calls?.length ?? 0,
       })
       .run();
 
@@ -1250,7 +1313,15 @@ export async function createRouter(ctx: RouterContext) {
 
     // Cache the response for future identical requests
     if (!skipCache) {
-      putCache(request.messages, usedProvider, usedModel, response);
+      putCache(
+        request.messages,
+        usedProvider,
+        usedModel,
+        response,
+        undefined,
+        request.tools,
+        request.tool_choice,
+      );
       if (semanticCache) {
         void semanticCache
           .put(request.messages, tenantId, usedProvider, usedModel, response)
@@ -1306,8 +1377,18 @@ export async function createRouter(ctx: RouterContext) {
       choices: [
         {
           index: 0,
-          message: { role: "assistant", content: responseContent },
-          finish_reason: "stop",
+          message: {
+            role: "assistant",
+            content: responseContent,
+            ...(response.tool_calls && response.tool_calls.length > 0
+              ? { tool_calls: response.tool_calls }
+              : {}),
+          },
+          finish_reason:
+            response.finish_reason ??
+            (response.tool_calls && response.tool_calls.length > 0
+              ? "tool_calls"
+              : "stop"),
         },
       ],
       usage: {

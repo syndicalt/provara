@@ -3,6 +3,7 @@ import type {
   CompletionRequest,
   CompletionResponse,
   StreamChunk,
+  ToolCall,
 } from "../../src/providers/types.js";
 
 export interface FakeProviderOptions {
@@ -12,6 +13,9 @@ export interface FakeProviderOptions {
   failWith?: Error;
   /** Override the response content. Defaults to a canned reply. */
   responseContent?: string;
+  /** When set, the fake returns these tool_calls on complete() / streams
+   *  an equivalent delta plus a `tool_calls` finish_reason on stream(). */
+  responseToolCalls?: ToolCall[];
 }
 
 /**
@@ -44,6 +48,10 @@ export function makeFakeProvider(opts: FakeProviderOptions): Provider & {
         provider: opts.name,
         model: request.model,
         content,
+        tool_calls: opts.responseToolCalls,
+        finish_reason: opts.responseToolCalls && opts.responseToolCalls.length > 0
+          ? "tool_calls"
+          : "stop",
         usage: { inputTokens: 10, outputTokens: 15 },
         latencyMs: 5,
       };
@@ -51,6 +59,25 @@ export function makeFakeProvider(opts: FakeProviderOptions): Provider & {
     async *stream(request: CompletionRequest): AsyncIterable<StreamChunk> {
       calls.push(request);
       if (currentFail) throw currentFail;
+      if (opts.responseToolCalls && opts.responseToolCalls.length > 0) {
+        yield {
+          content: "",
+          done: false,
+          tool_calls: opts.responseToolCalls.map((tc, index) => ({
+            index,
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.function.name, arguments: tc.function.arguments },
+          })),
+        };
+        yield {
+          content: "",
+          done: true,
+          finish_reason: "tool_calls",
+          usage: { inputTokens: 10, outputTokens: 15 },
+        };
+        return;
+      }
       const content = opts.responseContent ?? `fake reply from ${opts.name}/${request.model}`;
       yield { content, done: false };
       yield { content: "", done: true, usage: { inputTokens: 10, outputTokens: 15 } };
