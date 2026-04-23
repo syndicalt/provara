@@ -49,16 +49,31 @@ export function createOpenAIProvider(apiKey?: string): Provider {
         messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
+        tools: request.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+        tool_choice: request.tool_choice as OpenAI.Chat.Completions.ChatCompletionToolChoiceOption | undefined,
+        parallel_tool_calls: request.parallel_tool_calls,
       });
 
       const latencyMs = Math.round(performance.now() - start);
       const choice = response.choices[0];
+      const toolCalls = choice?.message?.tool_calls;
 
       return {
         id: nanoid(),
         provider: "openai",
         model: request.model,
         content: choice?.message?.content || "",
+        tool_calls: toolCalls && toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              id: tc.id,
+              type: "function" as const,
+              function: {
+                name: tc.function.name,
+                arguments: tc.function.arguments,
+              },
+            }))
+          : undefined,
+        finish_reason: (choice?.finish_reason ?? undefined) as CompletionResponse["finish_reason"],
         usage: {
           inputTokens: response.usage?.prompt_tokens || 0,
           outputTokens: response.usage?.completion_tokens || 0,
@@ -73,17 +88,39 @@ export function createOpenAIProvider(apiKey?: string): Provider {
         messages: request.messages as OpenAIMessages,
         temperature: request.temperature,
         max_tokens: request.max_tokens,
+        tools: request.tools as OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+        tool_choice: request.tool_choice as OpenAI.Chat.Completions.ChatCompletionToolChoiceOption | undefined,
+        parallel_tool_calls: request.parallel_tool_calls,
         stream: true,
         stream_options: { include_usage: true },
       });
 
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content || "";
-        const done = chunk.choices[0]?.finish_reason === "stop";
+        const choice = chunk.choices[0];
+        const delta = choice?.delta?.content || "";
+        // `done` fires on any terminal finish_reason — not just "stop" — so
+        // streams that end on "tool_calls" or "length" still close cleanly.
+        const finishReason = choice?.finish_reason;
+        const done = finishReason != null;
+        const toolCallDeltas = choice?.delta?.tool_calls;
 
         yield {
           content: delta,
           done,
+          tool_calls: toolCallDeltas && toolCallDeltas.length > 0
+            ? toolCallDeltas.map((d) => ({
+                index: d.index,
+                id: d.id,
+                type: d.type,
+                function: d.function
+                  ? {
+                      name: d.function.name,
+                      arguments: d.function.arguments,
+                    }
+                  : undefined,
+              }))
+            : undefined,
+          finish_reason: (finishReason ?? undefined) as StreamChunk["finish_reason"],
           usage: chunk.usage
             ? {
                 inputTokens: chunk.usage.prompt_tokens || 0,
