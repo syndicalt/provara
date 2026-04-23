@@ -22,6 +22,9 @@ import type { PromptPreset } from "../../../components/chat/presets";
 interface ProviderInfo {
   name: string;
   models: string[];
+  /** Per-model capability map keyed by model name (#301). Optional for
+   *  backward compat with older gateway builds that don't surface it. */
+  capabilities?: Record<string, { supportsTools: boolean }>;
 }
 
 // `useSearchParams` forces the page into dynamic rendering and — in Next 15 —
@@ -404,11 +407,15 @@ function PlaygroundInner() {
             <option value="">Auto-routing (let Provara choose)</option>
             {providers.map((p) => (
               <optgroup key={p.name} label={p.name}>
-                {p.models.map((m) => (
-                  <option key={`${p.name}/${m}`} value={`${p.name}/${m}`}>
-                    {m}
-                  </option>
-                ))}
+                {p.models.map((m) => {
+                  const toolsSupported = p.capabilities?.[m]?.supportsTools ?? true;
+                  return (
+                    <option key={`${p.name}/${m}`} value={`${p.name}/${m}`}>
+                      {m}
+                      {toolsSupported ? "" : " — no tools"}
+                    </option>
+                  );
+                })}
               </optgroup>
             ))}
           </select>

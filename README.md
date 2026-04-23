@@ -822,16 +822,74 @@ The authoritative machine-readable spec lives at [`packages/gateway/openapi.yaml
 
 ## Providers
 
-| Provider | Models | API Style |
+| Provider | Models | API Style | Tools |
+|---|---|---|---|
+| **OpenAI** | gpt-4o, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3, o4-mini | Native SDK | ✅ |
+| **Anthropic** | claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5 | Native SDK | ✅ |
+| **Google** | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Native SDK | ✅ |
+| **Mistral** | mistral-large, mistral-medium, mistral-small | OpenAI-compatible | ✅ |
+| **xAI** | grok-3, grok-3-mini | OpenAI-compatible | ✅ |
+| **Z.ai** | glm-5.1, glm-5-turbo, glm-5v-turbo, glm-4.7, glm-4.7-flash | OpenAI-compatible | ✅ |
+| **Ollama** | Any local model | OpenAI-compatible | ⚠️ Model-gated |
+| **Custom** | Add any OpenAI-compatible provider via dashboard | OpenAI-compatible | ✅ (assumed) |
+
+## Tool Calling
+
+Provara's `/v1/chat/completions` endpoint accepts OpenAI-compatible `tools` and `tool_choice` parameters and surfaces `tool_calls` on the response. Any client targeting the OpenAI chat-completion wire shape works unchanged — the gateway handles translation to each provider's native format internally.
+
+```ts
+const res = await openai.chat.completions.create({
+  model: "claude-sonnet-4-6", // or "gpt-4o", "gemini-2.5-pro", etc.
+  messages: [{ role: "user", content: "What's the weather in SF?" }],
+  tools: [{
+    type: "function",
+    function: {
+      name: "get_weather",
+      description: "Get current weather for a city",
+      parameters: {
+        type: "object",
+        properties: { city: { type: "string" } },
+        required: ["city"],
+      },
+    },
+  }],
+  tool_choice: "auto",
+});
+
+// res.choices[0].message.tool_calls[0].function.name === "get_weather"
+// res.choices[0].finish_reason === "tool_calls"
+```
+
+**Supported vocabulary:**
+
+- `tool_choice`: `"auto"`, `"none"`, `"required"`, or `{ type: "function", function: { name } }`
+- `tools[].function.parameters`: JSON Schema (Google's adapter strips fields outside the OpenAPI 3.0 subset automatically: `$schema`, `oneOf`, `anyOf`, `additionalProperties`, etc.)
+- `parallel_tool_calls`: supported where the underlying provider supports it (OpenAI, Anthropic, Google all do)
+
+**Provider translation:**
+
+| Provider | Internal shape | Notes |
 |---|---|---|
-| **OpenAI** | gpt-4o, gpt-4.1, gpt-4.1-mini, gpt-4.1-nano, o3, o4-mini | Native SDK |
-| **Anthropic** | claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5 | Native SDK |
-| **Google** | gemini-2.5-pro, gemini-2.5-flash, gemini-2.0-flash | Native SDK |
-| **Mistral** | mistral-large, mistral-medium, mistral-small | OpenAI-compatible |
-| **xAI** | grok-3, grok-3-mini | OpenAI-compatible |
-| **Z.ai** | glm-5.1, glm-5-turbo, glm-5v-turbo, glm-4.7, glm-4.7-flash | OpenAI-compatible |
-| **Ollama** | Any local model | OpenAI-compatible |
-| **Custom** | Add any OpenAI-compatible provider via dashboard | OpenAI-compatible |
+| OpenAI, Mistral, xAI, Z.ai, Ollama | Native OpenAI passthrough | Zero translation; client sees exact SDK response |
+| Anthropic | `tool_use` / `tool_result` content blocks | Handles parallel tool-use, streaming `input_json_delta` fragments, merged `tool_result` turns |
+| Google / Gemini | `functionCall` / `functionResponse` parts + `functionDeclarations` | Synthesizes tool-call ids (Gemini doesn't emit them); recovers function names via prior-message lookup on `role: "tool"` messages |
+
+**Capability gate:**
+
+Requests carrying a non-empty `tools` array against a model that doesn't support tool calling return `400 { error: { code: "tools_unsupported" } }` without calling the provider. The capability matrix is in `packages/gateway/src/providers/capabilities.ts`. For Ollama specifically, the gate allows models starting with any of `llama3.1`, `llama3.2`, `llama3.3`, `llama4`, `qwen2.5`, `qwen3`, `mistral`, `mistral-nemo`, `mixtral`, `firefunction`, `command-r`, `hermes3`, `granite3`. Add prefixes there if you're running a tool-trained Ollama model the gate doesn't know about.
+
+The `/v1/models/stats` endpoint surfaces the capability flag per model so dashboard UI can render an indicator:
+
+```json
+{
+  "models": [
+    { "provider": "openai", "model": "gpt-4.1-nano", "capabilities": { "supportsTools": true }, ... },
+    { "provider": "ollama", "model": "gemma:7b",     "capabilities": { "supportsTools": false }, ... }
+  ]
+}
+```
+
+**OpenAI spec reference:** [platform.openai.com/docs/guides/function-calling](https://platform.openai.com/docs/guides/function-calling)
 
 ## Deployment Modes
 

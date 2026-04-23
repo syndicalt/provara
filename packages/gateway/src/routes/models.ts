@@ -4,6 +4,7 @@ import { requests, costLogs, feedback } from "@provara/db";
 import { sql, eq, and } from "drizzle-orm";
 import { getPricing } from "../cost/pricing.js";
 import type { ProviderRegistry } from "../providers/index.js";
+import { modelSupportsTools } from "../providers/capabilities.js";
 
 interface ModelStatsContext {
   db: Db;
@@ -79,6 +80,9 @@ export function createModelRoutes(ctx: ModelStatsContext) {
         pricing: pricing
           ? { inputPer1M: pricing[0], outputPer1M: pricing[1] }
           : null,
+        capabilities: {
+          supportsTools: modelSupportsTools(provider, model),
+        },
         stats: stats
           ? {
               requestCount: stats.requestCount,

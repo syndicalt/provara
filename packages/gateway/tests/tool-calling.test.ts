@@ -119,6 +119,42 @@ describe("#298 tool calling end-to-end", () => {
     expect(hit?.toolCallsCount).toBe(0);
   });
 
+  it("returns 400 tools_unsupported when the resolved model does not support tools (#301)", async () => {
+    // Build an app with an Ollama provider serving a model NOT in the
+    // tool-capable allowlist. Fake provider can accept anything; the gate
+    // lives in the router, not the adapter.
+    const db = await (await import("./_setup/db.js")).makeTestDb();
+    const provider = (await import("./_setup/fake-provider.js")).makeFakeProvider({
+      name: "ollama",
+      models: ["gemma:7b"],
+    });
+    const registry = (await import("./_setup/fake-registry.js")).makeFakeRegistry([provider]);
+    const app = await (await import("../src/router.js")).createRouter({ registry, db });
+
+    const res = await app.request("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "gemma:7b",
+        provider: "ollama",
+        messages: [{ role: "user", content: "weather?" }],
+        tools: [getWeatherTool],
+        tool_choice: "auto",
+        temperature: 0,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code?: string; type?: string; message?: string };
+    };
+    expect(body.error.code).toBe("tools_unsupported");
+    expect(body.error.type).toBe("model_capability_error");
+    // Provider must NOT have been called — the gate fires before routing commits
+    // to a completion.
+    expect(provider.calls).toHaveLength(0);
+  });
+
   it("does not cross-hit the cache when tools differ", async () => {
     const { app, provider } = await buildToolApp({
       responseToolCalls: [weatherToolCall],

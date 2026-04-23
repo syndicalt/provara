@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ProviderRegistry, CompletionRequest, CompletionResponse, StreamChunk } from "./providers/index.js";
+import { modelSupportsTools } from "./providers/capabilities.js";
 import type { Db } from "@provara/db";
 import { requests } from "@provara/db";
 import { nanoid } from "nanoid";
@@ -344,7 +345,13 @@ export async function createRouter(ctx: RouterContext) {
   // Reload providers endpoint (call after adding/removing API keys)
   app.post("/v1/providers/reload", async (c) => {
     await ctx.registry.reload();
-    const providers = ctx.registry.list().map((p) => ({ name: p.name, models: p.models }));
+    const providers = ctx.registry.list().map((p) => ({
+      name: p.name,
+      models: p.models,
+      capabilities: Object.fromEntries(
+        p.models.map((m) => [m, { supportsTools: modelSupportsTools(p.name, m) }]),
+      ),
+    }));
     return c.json({ reloaded: true, providers });
   });
 
@@ -549,6 +556,26 @@ export async function createRouter(ctx: RouterContext) {
         );
       }
       throw err;
+    }
+
+    // Tool-calling capability gate (#301). Fails fast with a clear error when
+    // the resolved model does not support tool calling but the request carries
+    // tools. Better than letting the upstream provider return an opaque 400.
+    if (
+      Array.isArray(request.tools) &&
+      request.tools.length > 0 &&
+      !modelSupportsTools(routingResult.provider, routingResult.model)
+    ) {
+      return c.json(
+        {
+          error: {
+            code: "tools_unsupported",
+            message: `Model ${routingResult.model} on provider ${routingResult.provider} does not support tool calling. Pick a tool-capable model or drop the tools field.`,
+            type: "model_capability_error",
+          },
+        },
+        400,
+      );
     }
 
     // Check cache before calling any provider.
@@ -1417,6 +1444,11 @@ export async function createRouter(ctx: RouterContext) {
     const providers = ctx.registry.list().map((p) => ({
       name: p.name,
       models: p.models,
+      // Per-model capability map (#301). Sibling field (not inside `models`)
+      // so existing consumers that treat `models` as `string[]` keep working.
+      capabilities: Object.fromEntries(
+        p.models.map((m) => [m, { supportsTools: modelSupportsTools(p.name, m) }]),
+      ),
     }));
     return c.json({ providers });
   });
