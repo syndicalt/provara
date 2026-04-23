@@ -377,7 +377,6 @@ export async function createRouter(ctx: RouterContext) {
        */
       requires_structured_output?: boolean;
       response_format?: { type?: string };
-      tools?: unknown[];
     }>();
     const {
       provider: providerName,
@@ -386,10 +385,11 @@ export async function createRouter(ctx: RouterContext) {
       cache: cacheParam,
       requires_structured_output,
       response_format,
-      tools,
       prompt_version_id: promptVersionId,
       ...rest
     } = body;
+    // `rest` carries `tools`, `tool_choice`, `parallel_tool_calls` through to
+    // the provider adapter untouched. Do not destructure them out.
     const request = rest as CompletionRequest;
 
     // Validate hints at the edge. The TypeScript types constrain these to
@@ -419,7 +419,7 @@ export async function createRouter(ctx: RouterContext) {
     const autoDetectStructured =
       response_format?.type === "json_schema" ||
       response_format?.type === "json_object" ||
-      (Array.isArray(tools) && tools.length > 0);
+      (Array.isArray(request.tools) && request.tools.length > 0);
     const requiresStructuredOutput =
       typeof requires_structured_output === "boolean"
         ? requires_structured_output
@@ -446,6 +446,12 @@ export async function createRouter(ctx: RouterContext) {
       // and leave image parts intact.
       for (let i = 0; i < request.messages.length; i++) {
         const msg = request.messages[i];
+        // Skip role: "tool" messages. Their content is structured JSON output
+        // from a tool execution; regex-based redaction can corrupt that JSON
+        // and break the next turn of the assistant. Assistant messages that
+        // carry tool_calls still get their string content redacted, but the
+        // spread-preserve of `...msg` below keeps tool_calls arguments intact.
+        if (msg.role === "tool") continue;
         const textForScan = typeof msg.content === "string"
           ? msg.content
           : msg.content.filter((p) => p.type === "text").map((p) => (p as { type: "text"; text: string }).text).join("\n");
@@ -640,7 +646,13 @@ export async function createRouter(ctx: RouterContext) {
     };
 
     if (!skipCache) {
-      const cached = getCached(request.messages, routingResult.provider, routingResult.model);
+      const cached = getCached(
+        request.messages,
+        routingResult.provider,
+        routingResult.model,
+        request.tools,
+        request.tool_choice,
+      );
       if (cached) {
         return returnCachedHit(
           cached.content,
@@ -856,7 +868,15 @@ export async function createRouter(ctx: RouterContext) {
                 usage,
                 latencyMs: streamLatencyMs,
               };
-              putCache(request.messages, usedProvider, usedModel, completedResponse);
+              putCache(
+                request.messages,
+                usedProvider,
+                usedModel,
+                completedResponse,
+                undefined,
+                request.tools,
+                request.tool_choice,
+              );
               if (semanticCache) {
                 void semanticCache
                   .put(request.messages, tenantId, usedProvider, usedModel, completedResponse)
@@ -1077,7 +1097,15 @@ export async function createRouter(ctx: RouterContext) {
                     usage,
                     latencyMs,
                   };
-                  putCache(request.messages, usedProvider, usedModel, completedResponse);
+                  putCache(
+                    request.messages,
+                    usedProvider,
+                    usedModel,
+                    completedResponse,
+                    undefined,
+                    request.tools,
+                    request.tool_choice,
+                  );
                   if (semanticCache) {
                     void semanticCache
                       .put(request.messages, tenantId, usedProvider, usedModel, completedResponse)
@@ -1250,7 +1278,15 @@ export async function createRouter(ctx: RouterContext) {
 
     // Cache the response for future identical requests
     if (!skipCache) {
-      putCache(request.messages, usedProvider, usedModel, response);
+      putCache(
+        request.messages,
+        usedProvider,
+        usedModel,
+        response,
+        undefined,
+        request.tools,
+        request.tool_choice,
+      );
       if (semanticCache) {
         void semanticCache
           .put(request.messages, tenantId, usedProvider, usedModel, response)
