@@ -80,6 +80,19 @@ function formatBucket(bucket: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function formatTimestamp(ts: string): string {
+  const d = new Date(ts);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { name: string; value: number; color: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
@@ -106,6 +119,14 @@ const qualityColumns: Column<QualityByModel>[] = [
 ];
 
 const feedbackColumns: Column<FeedbackEntry>[] = [
+  {
+    key: "createdAt", label: "Time", sortable: true,
+    render: (row) => (
+      <span className="text-xs text-zinc-400 whitespace-nowrap" title={new Date(row.createdAt).toLocaleString()}>
+        {formatTimestamp(row.createdAt)}
+      </span>
+    ),
+  },
   {
     key: "source", label: "Source", sortable: true, filterable: true,
     render: (row) => (
