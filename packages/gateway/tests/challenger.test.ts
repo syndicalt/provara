@@ -5,6 +5,7 @@ import type { Db } from "@provara/db";
 import { makeTestDb } from "./_setup/db.js";
 import {
   LOW_SCORE_THRESHOLD,
+  LOW_SCORE_MIN_SAMPLES_FOR_PROBE,
   findLowScoringCells,
   pickChallenger,
   spawnChallengerTest,
@@ -57,13 +58,39 @@ describe("findLowScoringCells", () => {
     expect(cells[0].incumbent.qualityScore).toBeCloseTo(1.8);
   });
 
-  it("ignores cells where the only model is below MIN_SAMPLES", async () => {
+  it("ignores cells where the only model is below the probe-sample floor", async () => {
     const db = await makeTestDb();
-    // Low score, but not enough samples to trust it.
+    // 1 sample is below LOW_SCORE_MIN_SAMPLES_FOR_PROBE (default 2)
+    // — too few to rule out a fluke.
     await seedScore(db, "vision", "simple", "openai", "gpt-4.1-mini", 1.0, 1);
 
     const cells = await findLowScoringCells(db);
     expect(cells).toHaveLength(0);
+  });
+
+  it("flags cells whose only model has at least the probe-sample floor (below MIN_SAMPLES is ok)", async () => {
+    const db = await makeTestDb();
+    // 2 samples — meets the probe floor (default 2) but stays below
+    // MIN_SAMPLES (default 5). The dashboard's manual button should
+    // surface, even though Track 2 auto exploration would not boost
+    // this cell yet.
+    expect(LOW_SCORE_MIN_SAMPLES_FOR_PROBE).toBeLessThan(MIN_SAMPLES);
+    await seedScore(db, "vision", "complex", "openai", "gpt-4.1-mini", 1.5, 2);
+
+    const cells = await findLowScoringCells(db);
+    expect(cells).toHaveLength(1);
+    expect(cells[0].taskType).toBe("vision");
+    expect(cells[0].incumbent.sampleCount).toBe(2);
+  });
+
+  it("respects an explicit minSamples override", async () => {
+    const db = await makeTestDb();
+    await seedScore(db, "vision", "simple", "openai", "gpt-4.1-mini", 1.5, 3);
+
+    const strict = await findLowScoringCells(db, { minSamples: 5 });
+    expect(strict).toHaveLength(0);
+    const relaxed = await findLowScoringCells(db, { minSamples: 1 });
+    expect(relaxed).toHaveLength(1);
   });
 
   it("respects the threshold option override", async () => {

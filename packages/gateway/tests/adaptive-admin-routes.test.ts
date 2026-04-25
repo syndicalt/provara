@@ -194,7 +194,7 @@ describe("POST /v1/admin/adaptive/spawn-challenger", () => {
     await seedScore(db, "summarization", "simple", "openai", "gpt-4.1-nano", 1.8);
     // Add a previously-scored google model — it should not be picked
     // even though google is a different family.
-    await seedScore(db, "summarization", "simple", "google", "gemini-2.0-flash", 4.0, 2); // below MIN_SAMPLES so cell is still lonely
+    await seedScore(db, "summarization", "simple", "google", "gemini-2.0-flash", 4.0, 1); // 1 sample is below the probe floor — cell is still lonely
     const registry = makeRegistry([
       makeProvider("openai", ["gpt-4.1-nano"]),
       makeProvider("google", ["gemini-2.0-flash", "gemini-2.5-flash"]),
