@@ -6,7 +6,7 @@ import {
 } from "recharts";
 import { formatNumber } from "../../../lib/format";
 import { DataTable, type Column } from "../../../components/data-table";
-import { AdaptiveHeatmap, type AdaptiveCell } from "../../../components/adaptive-heatmap";
+import { AdaptiveHeatmap, type AdaptiveCell, type LowScoreCell } from "../../../components/adaptive-heatmap";
 import { RegressionPanel } from "../../../components/regression-panel";
 import { useAdaptiveScoreBuffer } from "../../../hooks/use-adaptive-score-buffer";
 import { gatewayClientFetch, gatewayFetchRaw } from "../../../lib/gateway-client";
@@ -158,6 +158,9 @@ export default function QualityPage() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [savingConfig, setSavingConfig] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [lowScoreCells, setLowScoreCells] = useState<LowScoreCell[]>([]);
+  const [spawningKey, setSpawningKey] = useState<string | null>(null);
+  const [spawnError, setSpawnError] = useState<string | null>(null);
   const { getSparkline, pulsedKeys } = useAdaptiveScoreBuffer(adaptiveCells);
 
   const fetchTrend = useCallback(async () => {
@@ -168,26 +171,38 @@ export default function QualityPage() {
     } catch {}
   }, [trendRange]);
 
+  const refetchLowScoreCells = useCallback(async () => {
+    try {
+      const res = await gatewayFetchRaw("/v1/admin/adaptive/low-score-cells");
+      if (!res.ok) return;
+      const data = await res.json();
+      setLowScoreCells(data.cells || []);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     async function fetchData() {
       try {
-        const [modelRes, adaptiveRes, feedbackRes, configRes, providersRes] = await Promise.all([
+        const [modelRes, adaptiveRes, feedbackRes, configRes, providersRes, lowScoreRes] = await Promise.all([
           gatewayFetchRaw("/v1/feedback/quality/by-model"),
           gatewayFetchRaw("/v1/analytics/adaptive/scores"),
           gatewayFetchRaw("/v1/feedback?limit=20"),
           gatewayFetchRaw("/v1/feedback/judge/config"),
           gatewayFetchRaw("/v1/providers"),
+          gatewayFetchRaw("/v1/admin/adaptive/low-score-cells"),
         ]);
         const modelData = await modelRes.json();
         const adaptiveData = await adaptiveRes.json();
         const feedbackData = await feedbackRes.json();
         const configData = await configRes.json();
         const providersData = await providersRes.json();
+        const lowScoreData = lowScoreRes.ok ? await lowScoreRes.json() : { cells: [] };
         setByModel(modelData.quality || []);
         setAdaptiveCells(adaptiveData.cells || []);
         setRecentFeedback(feedbackData.feedback || []);
         setJudgeConfigState(configData);
         setProviders(providersData.providers || []);
+        setLowScoreCells(lowScoreData.cells || []);
       } catch (err) {
         console.error("Failed to fetch quality data:", err);
       } finally {
@@ -196,6 +211,31 @@ export default function QualityPage() {
     }
     fetchData();
   }, []);
+
+  const handleSpawnChallenger = useCallback(
+    async (taskType: string, complexity: string) => {
+      const key = `${taskType}::${complexity}`;
+      setSpawningKey(key);
+      setSpawnError(null);
+      try {
+        const res = await gatewayFetchRaw("/v1/admin/adaptive/spawn-challenger", {
+          method: "POST",
+          body: JSON.stringify({ taskType, complexity }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          setSpawnError(data?.error?.message || `Failed to spawn challenger (${res.status})`);
+          return;
+        }
+        await refetchLowScoreCells();
+      } catch (err) {
+        setSpawnError(err instanceof Error ? err.message : "Failed to spawn challenger");
+      } finally {
+        setSpawningKey(null);
+      }
+    },
+    [refetchLowScoreCells],
+  );
 
   useEffect(() => {
     fetchTrend();
@@ -358,7 +398,17 @@ export default function QualityPage() {
         <p className="text-sm text-zinc-400 mb-3">
           Live quality EMA per routing cell. Each strip is a candidate model — color shows score, opacity shows sample confidence, dashed outlines mark models still below the adaptive-routing threshold.
         </p>
-        <AdaptiveHeatmap cells={adaptiveCells} pulsedKeys={pulsedKeys} getSparkline={getSparkline} />
+        <AdaptiveHeatmap
+          cells={adaptiveCells}
+          pulsedKeys={pulsedKeys}
+          getSparkline={getSparkline}
+          lowScoreCells={lowScoreCells}
+          onSpawnChallenger={handleSpawnChallenger}
+          spawningKey={spawningKey}
+        />
+        {spawnError && (
+          <p className="text-xs text-rose-400 mt-2">{spawnError}</p>
+        )}
       </section>
 
       {/* Silent-regression detection */}

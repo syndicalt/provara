@@ -36,6 +36,20 @@ export const STALE_EXPLORATION_RATE = numFromEnv(process.env.PROVARA_STALE_EXPLO
 export const REGRESSED_EXPLORATION_RATE = numFromEnv(process.env.PROVARA_REGRESSED_EXPLORATION_RATE, 0.5);
 
 /**
+ * Exploration rate applied when the cell's incumbent EMA is at or below
+ * `LOW_SCORE_THRESHOLD` (see `challenger.ts`). The default routing rate
+ * (10%) is calibrated for healthy cells where the cost of a "wasted"
+ * exploration is real. When the incumbent is *known to be poor*, that
+ * cost analysis flips — every adaptive pick is already paying a
+ * quality penalty, so trying a fresh candidate is the cheaper move.
+ *
+ * Tier-gated by the caller (`router.ts`): only Pro+ tenants opt into
+ * this boost. Free-tier traffic still uses the base 10% rate so the
+ * boost stays a paid-tier differentiator (#152).
+ */
+export const LOW_SCORE_EXPLORATION_RATE = numFromEnv(process.env.PROVARA_LOW_SCORE_EXPLORATION_RATE, 0.5);
+
+/**
  * How long a cell can go without any score update before it's treated as
  * stale. Default 30 days. Units: milliseconds internally; the env var is
  * in days for human readability.
@@ -49,21 +63,26 @@ export const STALE_AFTER_MS =
  * Requires at least 2 eligible candidates — there's no meaningful choice
  * to make otherwise.
  *
- * Rate precedence: `regressed > stale > normal`. A cell currently firing
- * an unresolved regression is the strongest signal we need to try
- * alternatives, so it takes priority if both flags are set. Detection
- * for both lives in `adaptive/router.ts` (stale) and `regression.ts`
- * (regressed).
+ * Rate precedence: `regressed > lowScore > stale > normal`. A cell
+ * firing an unresolved regression is the strongest signal we need to
+ * try alternatives. Low-score sits next: an active "this incumbent is
+ * known bad" signal is louder than the passive "this cell hasn't seen
+ * traffic" of stale. Detection lives in `adaptive/router.ts` (stale,
+ * lowScore) and `regression.ts` (regressed). The `lowScore` flag is
+ * Pro+ tier-gated by `router.ts` — free-tier callers always pass
+ * `lowScore: false` regardless of cell quality.
  */
 export function pickExploration(
   allCandidates: RouteTarget[],
   availableProviders: Set<string>,
-  options: { stale?: boolean; regressed?: boolean } = {},
+  options: { stale?: boolean; regressed?: boolean; lowScore?: boolean } = {},
 ): RouteTarget | null {
   const eligible = allCandidates.filter((c) => availableProviders.has(c.provider));
   if (eligible.length <= 1) return null;
   const rate = options.regressed
     ? REGRESSED_EXPLORATION_RATE
+    : options.lowScore
+    ? LOW_SCORE_EXPLORATION_RATE
     : options.stale
     ? STALE_EXPLORATION_RATE
     : EXPLORATION_RATE;

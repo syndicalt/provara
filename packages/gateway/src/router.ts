@@ -48,6 +48,7 @@ import { createEmbeddingProvider } from "./embeddings/index.js";
 import { getMode } from "./config.js";
 import type { Scheduler } from "./scheduler/index.js";
 import { getActiveAutoAbCells } from "./routing/adaptive/auto-ab.js";
+import { createAdaptiveAdminRoutes } from "./routes/adaptive-admin.js";
 import { createRegressionRoutes } from "./routes/regression.js";
 import { createMigrationRoutes } from "./routes/migrations.js";
 import { createWebhookRoutes } from "./routes/webhooks.js";
@@ -1468,6 +1469,14 @@ export async function createRouter(ctx: RouterContext) {
     }));
     return c.json({ cells });
   });
+
+  // Low-scoring-cell detection + manual challenger probe (Track 3).
+  // Free-tier capability: the heuristic and challenger picker run
+  // server-side regardless of subscription so every operator can see
+  // the matrix gap and act on it. Tier-gating happens one layer down
+  // in `routing/adaptive/exploration.ts` (Track 2 — automatic boosted
+  // exploration on low-score cells). See `routes/adaptive-admin.ts`.
+  app.route("/v1/admin/adaptive", createAdaptiveAdminRoutes(ctx.db, () => ctx.registry));
 
   // Live traffic tap (#263). SSE stream of completed requests, scoped to the
   // caller's tenant. In-process pub/sub — the router publishes to an emitter

@@ -219,6 +219,12 @@ The adaptive winner isn't chosen on quality alone. Each candidate is scored agai
 
 Profiles can be set per API token (via `/v1/admin/tokens`) so a production workload and a throwaway experiment can share the same adaptive scores but route differently.
 
+### Lonely-low-cell probe
+
+Some cells of the matrix end up with a single scored model that's just *bad* — a 1.8 sitting alone at the top of a column with no challenger to dethrone it. Provara surfaces these on the dashboard with a red border and a one-click **Probe** button that spawns a 50/50 A/B test against a capability-matched challenger. The picker prefers a different provider family and excludes models already scored in the cell, so the probe gathers genuinely new signal. Available on every tier — uses the standard A/B-test infrastructure, not the auto-A/B scheduler.
+
+For Pro+ tenants, the same detection wires into the routing path itself: when a request lands in a cell whose incumbent is at or below `PROVARA_LOW_SCORE_THRESHOLD` (default `2.5`), the ε-greedy exploration rate jumps from the base 10% to `PROVARA_LOW_SCORE_EXPLORATION_RATE` (default 50%). Free traffic stays on the base rate, so this is a paid-tier differentiator.
+
 ## Silent-Regression Detection
 
 **The problem.** You're using a hosted model — `gpt-4o-mini`, `claude-haiku`, `gemini-2.5-flash`, any of them. One Tuesday afternoon, the provider pushes a new version under the same name. Maybe they tuned for safety, or shortened context usage, or swapped the tokenizer. Your API calls keep returning 200s. Your users start emailing you that replies feel "off" — vaguer, shorter, occasionally wrong in ways they weren't before. By the time you notice, a week has passed. Nothing in your monitoring caught it, because nothing was broken. Quality just *drifted*.

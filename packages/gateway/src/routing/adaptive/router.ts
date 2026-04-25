@@ -4,6 +4,7 @@ import type { RouteTarget } from "../types.js";
 import { EMA_ALPHA, ema, getQualityAlpha } from "./ema.js";
 import { MIN_SAMPLES, computeRouteScore, getModelCost, resolveWeights } from "./scoring.js";
 import { isStaleTimestamp, pickExploration } from "./exploration.js";
+import { LOW_SCORE_THRESHOLD } from "./challenger.js";
 import { POOL_KEY, createScoreStore, type ScoreStore } from "./score-store.js";
 import { loadScoresFromDb, persistScore } from "./persistence.js";
 import { getTenantIsolationPolicy, type IsolationPolicy } from "./isolation-policy.js";
@@ -209,7 +210,20 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
     const primaryCell = tenantCell && tenantCell.size > 0 ? tenantCell : poolCell;
     const stale = isCellStale(primaryCell);
     const regressed = isCellRegressing(taskType, complexity);
-    const exploration = pickExploration(allCandidates, availableProviders, { stale, regressed });
+    // Low-score detection (Track 2 of #lonely-low-cells). A cell qualifies
+    // when its top sufficiently-sampled candidate is at or below
+    // `LOW_SCORE_THRESHOLD`. The MIN_SAMPLES floor matters here — a
+    // 1.0 score on a single sample is noise, not a quality verdict.
+    // Tier-gated to Pro+ tenants per the monetization split (#152): free
+    // traffic stays on the base 10% rate so the boost is a paid-tier
+    // differentiator. Free + anonymous tenants resolve to FREE_POLICY
+    // with `tier: "free"`, so the inequality below excludes them.
+    const lowScore = policy.tier !== "free" && isLowScoringCell(primaryCell);
+    const exploration = pickExploration(allCandidates, availableProviders, {
+      stale,
+      regressed,
+      lowScore,
+    });
     if (exploration) {
       return { target: exploration, via: "exploration" };
     }
@@ -263,6 +277,30 @@ export async function createAdaptiveRouter(db: Db, options: AdaptiveRouterOption
 
   function isCellStale(cellMap: Map<string, ModelScore> | undefined): boolean {
     return isStaleTimestamp(cellLastUpdated(cellMap));
+  }
+
+  /**
+   * The cell's top sufficiently-sampled candidate is at or below
+   * `LOW_SCORE_THRESHOLD`. Mirrors the offline detector in
+   * `challenger.ts#findLowScoringCells` so the routing-time boost and
+   * the dashboard's manual probe agree on what "low" means.
+   *
+   * Note we only consider models above MIN_SAMPLES — the same floor the
+   * EMA-pick step uses. A cold cell (all candidates below the floor)
+   * is not "low-score," it's "no signal yet" — exploration still runs
+   * via the cold-start branch in `pickExploration` itself.
+   */
+  function isLowScoringCell(cellMap: Map<string, ModelScore> | undefined): boolean {
+    if (!cellMap || cellMap.size === 0) return false;
+    let topEligible: number | null = null;
+    for (const s of cellMap.values()) {
+      if (s.sampleCount < MIN_SAMPLES) continue;
+      if (topEligible === null || s.qualityScore > topEligible) {
+        topEligible = s.qualityScore;
+      }
+    }
+    if (topEligible === null) return false;
+    return topEligible <= LOW_SCORE_THRESHOLD;
   }
 
   /** Public read for analytics/UI: is this cell past the stale threshold? */
