@@ -34,11 +34,31 @@ export interface SparklinePoint {
   qualityScore: number;
 }
 
+/** Cells the gateway has flagged as having a single sufficiently-sampled
+ *  but low-scoring incumbent. The heatmap renders a "Spawn challenger"
+ *  button overlay on these cells; the click handler is provided by the
+ *  parent so the actual POST + refresh choreography lives there. */
+export interface LowScoreCell {
+  taskType: string;
+  complexity: string;
+  incumbent: { provider: string; model: string; qualityScore: number; sampleCount: number };
+}
+
 interface Props {
   cells: AdaptiveCell[];
   minSamples?: number;
   pulsedKeys?: Set<string>;
   getSparkline?: (key: string) => SparklinePoint[];
+  /** Cells eligible for the manual challenger probe — provided by the
+   *  caller via the gateway's `GET /v1/admin/adaptive/low-score-cells`
+   *  endpoint. When undefined, no overlay is rendered. */
+  lowScoreCells?: LowScoreCell[];
+  /** Click handler for the per-cell "Spawn challenger" button. The
+   *  caller is responsible for the POST and any subsequent refresh. */
+  onSpawnChallenger?: (taskType: string, complexity: string) => void | Promise<void>;
+  /** Cell key currently mid-spawn — disables its button and shows a
+   *  spinner. Format: "${taskType}::${complexity}". */
+  spawningKey?: string | null;
 }
 
 const TASK_TYPES = ["coding", "creative", "summarization", "qa", "general", "vision"] as const;
@@ -136,10 +156,22 @@ function Strip({
   );
 }
 
-export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparkline }: Props) {
+export function AdaptiveHeatmap({
+  cells,
+  minSamples = 5,
+  pulsedKeys,
+  getSparkline,
+  lowScoreCells,
+  onSpawnChallenger,
+  spawningKey,
+}: Props) {
   const cellMap = new Map<string, AdaptiveCell>();
   for (const c of cells) {
     cellMap.set(`${c.taskType}:${c.complexity}`, c);
+  }
+  const lowScoreMap = new Map<string, LowScoreCell>();
+  for (const c of lowScoreCells ?? []) {
+    lowScoreMap.set(`${c.taskType}:${c.complexity}`, c);
   }
 
   return (
@@ -166,24 +198,48 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
               const maxSamples = scores.reduce((m, s) => Math.max(m, s.sampleCount), 0);
               const isStale = cell?.isStale === true;
               const hasAutoAb = Boolean(cell?.activeAutoAbTestId);
+              const lowScore = lowScoreMap.get(`${tt}:${cx}`);
+              const cellKeyStr = `${tt}::${cx}`;
+              const isSpawning = spawningKey === cellKeyStr;
               const staleTitle = isStale && cell?.lastUpdatedAt
                 ? `Stale since ${new Date(cell.lastUpdatedAt).toLocaleDateString()} — routing explores more aggressively until fresh signal arrives.`
                 : undefined;
               const autoAbTitle = hasAutoAb ? "Auto-generated A/B experiment active for this cell." : undefined;
-              const cellTitle = [staleTitle, autoAbTitle].filter(Boolean).join(" ") || undefined;
+              const lowScoreTitle = lowScore
+                ? `Only one model scored here — ${lowScore.incumbent.model} at ${lowScore.incumbent.qualityScore.toFixed(2)}. Click "Probe" to spawn a challenger A/B test.`
+                : undefined;
+              const cellTitle = [staleTitle, autoAbTitle, lowScoreTitle].filter(Boolean).join(" ") || undefined;
 
               return (
                 <div
                   key={`${tt}-${cx}`}
                   title={cellTitle}
                   className={`border-b border-l p-1 min-h-[64px] relative ${
-                    isStale ? "border-amber-800/60 bg-amber-950/10" : "border-zinc-800"
+                    lowScore
+                      ? "border-rose-900/70 bg-rose-950/15"
+                      : isStale
+                        ? "border-amber-800/60 bg-amber-950/10"
+                        : "border-zinc-800"
                   }`}
                 >
                   {hasAutoAb && (
                     <span className="absolute top-1 right-1 z-20 text-[10px] px-1 py-0.5 rounded bg-indigo-900/70 text-indigo-200 font-medium pointer-events-none">
                       A/B
                     </span>
+                  )}
+                  {lowScore && !hasAutoAb && onSpawnChallenger && (
+                    <button
+                      type="button"
+                      disabled={isSpawning}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onSpawnChallenger(tt, cx);
+                      }}
+                      className="absolute top-1 right-1 z-20 text-[10px] px-1.5 py-0.5 rounded bg-rose-900/80 hover:bg-rose-800 text-rose-100 font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
+                      title={`Spawn a 50/50 A/B test pitting ${lowScore.incumbent.model} against a fresh challenger.`}
+                    >
+                      {isSpawning ? "…" : "Probe"}
+                    </button>
                   )}
                   {scores.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-xs text-zinc-600">
@@ -236,6 +292,10 @@ export function AdaptiveHeatmap({ cells, minSamples = 5, pulsedKeys, getSparklin
           <span className="flex items-center gap-1.5">
             <span className="inline-block w-4 h-3 rounded-sm border border-amber-800/60 bg-amber-950/10" />
             <span>Stale</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="inline-block w-4 h-3 rounded-sm border border-rose-900/70 bg-rose-950/15" />
+            <span>Lonely low</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="inline-block px-1 rounded bg-indigo-900/70 text-indigo-200 text-[9px] font-medium">A/B</span>
