@@ -63,10 +63,9 @@ export interface LowScoreCell {
 }
 
 /**
- * Find cells whose top-scoring model is at or below
- * `LOW_SCORE_THRESHOLD` and is the only candidate with at least
- * `LOW_SCORE_MIN_SAMPLES_FOR_PROBE` samples. Result is sorted by
- * qualityScore ascending so the worst cells surface first.
+ * Find cells with exactly one sufficiently-sampled model at or below
+ * `LOW_SCORE_THRESHOLD`. Result is sorted by qualityScore ascending so
+ * the worst cells surface first.
  *
  * The probe-floor (2 samples by default) is intentionally lower than
  * `MIN_SAMPLES` (5, the bar for hot-path adaptive routing). A user
@@ -106,15 +105,14 @@ export async function findLowScoringCells(
   for (const [, cellRows] of byCell) {
     const eligible = cellRows.filter((r) => r.sampleCount >= minSamples);
     if (eligible.length === 0) continue;
-    const sorted = [...eligible].sort((a, b) => b.qualityScore - a.qualityScore);
-    const top = sorted[0];
-    if (top.qualityScore > threshold) continue;
-    // Lonely-loser semantics: only flag when there is no second
-    // eligible model that could already serve as a credible challenger.
-    // If two models both clear the floor and both score low, the
-    // existing `findTieCells` path (or the user) can pit them against
-    // each other directly; we don't need to dilute the signal here.
-    if (eligible.length > 1) continue;
+    // Lonely-loser semantics: flag a cell when exactly one model has
+    // enough samples and still scores low. The cell may also contain
+    // healthier scored models; those are not the problem this probe is
+    // trying to fix. If multiple eligible models are low, a manual A/B
+    // test is clearer than picking one loser implicitly.
+    const lowEligible = eligible.filter((r) => r.qualityScore <= threshold);
+    if (lowEligible.length !== 1) continue;
+    const top = lowEligible[0];
     out.push({
       taskType: top.taskType,
       complexity: top.complexity,

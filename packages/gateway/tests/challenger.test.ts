@@ -40,7 +40,7 @@ async function seedScore(
 }
 
 describe("findLowScoringCells", () => {
-  it("flags lonely-low cells with a single sufficiently-sampled model", async () => {
+  it("flags lonely-low cells with a single sufficiently-sampled low model", async () => {
     const db = await makeTestDb();
     // Lonely-low candidate: one model below threshold, well-sampled.
     await seedScore(db, "summarization", "simple", "openai", "gpt-4.1-nano", 1.8);
@@ -56,6 +56,19 @@ describe("findLowScoringCells", () => {
     expect(cells[0].taskType).toBe("summarization");
     expect(cells[0].incumbent.model).toBe("gpt-4.1-nano");
     expect(cells[0].incumbent.qualityScore).toBeCloseTo(1.8);
+  });
+
+  it("flags a single low model even when the cell has healthy sampled models", async () => {
+    const db = await makeTestDb();
+    await seedScore(db, "coding", "complex", "anthropic", "claude-opus-4-6", 5.0);
+    await seedScore(db, "coding", "complex", "openai", "gpt-4.1-mini", 4.7);
+    await seedScore(db, "coding", "complex", "openai", "gpt-4.1-nano", 1.5);
+
+    const cells = await findLowScoringCells(db);
+    expect(cells).toHaveLength(1);
+    expect(cells[0].taskType).toBe("coding");
+    expect(cells[0].complexity).toBe("complex");
+    expect(cells[0].incumbent.model).toBe("gpt-4.1-nano");
   });
 
   it("ignores cells where the only model is below the probe-sample floor", async () => {

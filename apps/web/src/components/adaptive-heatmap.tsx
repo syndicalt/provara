@@ -222,24 +222,27 @@ export function AdaptiveHeatmap({
                         : "border-zinc-800"
                   }`}
                 >
-                  {hasAutoAb && (
-                    <span className="absolute top-1 right-1 z-20 text-[10px] px-1 py-0.5 rounded bg-indigo-900/70 text-indigo-200 font-medium pointer-events-none">
-                      A/B
-                    </span>
-                  )}
-                  {lowScore && !hasAutoAb && onSpawnChallenger && (
-                    <button
-                      type="button"
-                      disabled={isSpawning}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void onSpawnChallenger(tt, cx);
-                      }}
-                      className="absolute top-1 right-1 z-20 text-[10px] px-1.5 py-0.5 rounded bg-rose-900/80 hover:bg-rose-800 text-rose-100 font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
-                      title={`Spawn a 50/50 A/B test pitting ${lowScore.incumbent.model} against a fresh challenger.`}
-                    >
-                      {isSpawning ? "…" : "Probe"}
-                    </button>
+                  {(hasAutoAb || (lowScore && onSpawnChallenger)) && (
+                    <div className="mb-1 flex justify-end">
+                      {hasAutoAb ? (
+                        <span className="text-[10px] px-1 py-0.5 rounded bg-indigo-900/70 text-indigo-200 font-medium pointer-events-none">
+                          A/B
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={isSpawning}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onSpawnChallenger?.(tt, cx);
+                          }}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-rose-900/80 hover:bg-rose-800 text-rose-100 font-medium transition-colors disabled:opacity-60 disabled:cursor-wait"
+                          title={`Spawn a 50/50 A/B test pitting ${lowScore!.incumbent.model} against a fresh challenger.`}
+                        >
+                          {isSpawning ? "..." : "Probe"}
+                        </button>
+                      )}
+                    </div>
                   )}
                   {scores.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-xs text-zinc-600">
