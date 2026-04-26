@@ -3,7 +3,6 @@ import { modelScores, abTests, abTestVariants } from "@provara/db";
 import { and, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { isVisionCapable } from "../model-capabilities.js";
-import { MIN_SAMPLES } from "./scoring.js";
 import { POOL_KEY } from "./score-store.js";
 import type { RouteTarget } from "../types.js";
 
@@ -25,6 +24,31 @@ function numEnv(v: string | undefined, fallback: number): number {
  */
 export const LOW_SCORE_THRESHOLD = numEnv(process.env.PROVARA_LOW_SCORE_THRESHOLD, 2.5);
 
+/**
+ * Sample-count floor for the manual "Probe" button (Track 3).
+ *
+ * Decoupled from `MIN_SAMPLES` — the floor that gates *automatic*
+ * adaptive routing — because the use cases differ:
+ *
+ *   - `MIN_SAMPLES` (5 default) is a hot-path stability bar. The
+ *     adaptive router won't route based on a cell's EMA until it has
+ *     enough samples to trust the score isn't noise. Same logic
+ *     applies to Track 2's auto exploration boost — every request
+ *     hits that path, so a flaky boost on a 1-sample fluke would burn
+ *     traffic.
+ *   - `LOW_SCORE_MIN_SAMPLES_FOR_PROBE` (2 default) is a UI floor. A
+ *     human reviewing the matrix can apply judgment that the router
+ *     can't, and clicking Probe is reversible — it just spawns an A/B
+ *     test that gathers more samples. We want the button to surface
+ *     as soon as the score is *plausibly* low, not only after the
+ *     stricter routing threshold is met. Two samples is enough to
+ *     rule out a single-call fluke; below that we still skip.
+ */
+export const LOW_SCORE_MIN_SAMPLES_FOR_PROBE = Math.max(
+  1,
+  Math.floor(numEnv(process.env.PROVARA_LOW_SCORE_MIN_SAMPLES, 2)),
+);
+
 export interface LowScoreCell {
   taskType: string;
   complexity: string;
@@ -39,22 +63,28 @@ export interface LowScoreCell {
 }
 
 /**
- * Find cells whose top-scoring model is below `LOW_SCORE_THRESHOLD` and
- * is the only sufficiently-sampled candidate. The bar for "sufficiently
- * sampled" is `MIN_SAMPLES` — under that we can't trust the low score
- * isn't just noise. Result is sorted by qualityScore ascending so the
- * worst cells surface first.
+ * Find cells with exactly one sufficiently-sampled model at or below
+ * `LOW_SCORE_THRESHOLD`. Result is sorted by qualityScore ascending so
+ * the worst cells surface first.
  *
- * Tenant scope: this scans the pool (`tenantKey IS NULL`) by default —
- * the matching UI lives on the dashboard's pooled view. A future per-
- * tenant variant can pass `options.tenantKey` once tenant-scoped
+ * The probe-floor (2 samples by default) is intentionally lower than
+ * `MIN_SAMPLES` (5, the bar for hot-path adaptive routing). A user
+ * reviewing the dashboard can act on early signal — the Probe button
+ * spawns an A/B test, which is reversible and gathers more samples —
+ * while the routing-time auto-boost (Track 2 in `router.ts`) sticks
+ * with the stricter `MIN_SAMPLES` floor.
+ *
+ * Tenant scope: this scans the pool (`tenantId = POOL_KEY`) by default
+ * — the matching UI lives on the dashboard's pooled view. A future
+ * per-tenant variant can pass `options.tenantId` once tenant-scoped
  * dashboards exist.
  */
 export async function findLowScoringCells(
   db: Db,
-  options: { threshold?: number; tenantId?: string | null } = {},
+  options: { threshold?: number; minSamples?: number; tenantId?: string | null } = {},
 ): Promise<LowScoreCell[]> {
   const threshold = options.threshold ?? LOW_SCORE_THRESHOLD;
+  const minSamples = options.minSamples ?? LOW_SCORE_MIN_SAMPLES_FOR_PROBE;
   const tenantId = options.tenantId ?? POOL_KEY;
 
   const rows = await db
@@ -73,17 +103,16 @@ export async function findLowScoringCells(
 
   const out: LowScoreCell[] = [];
   for (const [, cellRows] of byCell) {
-    const eligible = cellRows.filter((r) => r.sampleCount >= MIN_SAMPLES);
+    const eligible = cellRows.filter((r) => r.sampleCount >= minSamples);
     if (eligible.length === 0) continue;
-    const sorted = [...eligible].sort((a, b) => b.qualityScore - a.qualityScore);
-    const top = sorted[0];
-    if (top.qualityScore > threshold) continue;
-    // Lonely-loser semantics: only flag when there is no second eligible
-    // model that could already serve as a credible challenger. If two
-    // models are both above MIN_SAMPLES and both low, the existing
-    // `findTieCells` path (or the user) can already pit them against
-    // each other; we don't need to dilute the signal here.
-    if (eligible.length > 1) continue;
+    // Lonely-loser semantics: flag a cell when exactly one model has
+    // enough samples and still scores low. The cell may also contain
+    // healthier scored models; those are not the problem this probe is
+    // trying to fix. If multiple eligible models are low, a manual A/B
+    // test is clearer than picking one loser implicitly.
+    const lowEligible = eligible.filter((r) => r.qualityScore <= threshold);
+    if (lowEligible.length !== 1) continue;
+    const top = lowEligible[0];
     out.push({
       taskType: top.taskType,
       complexity: top.complexity,

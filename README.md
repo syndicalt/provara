@@ -223,6 +223,8 @@ Profiles can be set per API token (via `/v1/admin/tokens`) so a production workl
 
 Some cells of the matrix end up with a single scored model that's just *bad* — a 1.8 sitting alone at the top of a column with no challenger to dethrone it. Provara surfaces these on the dashboard with a red border and a one-click **Probe** button that spawns a 50/50 A/B test against a capability-matched challenger. The picker prefers a different provider family and excludes models already scored in the cell, so the probe gathers genuinely new signal. Available on every tier — uses the standard A/B-test infrastructure, not the auto-A/B scheduler.
 
+The button surfaces as soon as the cell has ≥ `PROVARA_LOW_SCORE_MIN_SAMPLES` (default `2`) samples on its incumbent — a deliberately lower bar than the routing-time `MIN_SAMPLES` floor (default `5`). A human reviewing the matrix can apply judgment that the router can't, and Probe is reversible; routing-time decisions can't be.
+
 For Pro+ tenants, the same detection wires into the routing path itself: when a request lands in a cell whose incumbent is at or below `PROVARA_LOW_SCORE_THRESHOLD` (default `2.5`), the ε-greedy exploration rate jumps from the base 10% to `PROVARA_LOW_SCORE_EXPLORATION_RATE` (default 50%). Free traffic stays on the base rate, so this is a paid-tier differentiator.
 
 ## Silent-Regression Detection

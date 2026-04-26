@@ -95,6 +95,25 @@ describe("GET /v1/admin/adaptive/low-score-cells", () => {
     const body = await res.json();
     expect(body.cells).toEqual([]);
   });
+
+  it("returns cells with one low model even when other sampled models are healthy", async () => {
+    await seedScore(db, "coding", "complex", "anthropic", "claude-opus-4-6", 5.0);
+    await seedScore(db, "coding", "complex", "openai", "gpt-4.1-mini", 4.7);
+    await seedScore(db, "coding", "complex", "openai", "gpt-4.1-nano", 1.5);
+
+    const registry = makeRegistry([
+      makeProvider("anthropic", ["claude-opus-4-6"]),
+      makeProvider("openai", ["gpt-4.1-mini", "gpt-4.1-nano"]),
+    ]);
+    const app = buildApp(db, registry);
+    const res = await app.request("/v1/admin/adaptive/low-score-cells");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.cells).toHaveLength(1);
+    expect(body.cells[0].taskType).toBe("coding");
+    expect(body.cells[0].complexity).toBe("complex");
+    expect(body.cells[0].incumbent.model).toBe("gpt-4.1-nano");
+  });
 });
 
 describe("POST /v1/admin/adaptive/spawn-challenger", () => {
@@ -194,7 +213,7 @@ describe("POST /v1/admin/adaptive/spawn-challenger", () => {
     await seedScore(db, "summarization", "simple", "openai", "gpt-4.1-nano", 1.8);
     // Add a previously-scored google model — it should not be picked
     // even though google is a different family.
-    await seedScore(db, "summarization", "simple", "google", "gemini-2.0-flash", 4.0, 2); // below MIN_SAMPLES so cell is still lonely
+    await seedScore(db, "summarization", "simple", "google", "gemini-2.0-flash", 4.0, 1); // 1 sample is below the probe floor — cell is still lonely
     const registry = makeRegistry([
       makeProvider("openai", ["gpt-4.1-nano"]),
       makeProvider("google", ["gemini-2.0-flash", "gemini-2.5-flash"]),
