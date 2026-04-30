@@ -13,6 +13,8 @@ export interface FakeProviderOptions {
   failWith?: Error;
   /** Override the response content. Defaults to a canned reply. */
   responseContent?: string;
+  /** Override the terminal finish reason for complete() and stream(). */
+  finishReason?: CompletionResponse["finish_reason"];
   /** When set, the fake returns these tool_calls on complete() / streams
    *  an equivalent delta plus a `tool_calls` finish_reason on stream(). */
   responseToolCalls?: ToolCall[];
@@ -51,7 +53,7 @@ export function makeFakeProvider(opts: FakeProviderOptions): Provider & {
         tool_calls: opts.responseToolCalls,
         finish_reason: opts.responseToolCalls && opts.responseToolCalls.length > 0
           ? "tool_calls"
-          : "stop",
+          : opts.finishReason ?? "stop",
         usage: { inputTokens: 10, outputTokens: 15 },
         latencyMs: 5,
       };
@@ -79,8 +81,17 @@ export function makeFakeProvider(opts: FakeProviderOptions): Provider & {
         return;
       }
       const content = opts.responseContent ?? `fake reply from ${opts.name}/${request.model}`;
+      if (opts.finishReason === "content_filter") {
+        yield { content, done: true, finish_reason: "content_filter", usage: { inputTokens: 10, outputTokens: 15 } };
+        return;
+      }
       yield { content, done: false };
-      yield { content: "", done: true, usage: { inputTokens: 10, outputTokens: 15 } };
+      yield {
+        content: "",
+        done: true,
+        finish_reason: opts.finishReason,
+        usage: { inputTokens: 10, outputTokens: 15 },
+      };
     },
   };
 

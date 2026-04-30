@@ -104,6 +104,18 @@ function logProviderErrorStack(err: unknown, label: string): void {
   console.warn(`[provider-error-stack ${label}]\n${redactSecrets(chain.join("\n--- caused by ---\n"))}`);
 }
 
+function isRetryableModelRefusal(response: Pick<CompletionResponse, "finish_reason">): boolean {
+  return response.finish_reason === "content_filter";
+}
+
+function isRetryableStreamRefusal(chunk: StreamChunk): boolean {
+  return chunk.done && chunk.finish_reason === "content_filter";
+}
+
+function describeModelRefusal(finishReason: string | undefined): string {
+  return `Model refused with finish_reason=${finishReason ?? "unknown"}`;
+}
+
 function describeProviderError(err: unknown): string {
   if (!(err instanceof Error)) return redactSecrets(String(err));
   const parts: string[] = [];
@@ -1006,7 +1018,8 @@ export async function createRouter(ctx: RouterContext) {
       let usedFallback = routingResult.usedFallback;
       let lastError: unknown;
 
-      for (const attempt of attempts) {
+      for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+        const attempt = attempts[attemptIndex];
         if (failedProviders.has(attempt.provider)) continue;
         const provider = ctx.registry.get(attempt.provider);
         if (!provider) continue;
@@ -1024,6 +1037,14 @@ export async function createRouter(ctx: RouterContext) {
             ),
           ]);
 
+          const firstChunkRefused = !first.done && isRetryableStreamRefusal(first.value);
+          if (firstChunkRefused && attemptIndex < attempts.length - 1) {
+            const msg = describeModelRefusal(first.value.finish_reason);
+            attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
+            console.warn(`Provider ${attempt.provider}/${attempt.model} refused:`, msg);
+            continue;
+          }
+
           if (first.done) continue;
 
           usedProvider = attempt.provider;
@@ -1038,9 +1059,14 @@ export async function createRouter(ctx: RouterContext) {
               let fullContent = "";
               let usage = { inputTokens: 0, outputTokens: 0 };
 
-              const emitChunk = (chunk: { content: string; done: boolean; usage?: { inputTokens: number; outputTokens: number } }) => {
+              const emitChunk = (chunk: StreamChunk) => {
                 fullContent += chunk.content;
                 if (chunk.usage) usage = chunk.usage;
+                const sseDelta: Record<string, unknown> = chunk.done ? {} : {};
+                if (!chunk.done && chunk.content) sseDelta.content = chunk.content;
+                if (chunk.tool_calls && chunk.tool_calls.length > 0) {
+                  sseDelta.tool_calls = chunk.tool_calls;
+                }
                 const sseData = JSON.stringify({
                   id: `chatcmpl-${requestId}`,
                   object: "chat.completion.chunk",
@@ -1048,8 +1074,8 @@ export async function createRouter(ctx: RouterContext) {
                   model: usedModel,
                   choices: [{
                     index: 0,
-                    delta: chunk.done ? {} : { content: chunk.content },
-                    finish_reason: chunk.done ? "stop" : null,
+                    delta: sseDelta,
+                    finish_reason: chunk.done ? chunk.finish_reason ?? "stop" : null,
                   }],
                 });
                 controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
@@ -1234,7 +1260,8 @@ export async function createRouter(ctx: RouterContext) {
     let lastError: unknown;
     let latencyMs = 0;
 
-    for (const attempt of attempts) {
+    for (let attemptIndex = 0; attemptIndex < attempts.length; attemptIndex++) {
+      const attempt = attempts[attemptIndex];
       if (failedProviders.has(attempt.provider)) continue;
       const provider = ctx.registry.get(attempt.provider);
       if (!provider) continue;
@@ -1247,6 +1274,12 @@ export async function createRouter(ctx: RouterContext) {
             setTimeout(() => reject(new Error(`Timed out after ${COMPLETION_TIMEOUT_MS}ms`)), COMPLETION_TIMEOUT_MS)
           ),
         ]);
+        if (isRetryableModelRefusal(result) && attemptIndex < attempts.length - 1) {
+          const msg = describeModelRefusal(result.finish_reason);
+          attemptErrors.push({ provider: attempt.provider, model: attempt.model, error: msg });
+          console.warn(`Provider ${attempt.provider}/${attempt.model} refused:`, msg);
+          continue;
+        }
         response = result;
         latencyMs = Math.round(performance.now() - start);
         usedProvider = attempt.provider;
