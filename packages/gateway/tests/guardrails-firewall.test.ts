@@ -6,14 +6,21 @@ import { createGuardrailRoutes } from "../src/routes/guardrails.js";
 import { PROMPT_INJECTION_FIREWALL_TYPE } from "../src/guardrails/patterns.js";
 import { __testSetTenant } from "../src/auth/tenant.js";
 import { makeTestDb } from "./_setup/db.js";
+import { makeFakeProvider } from "./_setup/fake-provider.js";
+import { makeFakeRegistry } from "./_setup/fake-registry.js";
+import type { ProviderRegistry } from "../src/providers/index.js";
 
-function appFor(db: Parameters<typeof createGuardrailRoutes>[0], tenantId: string) {
+function appFor(
+  db: Parameters<typeof createGuardrailRoutes>[0],
+  tenantId: string,
+  registry?: ProviderRegistry,
+) {
   const app = new Hono();
   app.use("*", async (c, next) => {
     __testSetTenant(c.req.raw, tenantId);
     await next();
   });
-  app.route("/", createGuardrailRoutes(db));
+  app.route("/", createGuardrailRoutes(db, registry));
   return app;
 }
 
@@ -167,6 +174,71 @@ describe("guardrail context scan API", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ source: "webpage", content: "hello" }),
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: { type: string } };
+    expect(body.error.type).toBe("validation_error");
+  });
+
+  it("runs semantic prompt injection judge when requested", async () => {
+    const db = await makeTestDb();
+    const judgeProvider = makeFakeProvider({
+      name: "openai",
+      models: ["gpt-4.1-nano"],
+      responseContent: JSON.stringify({
+        flagged: true,
+        confidence: 0.92,
+        riskLevel: "high",
+        category: "indirect_injection",
+        evidence: "The retrieved content instructs the assistant to ignore prior instructions.",
+        recommendedAction: "quarantine",
+      }),
+    });
+    const app = appFor(db, "tenant-semantic", makeFakeRegistry([judgeProvider]));
+
+    const res = await app.request("/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "retrieved_context",
+        mode: "semantic",
+        content: "A benign-looking document with a subtle hidden instruction.",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      scan: {
+        mode: string;
+        decision: string;
+        passed: boolean;
+        semantic: {
+          flagged: boolean;
+          confidence: number;
+          category: string;
+          judge: { provider: string; model: string };
+        };
+      };
+    };
+
+    expect(body.scan.mode).toBe("semantic");
+    expect(body.scan.decision).toBe("quarantine");
+    expect(body.scan.passed).toBe(false);
+    expect(body.scan.semantic.flagged).toBe(true);
+    expect(body.scan.semantic.category).toBe("indirect_injection");
+    expect(body.scan.semantic.judge).toEqual({ provider: "openai", model: "gpt-4.1-nano" });
+    expect(judgeProvider.calls).toHaveLength(1);
+  });
+
+  it("validates scan mode", async () => {
+    const db = await makeTestDb();
+    const app = appFor(db, "tenant-scan");
+
+    const res = await app.request("/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "user_input", mode: "deep", content: "hello" }),
     });
 
     expect(res.status).toBe(400);
