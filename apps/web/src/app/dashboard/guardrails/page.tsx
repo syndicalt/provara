@@ -23,8 +23,28 @@ interface GuardrailLog {
   createdAt: string;
 }
 
+interface FirewallEvent {
+  id: string;
+  requestId: string | null;
+  surface: "scan" | "tool_call_alignment";
+  source: "user_input" | "retrieved_context" | "tool_output" | "model_output" | null;
+  mode: "signature" | "semantic" | "hybrid" | null;
+  decision: "allow" | "flag" | "redact" | "block" | "quarantine";
+  action: "allow" | "flag" | "redact" | "block" | "quarantine";
+  passed: boolean;
+  confidence: number | null;
+  riskLevel: string | null;
+  category: string | null;
+  toolName: string | null;
+  ruleName: string | null;
+  matchedContent: string | null;
+  createdAt: string;
+}
+
 const ACTION_COLORS: Record<string, string> = {
+  allow: "bg-emerald-900/40 text-emerald-300 border-emerald-800/50",
   block: "bg-red-900/40 text-red-300 border-red-800/50",
+  quarantine: "bg-red-900/40 text-red-300 border-red-800/50",
   redact: "bg-amber-900/40 text-amber-300 border-amber-800/50",
   flag: "bg-blue-900/40 text-blue-300 border-blue-800/50",
 };
@@ -36,6 +56,44 @@ const TYPE_LABELS: Record<string, string> = {
   token_limit: "Token Limit",
   jailbreak: "Prompt Injection Firewall",
 };
+
+const SURFACE_LABELS: Record<string, string> = {
+  scan: "Scan",
+  tool_call_alignment: "Tool alignment",
+};
+
+function SelectFilter({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-zinc-500">
+      {label}
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="min-w-36 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-500"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function formatEventTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString();
+}
 
 function AddRuleForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
@@ -155,18 +213,27 @@ function AddRuleForm({ onCreated }: { onCreated: () => void }) {
 export default function GuardrailsPage() {
   const [rules, setRules] = useState<GuardrailRule[]>([]);
   const [logs, setLogs] = useState<GuardrailLog[]>([]);
+  const [firewallEvents, setFirewallEvents] = useState<FirewallEvent[]>([]);
+  const [surfaceFilter, setSurfaceFilter] = useState("all");
+  const [decisionFilter, setDecisionFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [modeFilter, setModeFilter] = useState("all");
+  const [toolFilter, setToolFilter] = useState("");
   const [loading, setLoading] = useState(true);
 
   async function fetchData() {
     try {
-      const [rulesRes, logsRes] = await Promise.all([
+      const [rulesRes, logsRes, firewallEventsRes] = await Promise.all([
         gatewayFetchRaw("/v1/admin/guardrails"),
         gatewayFetchRaw("/v1/admin/guardrails/logs"),
+        gatewayFetchRaw("/v1/admin/guardrails/firewall/events?limit=100"),
       ]);
       const rulesData = await rulesRes.json();
       const logsData = await logsRes.json();
+      const firewallEventsData = await firewallEventsRes.json();
       setRules(rulesData.rules || []);
       setLogs(logsData.logs || []);
+      setFirewallEvents(firewallEventsData.events || []);
     } catch (err) {
       console.error("Failed to fetch guardrails:", err);
     } finally {
@@ -211,6 +278,16 @@ export default function GuardrailsPage() {
   const firewallRules = builtInRules.filter((r) => r.type === "jailbreak");
   const enabledFirewallRules = firewallRules.filter((r) => r.enabled).length;
   const firewallEnabled = firewallRules.length > 0 && enabledFirewallRules === firewallRules.length;
+  const filteredFirewallEvents = firewallEvents.filter((event) => {
+    if (surfaceFilter !== "all" && event.surface !== surfaceFilter) return false;
+    if (decisionFilter !== "all" && event.decision !== decisionFilter) return false;
+    if (sourceFilter !== "all" && event.source !== sourceFilter) return false;
+    if (modeFilter !== "all" && event.mode !== modeFilter) return false;
+    if (toolFilter.trim() && !(event.toolName || "").toLowerCase().includes(toolFilter.trim().toLowerCase())) return false;
+    return true;
+  });
+  const blockedEvents = firewallEvents.filter((event) => event.decision === "block" || event.decision === "quarantine").length;
+  const semanticEvents = firewallEvents.filter((event) => event.mode === "semantic" || event.mode === "hybrid").length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -253,6 +330,148 @@ export default function GuardrailsPage() {
             {firewallEnabled ? "Disable Firewall" : "Enable Firewall"}
           </button>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Firewall Events</h2>
+            <p className="text-sm text-zinc-400 mt-1">Recent prompt-injection scans and tool-call alignment decisions.</p>
+          </div>
+          <div className="grid grid-cols-3 gap-3 text-sm sm:grid-cols-3">
+            <div className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <p className="text-xs text-zinc-500">Events</p>
+              <p className="font-semibold">{firewallEvents.length}</p>
+            </div>
+            <div className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <p className="text-xs text-zinc-500">Blocked</p>
+              <p className="font-semibold text-red-300">{blockedEvents}</p>
+            </div>
+            <div className="rounded border border-zinc-800 bg-zinc-900 px-3 py-2">
+              <p className="text-xs text-zinc-500">Judge</p>
+              <p className="font-semibold text-blue-300">{semanticEvents}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3">
+          <SelectFilter
+            label="Surface"
+            value={surfaceFilter}
+            onChange={setSurfaceFilter}
+            options={[
+              { value: "all", label: "All surfaces" },
+              { value: "scan", label: "Scan" },
+              { value: "tool_call_alignment", label: "Tool alignment" },
+            ]}
+          />
+          <SelectFilter
+            label="Decision"
+            value={decisionFilter}
+            onChange={setDecisionFilter}
+            options={[
+              { value: "all", label: "All decisions" },
+              { value: "allow", label: "Allow" },
+              { value: "flag", label: "Flag" },
+              { value: "redact", label: "Redact" },
+              { value: "quarantine", label: "Quarantine" },
+              { value: "block", label: "Block" },
+            ]}
+          />
+          <SelectFilter
+            label="Source"
+            value={sourceFilter}
+            onChange={setSourceFilter}
+            options={[
+              { value: "all", label: "All sources" },
+              { value: "user_input", label: "User input" },
+              { value: "retrieved_context", label: "Retrieved context" },
+              { value: "tool_output", label: "Tool output" },
+              { value: "model_output", label: "Model output" },
+            ]}
+          />
+          <SelectFilter
+            label="Mode"
+            value={modeFilter}
+            onChange={setModeFilter}
+            options={[
+              { value: "all", label: "All modes" },
+              { value: "signature", label: "Signature" },
+              { value: "semantic", label: "Semantic" },
+              { value: "hybrid", label: "Hybrid" },
+            ]}
+          />
+          <label className="flex flex-col gap-1 text-xs text-zinc-500">
+            Tool
+            <input
+              value={toolFilter}
+              onChange={(e) => setToolFilter(e.target.value)}
+              placeholder="Filter tool"
+              className="w-40 bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-blue-500"
+            />
+          </label>
+          <button
+            onClick={() => {
+              setSurfaceFilter("all");
+              setDecisionFilter("all");
+              setSourceFilter("all");
+              setModeFilter("all");
+              setToolFilter("");
+            }}
+            className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800 text-sm text-zinc-300 hover:bg-zinc-800"
+          >
+            Reset
+          </button>
+        </div>
+
+        {filteredFirewallEvents.length === 0 ? (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-8 text-center">
+            <p className="text-zinc-400">No firewall events match the current filters.</p>
+          </div>
+        ) : (
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+                    <th className="px-4 py-3">Time</th>
+                    <th className="px-4 py-3">Surface</th>
+                    <th className="px-4 py-3">Decision</th>
+                    <th className="px-4 py-3">Source / Mode</th>
+                    <th className="px-4 py-3">Risk</th>
+                    <th className="px-4 py-3">Tool</th>
+                    <th className="px-4 py-3">Matched</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredFirewallEvents.map((event) => (
+                    <tr key={event.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                      <td className="px-4 py-3 text-xs text-zinc-500 whitespace-nowrap">{formatEventTime(event.createdAt)}</td>
+                      <td className="px-4 py-3 text-xs text-zinc-300 whitespace-nowrap">{SURFACE_LABELS[event.surface] || event.surface}</td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs px-2 py-0.5 rounded border ${ACTION_COLORS[event.decision]}`}>
+                          {event.decision}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-400 whitespace-nowrap">
+                        <div>{event.source ? event.source.replace(/_/g, " ") : "—"}</div>
+                        <div className="text-zinc-600">{event.mode || "—"}</div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-zinc-400 whitespace-nowrap">
+                        <div>{event.riskLevel || event.category || "—"}</div>
+                        {typeof event.confidence === "number" && (
+                          <div className="text-zinc-600">{Math.round(event.confidence * 100)}% confidence</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-xs font-mono text-zinc-400 whitespace-nowrap">{event.toolName || "—"}</td>
+                      <td className="px-4 py-3 text-xs font-mono text-zinc-400 max-w-sm truncate">{event.matchedContent || event.ruleName || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Built-in Rules */}
