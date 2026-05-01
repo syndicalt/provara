@@ -384,12 +384,11 @@ export default function GuardrailsPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-      <div className="flex justify-between items-center">
+      <div>
         <div>
           <h1 className="text-2xl font-bold">Guardrails</h1>
           <p className="text-sm text-zinc-400 mt-1">Gateway enforcement for PII, content policies, prompt injection signatures, and custom patterns.</p>
         </div>
-        <AddRuleForm onCreated={fetchData} />
       </div>
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
@@ -688,7 +687,13 @@ export default function GuardrailsPage() {
 
       {/* Custom Rules */}
       <section>
-        <h2 className="text-lg font-semibold mb-3">Custom Rules</h2>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">Custom Rules</h2>
+            <p className="text-sm text-zinc-400 mt-1">Tenant-specific regex rules for inputs, outputs, or both.</p>
+          </div>
+          <AddRuleForm onCreated={fetchData} />
+        </div>
         {customRules.length === 0 ? (
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-8 text-center">
             <p className="text-zinc-400">No custom rules yet. Add one to start filtering content.</p>
