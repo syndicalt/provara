@@ -80,11 +80,14 @@ describe("#298 tool calling end-to-end", () => {
       }>;
     };
 
-    // Provider saw the tools — router passthrough (T2) works.
-    expect(provider.calls).toHaveLength(1);
-    expect(provider.calls[0].tools).toBeDefined();
-    expect(provider.calls[0].tools?.[0].function.name).toBe("get_weather");
-    expect(provider.calls[0].tool_choice).toBe("auto");
+    // Provider saw the tools — router passthrough (T2) works. The adaptive
+    // judge sampler can add an evaluation call, so assert the tool-bearing
+    // request rather than an exact provider call count.
+    const toolRequest = provider.calls.find(
+      (call) => call.tools?.[0]?.function.name === "get_weather",
+    );
+    expect(toolRequest).toBeDefined();
+    expect(toolRequest?.tool_choice).toBe("auto");
 
     // HTTP response carries the tool_calls in OpenAI shape.
     const choice = body.choices[0];

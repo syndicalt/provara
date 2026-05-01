@@ -4,12 +4,14 @@ import { guardrailRules, guardrailLogs } from "@provara/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTenantId, tenantFilter } from "../auth/tenant.js";
+import type { ProviderRegistry } from "../providers/index.js";
 import {
   ensureBuiltInRules,
   loadRules,
   scanContent,
   type GuardrailScanSource,
 } from "../guardrails/engine.js";
+import { judgePromptInjection } from "../guardrails/prompt-injection-judge.js";
 import { PROMPT_INJECTION_FIREWALL_TYPE } from "../guardrails/patterns.js";
 
 const SCAN_SOURCES = new Set<GuardrailScanSource>([
@@ -19,7 +21,27 @@ const SCAN_SOURCES = new Set<GuardrailScanSource>([
   "model_output",
 ]);
 
-export function createGuardrailRoutes(db: Db) {
+type GuardrailScanMode = "signature" | "semantic" | "hybrid";
+
+const SCAN_MODES = new Set<GuardrailScanMode>(["signature", "semantic", "hybrid"]);
+
+const DECISION_RANK: Record<string, number> = {
+  allow: 0,
+  flag: 1,
+  redact: 2,
+  quarantine: 3,
+  block: 4,
+};
+
+function stricterDecision(a: string, b: string): "allow" | "flag" | "redact" | "quarantine" | "block" {
+  return (DECISION_RANK[b] > DECISION_RANK[a] ? b : a) as "allow" | "flag" | "redact" | "quarantine" | "block";
+}
+
+function decisionPassed(decision: string): boolean {
+  return decision !== "block" && decision !== "quarantine";
+}
+
+export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
   const app = new Hono();
 
   // List all rules (ensures built-in rules exist)
@@ -83,6 +105,7 @@ export function createGuardrailRoutes(db: Db) {
     const body = await c.req.json<{
       content?: unknown;
       source?: unknown;
+      mode?: unknown;
     }>();
 
     if (typeof body.content !== "string" || body.content.length === 0) {
@@ -102,12 +125,61 @@ export function createGuardrailRoutes(db: Db) {
         400,
       );
     }
+    if (body.mode !== undefined && (typeof body.mode !== "string" || !SCAN_MODES.has(body.mode as GuardrailScanMode))) {
+      return c.json(
+        { error: { message: "mode must be one of: signature, semantic, hybrid", type: "validation_error" } },
+        400,
+      );
+    }
+    const mode = (body.mode as GuardrailScanMode | undefined) ?? "signature";
 
     await ensureBuiltInRules(db, tenantId);
     const rules = await loadRules(db, tenantId);
     const scan = scanContent(body.content, rules, body.source as GuardrailScanSource);
 
-    return c.json({ scan });
+    const shouldRunSemantic = mode === "semantic" || (mode === "hybrid" && scan.decision !== "allow");
+    if (shouldRunSemantic) {
+      if (!registry) {
+        return c.json(
+          { error: { message: "semantic scan mode is not available in this route context", type: "semantic_unavailable" } },
+          400,
+        );
+      }
+      try {
+        const semantic = await judgePromptInjection(registry, {
+          source: body.source as GuardrailScanSource,
+          content: body.content,
+        });
+        if (!semantic) {
+          return c.json(
+            { error: { message: "Prompt injection judge did not return a parseable decision", type: "semantic_judge_error" } },
+            502,
+          );
+        }
+        const decision = stricterDecision(scan.decision, semantic.recommendedAction);
+        return c.json({
+          scan: {
+            ...scan,
+            mode,
+            decision,
+            passed: decisionPassed(decision),
+            semantic,
+          },
+        });
+      } catch (err) {
+        return c.json(
+          {
+            error: {
+              message: err instanceof Error ? err.message : "Prompt injection judge failed",
+              type: "semantic_judge_error",
+            },
+          },
+          502,
+        );
+      }
+    }
+
+    return c.json({ scan: { ...scan, mode } });
   });
 
   // Configure the built-in Prompt Injection Firewall preset in one action.

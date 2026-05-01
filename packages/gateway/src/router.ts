@@ -347,7 +347,7 @@ export async function createRouter(ctx: RouterContext) {
   app.route("/v1/models", createModelRoutes({ db: ctx.db, registry: ctx.registry }));
 
   // Mount guardrail management routes (admin)
-  app.route("/v1/admin/guardrails", createGuardrailRoutes(ctx.db));
+  app.route("/v1/admin/guardrails", createGuardrailRoutes(ctx.db, ctx.registry));
 
   // Mount alert management routes (admin)
   app.route("/v1/admin/alerts", createAlertRoutes(ctx.db));
