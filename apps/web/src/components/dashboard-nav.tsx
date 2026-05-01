@@ -69,6 +69,16 @@ const navGroups: NavGroup[] = [
         ),
       },
       {
+        href: "/dashboard/context",
+        label: "Context",
+        icon: (
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 6.75A2.25 2.25 0 016.75 4.5h10.5a2.25 2.25 0 012.25 2.25v10.5a2.25 2.25 0 01-2.25 2.25H6.75a2.25 2.25 0 01-2.25-2.25V6.75z" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 8.25h7.5M8.25 12h7.5M8.25 15.75h4.5" />
+          </svg>
+        ),
+      },
+      {
         href: "/dashboard/spend",
         label: "Spend",
         icon: (
