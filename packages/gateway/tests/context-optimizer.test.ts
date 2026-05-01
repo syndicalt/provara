@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
+import { contextOptimizationEvents } from "@provara/db";
 import { optimizeContextChunks } from "../src/context/optimizer.js";
 import { createContextRoutes } from "../src/routes/context.js";
 import { makeTestDb } from "./_setup/db.js";
 import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 
-vi.mock("../src/auth/tenant.js", () => ({
+vi.mock("../src/auth/tenant.js", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../src/auth/tenant.js")>(),
   getTenantId: (req: Request) => req.headers.get("x-test-tenant"),
 }));
 
@@ -15,7 +17,7 @@ import { requireIntelligenceTier } from "../src/auth/tier.js";
 function buildApp(db: Db) {
   const app = new Hono();
   app.use("/v1/context/*", requireIntelligenceTier(db));
-  app.route("/v1/context", createContextRoutes());
+  app.route("/v1/context", createContextRoutes(db));
   return app;
 }
 
@@ -120,6 +122,12 @@ describe("POST /v1/context/optimize", () => {
         dropped: Array<{ id: string; duplicateOf: string }>;
         metrics: { inputChunks: number; outputChunks: number; droppedChunks: number };
       };
+      event: {
+        tenantId: string;
+        droppedChunks: number;
+        savedTokens: number;
+        duplicateSourceIds: string[];
+      };
     };
     expect(body.optimization.optimized).toHaveLength(2);
     expect(body.optimization.optimized[0]).toMatchObject({
@@ -133,6 +141,94 @@ describe("POST /v1/context/optimize", () => {
       outputChunks: 2,
       droppedChunks: 1,
     });
+    expect(body.event).toMatchObject({
+      tenantId: "tenant-pro",
+      droppedChunks: 1,
+      duplicateSourceIds: ["b"],
+    });
+
+    const rows = await db.select().from(contextOptimizationEvents).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tenantId: "tenant-pro",
+      inputChunks: 3,
+      outputChunks: 2,
+      droppedChunks: 1,
+    });
+  });
+
+  it("lists recent optimization events and summarizes savings by tenant", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+
+    await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        chunks: [
+          { id: "a", content: "Alpha context" },
+          { id: "b", content: "alpha context" },
+          { id: "c", content: "Beta context" },
+        ],
+      }),
+    });
+    await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-other",
+      },
+      body: JSON.stringify({
+        chunks: [
+          { id: "x", content: "Other tenant context" },
+          { id: "y", content: "other tenant context" },
+        ],
+      }),
+    });
+
+    const eventsRes = await app.request("/v1/context/events", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(eventsRes.status).toBe(200);
+    const eventsBody = await eventsRes.json() as {
+      events: Array<{ tenantId: string; inputChunks: number; duplicateSourceIds: string[] }>;
+    };
+    expect(eventsBody.events).toHaveLength(1);
+    expect(eventsBody.events[0]).toMatchObject({
+      tenantId: "tenant-pro",
+      inputChunks: 3,
+      duplicateSourceIds: ["b"],
+    });
+
+    const summaryRes = await app.request("/v1/context/summary", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(summaryRes.status).toBe(200);
+    const summaryBody = await summaryRes.json() as {
+      summary: {
+        eventCount: number;
+        inputChunks: number;
+        outputChunks: number;
+        droppedChunks: number;
+        savedTokens: number;
+        reductionPct: number;
+        latestAt: string | null;
+      };
+    };
+    expect(summaryBody.summary).toMatchObject({
+      eventCount: 1,
+      inputChunks: 3,
+      outputChunks: 2,
+      droppedChunks: 1,
+    });
+    expect(summaryBody.summary.savedTokens).toBeGreaterThan(0);
+    expect(summaryBody.summary.reductionPct).toBeGreaterThan(0);
+    expect(summaryBody.summary.latestAt).toEqual(expect.any(String));
   });
 
   it("validates chunks", async () => {
