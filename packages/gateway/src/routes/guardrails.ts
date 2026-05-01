@@ -4,8 +4,20 @@ import { guardrailRules, guardrailLogs } from "@provara/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTenantId, tenantFilter } from "../auth/tenant.js";
-import { ensureBuiltInRules } from "../guardrails/engine.js";
+import {
+  ensureBuiltInRules,
+  loadRules,
+  scanContent,
+  type GuardrailScanSource,
+} from "../guardrails/engine.js";
 import { PROMPT_INJECTION_FIREWALL_TYPE } from "../guardrails/patterns.js";
+
+const SCAN_SOURCES = new Set<GuardrailScanSource>([
+  "user_input",
+  "retrieved_context",
+  "tool_output",
+  "model_output",
+]);
 
 export function createGuardrailRoutes(db: Db) {
   const app = new Hono();
@@ -61,6 +73,41 @@ export function createGuardrailRoutes(db: Db) {
 
     const rule = await db.select().from(guardrailRules).where(eq(guardrailRules.id, id)).get();
     return c.json({ rule }, 201);
+  });
+
+  // Scan arbitrary context without mutating it. This is the first API surface
+  // for prompt-injection firewalling outside the chat request path: callers
+  // can check RAG chunks or tool output before adding them to model context.
+  app.post("/scan", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<{
+      content?: unknown;
+      source?: unknown;
+    }>();
+
+    if (typeof body.content !== "string" || body.content.length === 0) {
+      return c.json(
+        { error: { message: "content is required", type: "validation_error" } },
+        400,
+      );
+    }
+    if (typeof body.source !== "string" || !SCAN_SOURCES.has(body.source as GuardrailScanSource)) {
+      return c.json(
+        {
+          error: {
+            message: "source must be one of: user_input, retrieved_context, tool_output, model_output",
+            type: "validation_error",
+          },
+        },
+        400,
+      );
+    }
+
+    await ensureBuiltInRules(db, tenantId);
+    const rules = await loadRules(db, tenantId);
+    const scan = scanContent(body.content, rules, body.source as GuardrailScanSource);
+
+    return c.json({ scan });
   });
 
   // Configure the built-in Prompt Injection Firewall preset in one action.

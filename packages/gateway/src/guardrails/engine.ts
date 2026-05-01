@@ -31,6 +31,28 @@ export interface GuardrailResult {
   }[];
 }
 
+export type GuardrailScanSource =
+  | "user_input"
+  | "retrieved_context"
+  | "tool_output"
+  | "model_output";
+
+export type GuardrailScanDecision =
+  | "allow"
+  | "flag"
+  | "redact"
+  | "block"
+  | "quarantine";
+
+export interface GuardrailScanResult {
+  source: GuardrailScanSource;
+  target: "input" | "output";
+  decision: GuardrailScanDecision;
+  passed: boolean;
+  content: string;
+  violations: GuardrailResult["violations"];
+}
+
 // Initialize built-in rules if they don't exist
 export async function ensureBuiltInRules(db: Db, tenantId: string | null) {
   for (const rule of BUILTIN_RULES) {
@@ -159,6 +181,41 @@ export function checkContent(
   }
 
   return { passed: true, action: "pass", content, violations: [] };
+}
+
+export function targetForScanSource(source: GuardrailScanSource): "input" | "output" {
+  return source === "model_output" ? "output" : "input";
+}
+
+export function decisionForScan(
+  result: GuardrailResult,
+  source: GuardrailScanSource,
+): GuardrailScanDecision {
+  if (result.action === "pass") return "allow";
+  if (result.action === "block" && (source === "retrieved_context" || source === "tool_output")) {
+    return "quarantine";
+  }
+  return result.action;
+}
+
+export function scanContent(
+  content: string,
+  rules: GuardrailRule[],
+  source: GuardrailScanSource,
+): GuardrailScanResult {
+  const target = targetForScanSource(source);
+  const result = checkContent(content, rules, target);
+  const decision = decisionForScan(result, source);
+  return {
+    source,
+    target,
+    decision,
+    passed: decision !== "block" && decision !== "quarantine",
+    content: source === "retrieved_context" || source === "tool_output"
+      ? content
+      : result.content,
+    violations: result.violations,
+  };
 }
 
 // Log guardrail violations

@@ -19,6 +19,19 @@ The Prompt Injection Firewall is an opt-in preset backed by built-in input rules
 
 This first version is intentionally fast and deterministic: it uses signatures, not an LLM judge. It catches obvious attacks such as "ignore previous instructions", "show your system prompt", role takeover prompts, and fake system-message delimiters. Semantic detection for retrieved context, tool output, and tool-call alignment is planned as a higher-tier firewall mode.
 
+## Context scanning
+
+Use `POST /v1/admin/guardrails/scan` to check untrusted text before adding it to model context. The scan endpoint accepts a `source` so applications can distinguish direct user input from retrieved content and tool output:
+
+```json
+{
+  "source": "retrieved_context",
+  "content": "Document text or tool output to inspect"
+}
+```
+
+Supported sources are `user_input`, `retrieved_context`, `tool_output`, and `model_output`. Retrieved context and tool output are never rewritten by the scan endpoint; a blocking match returns `decision: "quarantine"` so callers can drop that chunk without corrupting JSON or structured tool results. Direct user input and model output can still return `decision: "redact"` when a redact rule applies.
+
 ## Actions
 
 - **block** — refuse the request (HTTP 400)
