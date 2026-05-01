@@ -58,7 +58,10 @@ describe("#229 — demo tenant seed", () => {
       .all();
     expect(contextEvents).toHaveLength(4);
     expect(contextEvents.reduce((sum, row) => sum + row.savedTokens, 0)).toBe(11800);
+    expect(contextEvents.reduce((sum, row) => sum + row.flaggedChunks, 0)).toBe(1);
+    expect(contextEvents.reduce((sum, row) => sum + row.quarantinedChunks, 0)).toBe(1);
     expect(JSON.parse(contextEvents[0].duplicateSourceIds)).toEqual(expect.any(Array));
+    expect(JSON.parse(contextEvents[0].riskySourceIds)).toEqual(expect.any(Array));
   });
 
   it("populates attribution fields on every seeded request", async () => {

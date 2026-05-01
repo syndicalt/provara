@@ -22,13 +22,30 @@ export interface DroppedContextChunk {
   inputTokens: number;
 }
 
+export interface RiskyContextChunk {
+  id: string;
+  sourceIds: string[];
+  content: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+  inputTokens: number;
+  outputTokens: number;
+  decision: "flag" | "quarantine" | "redact" | "block";
+  ruleName: string | null;
+  matchedContent: string | null;
+}
+
 export interface ContextOptimizationResult {
   optimized: OptimizedContextChunk[];
   dropped: DroppedContextChunk[];
+  flagged: RiskyContextChunk[];
+  quarantined: RiskyContextChunk[];
   metrics: {
     inputChunks: number;
     outputChunks: number;
     droppedChunks: number;
+    flaggedChunks: number;
+    quarantinedChunks: number;
     inputTokens: number;
     outputTokens: number;
     savedTokens: number;
@@ -90,10 +107,14 @@ export function optimizeContextChunks(chunks: ContextChunk[]): ContextOptimizati
   return {
     optimized,
     dropped,
+    flagged: [],
+    quarantined: [],
     metrics: {
       inputChunks: chunks.length,
       outputChunks: optimized.length,
       droppedChunks: dropped.length,
+      flaggedChunks: 0,
+      quarantinedChunks: 0,
       inputTokens,
       outputTokens,
       savedTokens,
@@ -101,4 +122,3 @@ export function optimizeContextChunks(chunks: ContextChunk[]): ContextOptimizati
     },
   };
 }
-

@@ -395,7 +395,9 @@ paths:
         Intelligence-tier endpoint that accepts already-retrieved context chunks
         and returns an optimization report. The first release performs exact
         duplicate removal, preserves source IDs and metadata, records an
-        optimization event, and reports estimated token savings.
+        optimization event, and reports estimated token savings. Set `scanRisk`
+        to run retained chunks through active guardrail rules before provider
+        routing and split risky chunks into flagged or quarantined buckets.
       operationId: optimizeContext
       requestBody:
         required: true
@@ -407,6 +409,7 @@ paths:
               ragContext:
                 summary: Dedupe retrieved chunks before model context assembly
                 value:
+                  scanRisk: true
                   chunks:
                     - id: doc-1:chunk-4
                       content: Refunds are available within 30 days.
@@ -1946,6 +1949,9 @@ components:
           maxItems: 200
           items:
             $ref: "#/components/schemas/ContextChunk"
+        scanRisk:
+          type: boolean
+          description: When true, scan retained chunks with active guardrail rules for retrieved-context risk.
 
     OptimizedContextChunk:
       allOf:
@@ -1976,9 +1982,25 @@ components:
         inputTokens:
           type: integer
 
+    RiskyContextChunk:
+      allOf:
+        - $ref: "#/components/schemas/OptimizedContextChunk"
+        - type: object
+          required: [decision, ruleName, matchedContent]
+          properties:
+            decision:
+              type: string
+              enum: [flag, quarantine, redact, block]
+            ruleName:
+              type: string
+              nullable: true
+            matchedContent:
+              type: string
+              nullable: true
+
     ContextOptimizationResult:
       type: object
-      required: [optimized, dropped, metrics]
+      required: [optimized, dropped, flagged, quarantined, metrics]
       properties:
         optimized:
           type: array
@@ -1988,13 +2010,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DroppedContextChunk"
+        flagged:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskyContextChunk"
+        quarantined:
+          type: array
+          items:
+            $ref: "#/components/schemas/RiskyContextChunk"
         metrics:
           type: object
-          required: [inputChunks, outputChunks, droppedChunks, inputTokens, outputTokens, savedTokens, reductionPct]
+          required: [inputChunks, outputChunks, droppedChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct]
           properties:
             inputChunks: { type: integer }
             outputChunks: { type: integer }
             droppedChunks: { type: integer }
+            flaggedChunks: { type: integer }
+            quarantinedChunks: { type: integer }
             inputTokens: { type: integer }
             outputTokens: { type: integer }
             savedTokens: { type: integer }
@@ -2014,6 +2046,11 @@ components:
         - savedTokens
         - reductionPct
         - duplicateSourceIds
+        - riskScanned
+        - flaggedChunks
+        - quarantinedChunks
+        - riskySourceIds
+        - riskDetails
         - createdAt
       properties:
         id:
@@ -2039,6 +2076,33 @@ components:
           type: array
           items:
             type: string
+        riskScanned:
+          type: boolean
+        flaggedChunks:
+          type: integer
+        quarantinedChunks:
+          type: integer
+        riskySourceIds:
+          type: array
+          items:
+            type: string
+        riskDetails:
+          type: array
+          items:
+            type: object
+            required: [id, decision, ruleName, matchedContent]
+            properties:
+              id:
+                type: string
+              decision:
+                type: string
+                enum: [flag, quarantine, redact, block]
+              ruleName:
+                type: string
+                nullable: true
+              matchedContent:
+                type: string
+                nullable: true
         createdAt:
           type: string
           format: date-time
@@ -2054,6 +2118,8 @@ components:
         - outputTokens
         - savedTokens
         - reductionPct
+        - flaggedChunks
+        - quarantinedChunks
         - latestAt
       properties:
         eventCount:
@@ -2072,6 +2138,10 @@ components:
           type: integer
         reductionPct:
           type: number
+        flaggedChunks:
+          type: integer
+        quarantinedChunks:
+          type: integer
         latestAt:
           type: string
           format: date-time

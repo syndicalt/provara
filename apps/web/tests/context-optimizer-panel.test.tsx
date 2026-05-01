@@ -35,6 +35,8 @@ describe("ContextOptimizerPanel", () => {
             outputTokens: 730,
             savedTokens: 270,
             reductionPct: 27,
+            flaggedChunks: 1,
+            quarantinedChunks: 2,
             latestAt: "2026-05-01T21:00:00.000Z",
           },
         }));
@@ -52,6 +54,18 @@ describe("ContextOptimizerPanel", () => {
             savedTokens: 200,
             reductionPct: 40,
             duplicateSourceIds: ["chunk-b", "chunk-c"],
+            riskScanned: true,
+            flaggedChunks: 1,
+            quarantinedChunks: 1,
+            riskySourceIds: ["chunk-risky"],
+            riskDetails: [
+              {
+                id: "chunk-risky",
+                decision: "quarantine",
+                ruleName: "Context injection",
+                matchedContent: "ignore previous instructions",
+              },
+            ],
             createdAt: "2026-05-01T21:00:00.000Z",
           },
         ],
@@ -62,10 +76,12 @@ describe("ContextOptimizerPanel", () => {
 
     expect(await screen.findByText("Context Optimizer")).toBeInTheDocument();
     expect(screen.getByText("270")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("10 input chunks scanned")).toBeInTheDocument();
     expect(screen.getByText("27%")).toBeInTheDocument();
     expect(screen.getByText("chunk-b")).toBeInTheDocument();
     expect(screen.getByText("chunk-c")).toBeInTheDocument();
+    expect(screen.getByText("Risky Chunks")).toBeInTheDocument();
+    expect(screen.getByText("chunk-risky")).toBeInTheDocument();
   });
 
   it("shows the empty state", async () => {
@@ -81,6 +97,8 @@ describe("ContextOptimizerPanel", () => {
             outputTokens: 0,
             savedTokens: 0,
             reductionPct: 0,
+            flaggedChunks: 0,
+            quarantinedChunks: 0,
             latestAt: null,
           },
         }));
