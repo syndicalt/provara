@@ -41,6 +41,20 @@ interface FirewallEvent {
   createdAt: string;
 }
 
+interface FirewallSettings {
+  tenantId: string | null;
+  defaultScanMode: "signature" | "semantic" | "hybrid";
+  toolCallAlignment: "off" | "flag" | "block";
+  streamingEnforcement: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+interface FirewallCapabilities {
+  semanticScan: boolean;
+  hybridScan: boolean;
+}
+
 const ACTION_COLORS: Record<string, string> = {
   allow: "bg-emerald-900/40 text-emerald-300 border-emerald-800/50",
   block: "bg-red-900/40 text-red-300 border-red-800/50",
@@ -60,6 +74,20 @@ const TYPE_LABELS: Record<string, string> = {
 const SURFACE_LABELS: Record<string, string> = {
   scan: "Scan",
   tool_call_alignment: "Tool alignment",
+};
+
+const DEFAULT_FIREWALL_SETTINGS: FirewallSettings = {
+  tenantId: null,
+  defaultScanMode: "signature",
+  toolCallAlignment: "block",
+  streamingEnforcement: true,
+  createdAt: null,
+  updatedAt: null,
+};
+
+const DEFAULT_FIREWALL_CAPABILITIES: FirewallCapabilities = {
+  semanticScan: false,
+  hybridScan: false,
 };
 
 function SelectFilter({
@@ -85,6 +113,33 @@ function SelectFilter({
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
+    </label>
+  );
+}
+
+function ToggleSetting({
+  checked,
+  label,
+  description,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  description: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded border border-zinc-800 bg-zinc-950/60 p-3">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-1 h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-blue-600 focus:ring-blue-500"
+      />
+      <span>
+        <span className="block text-sm font-medium text-zinc-200">{label}</span>
+        <span className="block text-xs text-zinc-500 mt-0.5">{description}</span>
+      </span>
     </label>
   );
 }
@@ -214,6 +269,11 @@ export default function GuardrailsPage() {
   const [rules, setRules] = useState<GuardrailRule[]>([]);
   const [logs, setLogs] = useState<GuardrailLog[]>([]);
   const [firewallEvents, setFirewallEvents] = useState<FirewallEvent[]>([]);
+  const [firewallSettings, setFirewallSettings] = useState<FirewallSettings>(DEFAULT_FIREWALL_SETTINGS);
+  const [firewallCapabilities, setFirewallCapabilities] = useState<FirewallCapabilities>(DEFAULT_FIREWALL_CAPABILITIES);
+  const [savingFirewallSettings, setSavingFirewallSettings] = useState(false);
+  const [firewallSettingsError, setFirewallSettingsError] = useState("");
+  const [firewallSettingsSaved, setFirewallSettingsSaved] = useState(false);
   const [surfaceFilter, setSurfaceFilter] = useState("all");
   const [decisionFilter, setDecisionFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -223,17 +283,21 @@ export default function GuardrailsPage() {
 
   async function fetchData() {
     try {
-      const [rulesRes, logsRes, firewallEventsRes] = await Promise.all([
+      const [rulesRes, logsRes, firewallEventsRes, firewallSettingsRes] = await Promise.all([
         gatewayFetchRaw("/v1/admin/guardrails"),
         gatewayFetchRaw("/v1/admin/guardrails/logs"),
         gatewayFetchRaw("/v1/admin/guardrails/firewall/events?limit=100"),
+        gatewayFetchRaw("/v1/admin/guardrails/firewall/settings"),
       ]);
       const rulesData = await rulesRes.json();
       const logsData = await logsRes.json();
       const firewallEventsData = await firewallEventsRes.json();
+      const firewallSettingsData = await firewallSettingsRes.json();
       setRules(rulesData.rules || []);
       setLogs(logsData.logs || []);
       setFirewallEvents(firewallEventsData.events || []);
+      setFirewallSettings(firewallSettingsData.settings || DEFAULT_FIREWALL_SETTINGS);
+      setFirewallCapabilities(firewallSettingsData.capabilities || DEFAULT_FIREWALL_CAPABILITIES);
     } catch (err) {
       console.error("Failed to fetch guardrails:", err);
     } finally {
@@ -263,6 +327,34 @@ export default function GuardrailsPage() {
     fetchData();
   }
 
+  async function saveFirewallSettings() {
+    setSavingFirewallSettings(true);
+    setFirewallSettingsError("");
+    setFirewallSettingsSaved(false);
+
+    try {
+      const res = await gatewayFetchRaw("/v1/admin/guardrails/firewall/settings", {
+        method: "PATCH",
+        body: JSON.stringify({
+          defaultScanMode: firewallSettings.defaultScanMode,
+          toolCallAlignment: firewallSettings.toolCallAlignment,
+          streamingEnforcement: firewallSettings.streamingEnforcement,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setFirewallSettingsError(data.error?.message || "Failed to update firewall settings");
+        return;
+      }
+      setFirewallSettings(data.settings || firewallSettings);
+      setFirewallSettingsSaved(true);
+    } catch {
+      setFirewallSettingsError("Failed to connect to gateway");
+    } finally {
+      setSavingFirewallSettings(false);
+    }
+  }
+
   useEffect(() => { fetchData(); }, []);
 
   if (loading) {
@@ -288,6 +380,7 @@ export default function GuardrailsPage() {
   });
   const blockedEvents = firewallEvents.filter((event) => event.decision === "block" || event.decision === "quarantine").length;
   const semanticEvents = firewallEvents.filter((event) => event.mode === "semantic" || event.mode === "hybrid").length;
+  const canUseAdvancedScan = firewallCapabilities.semanticScan && firewallCapabilities.hybridScan;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -300,7 +393,7 @@ export default function GuardrailsPage() {
       </div>
 
       <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-semibold">Prompt Injection Firewall</h2>
@@ -321,7 +414,7 @@ export default function GuardrailsPage() {
           <button
             onClick={() => configurePromptInjectionFirewall(!firewallEnabled)}
             disabled={firewallRules.length === 0}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+            className={`shrink-0 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
               firewallEnabled
                 ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
                 : "bg-blue-600 hover:bg-blue-500 text-white"
@@ -329,6 +422,75 @@ export default function GuardrailsPage() {
           >
             {firewallEnabled ? "Disable Firewall" : "Enable Firewall"}
           </button>
+        </div>
+
+        <div className="mt-5 border-t border-zinc-800 pt-5">
+          <div className="grid gap-4 lg:grid-cols-3">
+            <label className="flex flex-col gap-1 text-xs text-zinc-500">
+              Default scan mode
+              <select
+                value={firewallSettings.defaultScanMode}
+                onChange={(e) => {
+                  setFirewallSettingsSaved(false);
+                  setFirewallSettings({
+                    ...firewallSettings,
+                    defaultScanMode: e.target.value as FirewallSettings["defaultScanMode"],
+                  });
+                }}
+                className="bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-500"
+              >
+                <option value="signature">Signature</option>
+                <option value="hybrid" disabled={!canUseAdvancedScan}>Hybrid</option>
+                <option value="semantic" disabled={!canUseAdvancedScan}>Semantic</option>
+              </select>
+              {!canUseAdvancedScan && (
+                <span className="text-amber-400/80">Semantic and hybrid modes require Pro.</span>
+              )}
+            </label>
+
+            <label className="flex flex-col gap-1 text-xs text-zinc-500">
+              Tool-call alignment
+              <select
+                value={firewallSettings.toolCallAlignment}
+                onChange={(e) => {
+                  setFirewallSettingsSaved(false);
+                  setFirewallSettings({
+                    ...firewallSettings,
+                    toolCallAlignment: e.target.value as FirewallSettings["toolCallAlignment"],
+                  });
+                }}
+                className="bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm text-zinc-300 focus:outline-none focus:border-blue-500"
+              >
+                <option value="block">Block suspicious calls</option>
+                <option value="flag">Flag only</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+
+            <ToggleSetting
+              checked={firewallSettings.streamingEnforcement}
+              label="Streaming enforcement"
+              description="Buffer streamed tool calls until alignment checks pass."
+              onChange={(checked) => {
+                setFirewallSettingsSaved(false);
+                setFirewallSettings({ ...firewallSettings, streamingEnforcement: checked });
+              }}
+            />
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-h-5 text-xs">
+              {firewallSettingsError && <span className="text-red-300">{firewallSettingsError}</span>}
+              {firewallSettingsSaved && !firewallSettingsError && <span className="text-emerald-300">Settings saved.</span>}
+            </div>
+            <button
+              onClick={saveFirewallSettings}
+              disabled={savingFirewallSettings}
+              className="px-4 py-2 rounded-lg bg-blue-600 text-sm font-medium text-white transition-colors hover:bg-blue-500 disabled:opacity-50"
+            >
+              {savingFirewallSettings ? "Saving..." : "Save Settings"}
+            </button>
+          </div>
         </div>
       </section>
 

@@ -95,6 +95,108 @@ describe("prompt injection firewall preset", () => {
 });
 
 describe("guardrail context scan API", () => {
+  it("returns default firewall settings", async () => {
+    const db = await makeTestDb();
+    const app = appFor(db, "tenant-settings");
+
+    const res = await app.request("/firewall/settings");
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      settings: {
+        defaultScanMode: string;
+        toolCallAlignment: string;
+        streamingEnforcement: boolean;
+      };
+      capabilities: { semanticScan: boolean; hybridScan: boolean };
+    };
+    expect(body.settings.defaultScanMode).toBe("signature");
+    expect(body.settings.toolCallAlignment).toBe("block");
+    expect(body.settings.streamingEnforcement).toBe(true);
+    expect(body.capabilities.semanticScan).toBe(false);
+  });
+
+  it("updates firewall settings", async () => {
+    const db = await makeTestDb();
+    const app = appFor(db, "tenant-settings");
+
+    const res = await app.request("/firewall/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        toolCallAlignment: "flag",
+        streamingEnforcement: false,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      settings: {
+        defaultScanMode: string;
+        toolCallAlignment: string;
+        streamingEnforcement: boolean;
+      };
+    };
+    expect(body.settings.defaultScanMode).toBe("signature");
+    expect(body.settings.toolCallAlignment).toBe("flag");
+    expect(body.settings.streamingEnforcement).toBe(false);
+  });
+
+  it("gates semantic default scan settings to intelligence tiers", async () => {
+    const db = await makeTestDb();
+    process.env.PROVARA_CLOUD = "true";
+    const app = appFor(db, "tenant-free");
+
+    const res = await app.request("/firewall/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultScanMode: "hybrid" }),
+    });
+
+    expect(res.status).toBe(402);
+    const body = await res.json() as { error: { type: string }; gate: { requiredTier: string } };
+    expect(body.error.type).toBe("insufficient_tier");
+    expect(body.gate.requiredTier).toBe("pro");
+  });
+
+  it("uses the tenant default scan mode when scan mode is omitted", async () => {
+    const db = await makeTestDb();
+    await grantIntelligenceAccess(db, "tenant-semantic-default", { tier: "pro" });
+    const judgeProvider = makeFakeProvider({
+      name: "openai",
+      models: ["gpt-4.1-nano"],
+      responseContent: JSON.stringify({
+        flagged: true,
+        confidence: 0.81,
+        riskLevel: "high",
+        category: "indirect_injection",
+        evidence: "Hidden instruction",
+        recommendedAction: "quarantine",
+      }),
+    });
+    const app = appFor(db, "tenant-semantic-default", makeFakeRegistry([judgeProvider]));
+
+    await app.request("/firewall/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ defaultScanMode: "semantic" }),
+    });
+
+    const res = await app.request("/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "retrieved_context",
+        content: "Document text",
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { scan: { mode: string; semantic?: { flagged: boolean } } };
+    expect(body.scan.mode).toBe("semantic");
+    expect(body.scan.semantic?.flagged).toBe(true);
+  });
+
   it("returns quarantine for prompt injection in retrieved context without mutating content", async () => {
     const db = await makeTestDb();
     const app = appFor(db, "tenant-scan");
