@@ -393,9 +393,9 @@ paths:
       summary: Optimize runtime RAG context
       description: |
         Intelligence-tier endpoint that accepts already-retrieved context chunks
-        and returns a stateless optimization report. The first release performs
-        exact duplicate removal, preserves source IDs and metadata, and reports
-        estimated token savings.
+        and returns an optimization report. The first release performs exact
+        duplicate removal, preserves source IDs and metadata, records an
+        optimization event, and reports estimated token savings.
       operationId: optimizeContext
       requestBody:
         required: true
@@ -423,12 +423,62 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [optimization]
+                required: [optimization, event]
                 properties:
                   optimization:
                     $ref: "#/components/schemas/ContextOptimizationResult"
+                  event:
+                    $ref: "#/components/schemas/ContextOptimizationEvent"
         "400":
           $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
+  /v1/context/events:
+    get:
+      tags: [Context Optimizer]
+      summary: List recent context optimization events
+      operationId: listContextOptimizationEvents
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          description: Maximum number of events to return.
+      responses:
+        "200":
+          description: Recent optimization events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextOptimizationEvent"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
+  /v1/context/summary:
+    get:
+      tags: [Context Optimizer]
+      summary: Summarize context optimization savings
+      operationId: summarizeContextOptimization
+      responses:
+        "200":
+          description: Aggregate optimization summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary]
+                properties:
+                  summary:
+                    $ref: "#/components/schemas/ContextOptimizationSummary"
         "402":
           $ref: "#/components/responses/InsufficientTier"
 
@@ -1950,6 +2000,82 @@ components:
             savedTokens: { type: integer }
             reductionPct:
               type: number
+
+    ContextOptimizationEvent:
+      type: object
+      required:
+        - id
+        - tenantId
+        - inputChunks
+        - outputChunks
+        - droppedChunks
+        - inputTokens
+        - outputTokens
+        - savedTokens
+        - reductionPct
+        - duplicateSourceIds
+        - createdAt
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        inputChunks:
+          type: integer
+        outputChunks:
+          type: integer
+        droppedChunks:
+          type: integer
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        savedTokens:
+          type: integer
+        reductionPct:
+          type: number
+        duplicateSourceIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ContextOptimizationSummary:
+      type: object
+      required:
+        - eventCount
+        - inputChunks
+        - outputChunks
+        - droppedChunks
+        - inputTokens
+        - outputTokens
+        - savedTokens
+        - reductionPct
+        - latestAt
+      properties:
+        eventCount:
+          type: integer
+        inputChunks:
+          type: integer
+        outputChunks:
+          type: integer
+        droppedChunks:
+          type: integer
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        savedTokens:
+          type: integer
+        reductionPct:
+          type: number
+        latestAt:
+          type: string
+          format: date-time
+          nullable: true
 
     ChatMessage:
       type: object

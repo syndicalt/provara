@@ -323,6 +323,24 @@ export const firewallSettings = sqliteTable("firewall_settings", {
     .$defaultFn(() => new Date()),
 });
 
+export const contextOptimizationEvents = sqliteTable("context_optimization_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  inputChunks: integer("input_chunks").notNull(),
+  outputChunks: integer("output_chunks").notNull(),
+  droppedChunks: integer("dropped_chunks").notNull(),
+  inputTokens: integer("input_tokens").notNull(),
+  outputTokens: integer("output_tokens").notNull(),
+  savedTokens: integer("saved_tokens").notNull(),
+  reductionPct: real("reduction_pct").notNull(),
+  duplicateSourceIds: text("duplicate_source_ids").notNull().default("[]"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_optimization_events_tenant_created_idx").on(table.tenantId, table.createdAt),
+]);
+
 export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),

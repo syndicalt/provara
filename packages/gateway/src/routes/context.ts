@@ -1,5 +1,12 @@
 import { Hono } from "hono";
+import type { Db } from "@provara/db";
 import { optimizeContextChunks, type ContextChunk } from "../context/optimizer.js";
+import {
+  listContextOptimizationEvents,
+  recordContextOptimizationEvent,
+  summarizeContextOptimizationEvents,
+} from "../context/events.js";
+import { getTenantId } from "../auth/tenant.js";
 
 const MAX_CHUNKS = 200;
 const MAX_CHUNK_CHARS = 100_000;
@@ -43,10 +50,11 @@ function validateChunks(value: unknown): { chunks?: ContextChunk[]; error?: stri
   return { chunks };
 }
 
-export function createContextRoutes() {
+export function createContextRoutes(db: Db) {
   const app = new Hono();
 
   app.post("/optimize", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
     const body = await c.req.json<{ chunks?: unknown }>().catch(() => null);
     if (!body) {
       return c.json(
@@ -63,7 +71,26 @@ export function createContextRoutes() {
       );
     }
 
-    return c.json({ optimization: optimizeContextChunks(parsed.chunks) });
+    const optimization = optimizeContextChunks(parsed.chunks);
+    const event = await recordContextOptimizationEvent(db, tenantId, optimization);
+
+    return c.json({ optimization, event });
+  });
+
+  app.get("/events", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const rawLimit = Number(c.req.query("limit") ?? 50);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 50;
+    const events = await listContextOptimizationEvents(db, tenantId, { limit });
+
+    return c.json({ events });
+  });
+
+  app.get("/summary", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const summary = await summarizeContextOptimizationEvents(db, tenantId);
+
+    return c.json({ summary });
   });
 
   return app;

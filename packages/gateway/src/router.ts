@@ -414,7 +414,7 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/context/*", tierGate);
   app.route("/v1/regression", createRegressionRoutes(ctx.db, routingEngine.regressionCellTable));
   app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
-  app.route("/v1/context", createContextRoutes());
+  app.route("/v1/context", createContextRoutes(ctx.db));
 
   // Mount analytics routes
   app.route("/v1/analytics", createAnalyticsRoutes(ctx.db, ctx.registry));
