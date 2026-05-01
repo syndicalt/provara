@@ -14,9 +14,11 @@ Implemented as of `0.2.0`:
 - Tenant-scoped `GET /v1/context/summary` and `GET /v1/context/events`.
 - Dashboard visibility at `/dashboard/context`.
 - Demo tenant seed data for screenshot-ready examples.
+- Optional retrieved-context risk scanning with active Guardrails rules.
+- Flagged and quarantined context reporting in API events and the dashboard.
 
 Next planned layer:
-- Risk-aware context optimization using the Prompt Injection Firewall for retrieved context quarantine and reporting.
+- Quality scoring for raw context vs optimized context.
 
 ## V1: Runtime Context Optimizer
 
@@ -44,7 +46,7 @@ Capabilities:
 - Duplicate-rate reporting.
 - Quarantined context reporting.
 - Request-detail integration.
-- Dashboard cards for input tokens, optimized tokens, dropped chunks, and risk flags.
+- Dashboard cards for saved tokens, dropped chunks, reduction, and risk flags.
 
 ## V1.2: Quality Loop
 

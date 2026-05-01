@@ -16,6 +16,16 @@ export interface ContextOptimizationEvent {
   savedTokens: number;
   reductionPct: number;
   duplicateSourceIds: string[];
+  riskScanned: boolean;
+  flaggedChunks: number;
+  quarantinedChunks: number;
+  riskySourceIds: string[];
+  riskDetails: Array<{
+    id: string;
+    decision: string;
+    ruleName: string | null;
+    matchedContent: string | null;
+  }>;
   createdAt: Date;
 }
 
@@ -41,16 +51,48 @@ function eventFromRow(row: typeof contextOptimizationEvents.$inferSelect): Conte
     savedTokens: row.savedTokens,
     reductionPct: row.reductionPct,
     duplicateSourceIds: parseDuplicateSourceIds(row.duplicateSourceIds),
+    riskScanned: row.riskScanned,
+    flaggedChunks: row.flaggedChunks,
+    quarantinedChunks: row.quarantinedChunks,
+    riskySourceIds: parseDuplicateSourceIds(row.riskySourceIds),
+    riskDetails: parseRiskDetails(row.riskDetails),
     createdAt: row.createdAt,
   };
+}
+
+function parseRiskDetails(value: string | null): ContextOptimizationEvent["riskDetails"] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ContextOptimizationEvent["riskDetails"][number] => (
+      typeof item === "object" &&
+      item !== null &&
+      typeof item.id === "string" &&
+      typeof item.decision === "string" &&
+      (typeof item.ruleName === "string" || item.ruleName === null) &&
+      (typeof item.matchedContent === "string" || item.matchedContent === null)
+    ));
+  } catch {
+    return [];
+  }
 }
 
 export async function recordContextOptimizationEvent(
   db: Db,
   tenantId: string | null,
   result: ContextOptimizationResult,
+  options: { riskScanned?: boolean } = {},
 ): Promise<ContextOptimizationEvent> {
   const duplicateSourceIds = result.dropped.map((chunk) => chunk.id);
+  const riskyChunks = [...result.flagged, ...result.quarantined];
+  const riskDetails = riskyChunks.map((chunk) => ({
+    id: chunk.id,
+    decision: chunk.decision,
+    ruleName: chunk.ruleName,
+    matchedContent: chunk.matchedContent,
+  }));
+  const riskySourceIds = riskyChunks.flatMap((chunk) => chunk.sourceIds);
   const id = nanoid();
 
   await db.insert(contextOptimizationEvents).values({
@@ -64,6 +106,11 @@ export async function recordContextOptimizationEvent(
     savedTokens: result.metrics.savedTokens,
     reductionPct: result.metrics.reductionPct,
     duplicateSourceIds: JSON.stringify(duplicateSourceIds),
+    riskScanned: options.riskScanned ?? false,
+    flaggedChunks: result.metrics.flaggedChunks,
+    quarantinedChunks: result.metrics.quarantinedChunks,
+    riskySourceIds: JSON.stringify(riskySourceIds),
+    riskDetails: JSON.stringify(riskDetails),
   }).run();
 
   const row = await db
@@ -104,6 +151,8 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       inputTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.inputTokens}), 0)`,
       outputTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.outputTokens}), 0)`,
       savedTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.savedTokens}), 0)`,
+      flaggedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.flaggedChunks}), 0)`,
+      quarantinedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.quarantinedChunks}), 0)`,
     })
     .from(contextOptimizationEvents)
     .where(whereClause)
@@ -126,6 +175,8 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
     inputChunks: row?.inputChunks ?? 0,
     outputChunks: row?.outputChunks ?? 0,
     droppedChunks: row?.droppedChunks ?? 0,
+    flaggedChunks: row?.flaggedChunks ?? 0,
+    quarantinedChunks: row?.quarantinedChunks ?? 0,
     inputTokens,
     outputTokens: row?.outputTokens ?? 0,
     savedTokens,

@@ -1,12 +1,19 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { optimizeContextChunks, type ContextChunk } from "../context/optimizer.js";
+import {
+  optimizeContextChunks,
+  type ContextChunk,
+  type ContextOptimizationResult,
+  type OptimizedContextChunk,
+  type RiskyContextChunk,
+} from "../context/optimizer.js";
 import {
   listContextOptimizationEvents,
   recordContextOptimizationEvent,
   summarizeContextOptimizationEvents,
 } from "../context/events.js";
 import { getTenantId } from "../auth/tenant.js";
+import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 
 const MAX_CHUNKS = 200;
 const MAX_CHUNK_CHARS = 100_000;
@@ -50,12 +57,79 @@ function validateChunks(value: unknown): { chunks?: ContextChunk[]; error?: stri
   return { chunks };
 }
 
+function validateScanRisk(value: unknown): { scanRisk?: boolean; error?: string } {
+  if (value === undefined) return { scanRisk: false };
+  if (typeof value !== "boolean") return { error: "scanRisk must be a boolean" };
+  return { scanRisk: value };
+}
+
+function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizationResult {
+  const outputTokens = result.optimized.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
+  const savedTokens = Math.max(0, result.metrics.inputTokens - outputTokens);
+  return {
+    ...result,
+    metrics: {
+      ...result.metrics,
+      outputChunks: result.optimized.length,
+      flaggedChunks: result.flagged.length,
+      quarantinedChunks: result.quarantined.length,
+      outputTokens,
+      savedTokens,
+      reductionPct: result.metrics.inputTokens === 0
+        ? 0
+        : Number(((savedTokens / result.metrics.inputTokens) * 100).toFixed(2)),
+    },
+  };
+}
+
+async function applyRiskScan(
+  db: Db,
+  tenantId: string | null,
+  result: ContextOptimizationResult,
+): Promise<ContextOptimizationResult> {
+  await ensureBuiltInRules(db, tenantId);
+  const rules = await loadRules(db, tenantId);
+  if (rules.length === 0) return result;
+
+  const safe: OptimizedContextChunk[] = [];
+  const flagged: RiskyContextChunk[] = [];
+  const quarantined: RiskyContextChunk[] = [];
+
+  for (const chunk of result.optimized) {
+    const scan = scanContent(chunk.content, rules, "retrieved_context");
+    if (scan.decision === "allow") {
+      safe.push(chunk);
+      continue;
+    }
+
+    const risky: RiskyContextChunk = {
+      ...chunk,
+      decision: scan.decision === "block" ? "quarantine" : scan.decision,
+      ruleName: scan.violations[0]?.ruleName ?? null,
+      matchedContent: scan.violations[0]?.matchedSnippet ?? null,
+    };
+
+    if (risky.decision === "flag" || risky.decision === "redact") {
+      flagged.push(risky);
+    } else {
+      quarantined.push(risky);
+    }
+  }
+
+  return recalculateMetrics({
+    ...result,
+    optimized: safe,
+    flagged,
+    quarantined,
+  });
+}
+
 export function createContextRoutes(db: Db) {
   const app = new Hono();
 
   app.post("/optimize", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const body = await c.req.json<{ chunks?: unknown }>().catch(() => null);
+    const body = await c.req.json<{ chunks?: unknown; scanRisk?: unknown }>().catch(() => null);
     if (!body) {
       return c.json(
         { error: { message: "Invalid JSON body", type: "validation_error" } },
@@ -71,8 +145,21 @@ export function createContextRoutes(db: Db) {
       );
     }
 
-    const optimization = optimizeContextChunks(parsed.chunks);
-    const event = await recordContextOptimizationEvent(db, tenantId, optimization);
+    const scanRisk = validateScanRisk(body.scanRisk);
+    if (scanRisk.error) {
+      return c.json(
+        { error: { message: scanRisk.error, type: "validation_error" } },
+        400,
+      );
+    }
+
+    const baseOptimization = optimizeContextChunks(parsed.chunks);
+    const optimization = scanRisk.scanRisk
+      ? await applyRiskScan(db, tenantId, baseOptimization)
+      : baseOptimization;
+    const event = await recordContextOptimizationEvent(db, tenantId, optimization, {
+      riskScanned: scanRisk.scanRisk ?? false,
+    });
 
     return c.json({ optimization, event });
   });

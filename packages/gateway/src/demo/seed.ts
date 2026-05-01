@@ -621,13 +621,25 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
     {
       id: "coe_demo_support_docs",
       inputChunks: 18,
-      outputChunks: 12,
-      droppedChunks: 6,
+      outputChunks: 11,
+      droppedChunks: 7,
       inputTokens: 12480,
       outputTokens: 8380,
       savedTokens: 4100,
       reductionPct: 32.85,
       duplicateSourceIds: ["refunds.md#4", "refunds-copy.md#1", "billing-faq#9", "billing-faq#10", "help-center#22", "help-center#23"],
+      riskScanned: true,
+      flaggedChunks: 0,
+      quarantinedChunks: 1,
+      riskySourceIds: ["community-snippet#17"],
+      riskDetails: [
+        {
+          id: "community-snippet#17",
+          decision: "quarantine",
+          ruleName: "Jailbreak — instruction override",
+          matchedContent: "ignore previous instructions",
+        },
+      ],
       createdAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
     },
     {
@@ -640,6 +652,18 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
       savedTokens: 2650,
       reductionPct: 27.38,
       duplicateSourceIds: ["security-policy#2", "security-policy#8", "sso-runbook#5", "sso-runbook#6"],
+      riskScanned: true,
+      flaggedChunks: 1,
+      quarantinedChunks: 0,
+      riskySourceIds: ["partner-note#3"],
+      riskDetails: [
+        {
+          id: "partner-note#3",
+          decision: "flag",
+          ruleName: "Generic API Key/Secret",
+          matchedContent: "secret access",
+        },
+      ],
       createdAt: new Date(now.getTime() - 8 * 60 * 60 * 1000),
     },
     {
@@ -652,6 +676,11 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
       savedTokens: 4530,
       reductionPct: 29.76,
       duplicateSourceIds: ["agent-runbook#11", "agent-runbook#12", "tool-calls#4", "tool-calls#7", "handoff#2", "handoff#3", "handoff#4"],
+      riskScanned: true,
+      flaggedChunks: 0,
+      quarantinedChunks: 0,
+      riskySourceIds: [],
+      riskDetails: [],
       createdAt: new Date(now.getTime() - 1 * DAY_MS),
     },
     {
@@ -664,6 +693,11 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
       savedTokens: 520,
       reductionPct: 9.96,
       duplicateSourceIds: ["onboarding#14"],
+      riskScanned: false,
+      flaggedChunks: 0,
+      quarantinedChunks: 0,
+      riskySourceIds: [],
+      riskDetails: [],
       createdAt: new Date(now.getTime() - 3 * DAY_MS),
     },
   ];
@@ -679,6 +713,11 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
       savedTokens: event.savedTokens,
       reductionPct: event.reductionPct,
       duplicateSourceIds: JSON.stringify(event.duplicateSourceIds),
+      riskScanned: event.riskScanned,
+      flaggedChunks: event.flaggedChunks,
+      quarantinedChunks: event.quarantinedChunks,
+      riskySourceIds: JSON.stringify(event.riskySourceIds),
+      riskDetails: JSON.stringify(event.riskDetails),
       createdAt: event.createdAt,
     }).run();
   }

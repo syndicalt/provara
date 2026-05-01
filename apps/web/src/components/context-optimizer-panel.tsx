@@ -12,6 +12,8 @@ export interface ContextOptimizationSummary {
   outputTokens: number;
   savedTokens: number;
   reductionPct: number;
+  flaggedChunks: number;
+  quarantinedChunks: number;
   latestAt: string | null;
 }
 
@@ -26,6 +28,16 @@ export interface ContextOptimizationEvent {
   savedTokens: number;
   reductionPct: number;
   duplicateSourceIds: string[];
+  riskScanned: boolean;
+  flaggedChunks: number;
+  quarantinedChunks: number;
+  riskySourceIds: string[];
+  riskDetails: Array<{
+    id: string;
+    decision: string;
+    ruleName: string | null;
+    matchedContent: string | null;
+  }>;
   createdAt: string;
 }
 
@@ -59,6 +71,11 @@ function formatTimestamp(value: string | null): string {
 
 function metricTone(value: number): string {
   if (value > 0) return "text-emerald-300";
+  return "text-zinc-200";
+}
+
+function riskTone(value: number): string {
+  if (value > 0) return "text-amber-300";
   return "text-zinc-200";
 }
 
@@ -209,7 +226,7 @@ export function ContextOptimizerPanel() {
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
         <StatTile
           label="Events"
           value={formatInteger(summary?.eventCount ?? 0)}
@@ -226,6 +243,12 @@ export function ContextOptimizerPanel() {
           value={formatInteger(summary?.droppedChunks ?? 0)}
           detail={`${formatInteger(summary?.inputChunks ?? 0)} input chunks scanned`}
           tone={metricTone(summary?.droppedChunks ?? 0)}
+        />
+        <StatTile
+          label="Risky Chunks"
+          value={formatInteger((summary?.flaggedChunks ?? 0) + (summary?.quarantinedChunks ?? 0))}
+          detail={`${formatInteger(summary?.quarantinedChunks ?? 0)} quarantined, ${formatInteger(summary?.flaggedChunks ?? 0)} flagged`}
+          tone={riskTone((summary?.flaggedChunks ?? 0) + (summary?.quarantinedChunks ?? 0))}
         />
         <StatTile
           label="Reduction"
@@ -258,44 +281,79 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-left font-medium">Time</th>
                     <th className="px-4 py-3 text-right font-medium">Chunks</th>
                     <th className="px-4 py-3 text-right font-medium">Dropped</th>
+                    <th className="px-4 py-3 text-right font-medium">Risk</th>
                     <th className="px-4 py-3 text-right font-medium">Saved</th>
                     <th className="px-4 py-3 text-left font-medium">Duplicate IDs</th>
+                    <th className="px-4 py-3 text-left font-medium">Risky IDs</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800">
-                  {eventRows.map((event) => (
-                    <tr key={event.id}>
-                      <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatTimestamp(event.createdAt)}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
-                        {formatInteger(event.inputChunks)} {"->"} {formatInteger(event.outputChunks)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
-                        {formatInteger(event.droppedChunks)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
-                        {formatInteger(event.savedTokens)}
-                        <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.reductionPct)}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {event.duplicateSourceIds.length === 0 ? (
-                          <span className="text-zinc-600">None</span>
-                        ) : (
-                          <div className="flex max-w-xl flex-wrap gap-1">
-                            {event.duplicateSourceIds.slice(0, 6).map((id) => (
-                              <span key={id} className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-zinc-300">
-                                {id}
+                  {eventRows.map((event) => {
+                    const riskyChunks = event.flaggedChunks + event.quarantinedChunks;
+                    return (
+                      <tr key={event.id}>
+                        <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatTimestamp(event.createdAt)}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                          {formatInteger(event.inputChunks)} {"->"} {formatInteger(event.outputChunks)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                          {formatInteger(event.droppedChunks)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
+                          {event.riskScanned ? (
+                            <span className={riskyChunks > 0 ? "text-amber-300" : "text-zinc-400"}>
+                              {formatInteger(riskyChunks)}
+                              <span className="ml-2 text-xs text-zinc-500">
+                                {formatInteger(event.quarantinedChunks)}q/{formatInteger(event.flaggedChunks)}f
                               </span>
-                            ))}
-                            {event.duplicateSourceIds.length > 6 && (
-                              <span className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs text-zinc-500">
-                                +{event.duplicateSourceIds.length - 6}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                            </span>
+                          ) : (
+                            <span className="text-zinc-600">Not scanned</span>
+                          )}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
+                          {formatInteger(event.savedTokens)}
+                          <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.reductionPct)}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {event.duplicateSourceIds.length === 0 ? (
+                            <span className="text-zinc-600">None</span>
+                          ) : (
+                            <div className="flex max-w-xl flex-wrap gap-1">
+                              {event.duplicateSourceIds.slice(0, 6).map((id) => (
+                                <span key={id} className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-zinc-300">
+                                  {id}
+                                </span>
+                              ))}
+                              {event.duplicateSourceIds.length > 6 && (
+                                <span className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs text-zinc-500">
+                                  +{event.duplicateSourceIds.length - 6}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {event.riskySourceIds.length === 0 ? (
+                            <span className="text-zinc-600">None</span>
+                          ) : (
+                            <div className="flex max-w-xl flex-wrap gap-1">
+                              {event.riskySourceIds.slice(0, 6).map((id) => (
+                                <span key={id} className="rounded border border-amber-800/80 bg-amber-950/30 px-2 py-0.5 font-mono text-xs text-amber-200">
+                                  {id}
+                                </span>
+                              ))}
+                              {event.riskySourceIds.length > 6 && (
+                                <span className="rounded border border-amber-900/70 bg-amber-950/20 px-2 py-0.5 text-xs text-amber-400">
+                                  +{event.riskySourceIds.length - 6}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

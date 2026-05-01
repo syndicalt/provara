@@ -9,10 +9,12 @@ The shipped V1 implementation is intentionally narrow:
 - Exact duplicate detection after whitespace normalization and case folding.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
+- Optional risk scanning with active Guardrails rules for retrieved context.
+- Flagged and quarantined context buckets with rule evidence and source IDs.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 
-It does not yet perform semantic deduplication, reranking, abstractive compression, or risk quarantine. Those belong to later roadmap phases.
+It does not yet perform semantic deduplication, reranking, abstractive compression, or persistent review workflows. Those belong to later roadmap phases.
 
 ## API
 
@@ -26,6 +28,7 @@ The request accepts already-retrieved context chunks:
 
 ```json
 {
+  "scanRisk": true,
   "chunks": [
     {
       "id": "doc-1:chunk-4",
@@ -46,8 +49,12 @@ The response includes:
 
 - `optimization.optimized`: chunks retained for model context.
 - `optimization.dropped`: duplicate chunks removed from model context.
+- `optimization.flagged`: risky chunks removed from model context but marked for operator review.
+- `optimization.quarantined`: risky chunks removed from model context before provider routing.
 - `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, and reduction percentage.
 - `event`: the persisted visibility record for the optimization call.
+
+`scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 
 Visibility APIs:
 
@@ -66,11 +73,12 @@ The Context Optimizer dashboard lives at:
 /dashboard/context
 ```
 
-It shows four summary cards:
+It shows five summary cards:
 
 - **Events**: number of optimization calls recorded for the tenant.
 - **Saved Tokens**: estimated context tokens removed before provider routing.
 - **Dropped Chunks**: duplicate chunks removed from model context.
+- **Risky Chunks**: flagged and quarantined chunks removed by risk scanning.
 - **Reduction**: saved tokens divided by estimated input tokens.
 
 The Recent Events table shows:
@@ -78,8 +86,10 @@ The Recent Events table shows:
 - Event time.
 - Input chunks to output chunks.
 - Dropped chunk count.
+- Risk scan result, including flagged and quarantined counts.
 - Saved tokens and reduction percentage.
 - Duplicate source IDs that were removed.
+- Risky source IDs that were flagged or quarantined.
 
 ## Demo Mode
 
@@ -87,9 +97,8 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is risk-aware context optimization:
+The next behavior layer is the quality loop:
 
-- Scan retrieved chunks with the Prompt Injection Firewall.
-- Quarantine or flag risky context before provider routing.
-- Surface risky or quarantined context in the Context Optimizer dashboard.
-- Preserve source IDs and evidence so operators can trace why a chunk was blocked or flagged.
+- Compare optimized context against raw context with judge scoring.
+- Alert when optimization appears to reduce answer quality.
+- Feed risky-context evidence into future review workflows.

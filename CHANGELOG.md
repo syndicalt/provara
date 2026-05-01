@@ -14,6 +14,7 @@ All notable Provara changes are tracked here.
   - Tenant-scoped visibility APIs: `GET /v1/context/events` and `GET /v1/context/summary`.
   - Dashboard page at `/dashboard/context` with summary cards and recent optimization events.
   - Demo tenant seed data for screenshot-ready Context Optimizer examples.
+  - Optional retrieved-context risk scanning with active Guardrails rules, flagged/quarantined result buckets, persisted source IDs, and dashboard risk metrics.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
 - Optional semantic and hybrid prompt-injection scan modes using the configured judge model.
@@ -27,7 +28,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization and V1.1 dashboard visibility as shipped checkpoints, with risk-aware optimization as the next planned layer.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, and risk-aware optimization as shipped checkpoints, with quality scoring as the next planned layer.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
@@ -42,7 +43,7 @@ All notable Provara changes are tracked here.
 ### Upgrade Notes
 
 - Run database migrations through `0044_firewall_settings`.
-- For Context Optimizer visibility, run database migrations through `0045_context_optimization_events`.
+- For Context Optimizer visibility and risk reporting, run database migrations through `0046_context_optimization_risk`.
 - New tables:
   - `firewall_events`
   - `firewall_settings`

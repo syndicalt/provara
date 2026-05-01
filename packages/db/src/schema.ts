@@ -334,6 +334,11 @@ export const contextOptimizationEvents = sqliteTable("context_optimization_event
   savedTokens: integer("saved_tokens").notNull(),
   reductionPct: real("reduction_pct").notNull(),
   duplicateSourceIds: text("duplicate_source_ids").notNull().default("[]"),
+  riskScanned: integer("risk_scanned", { mode: "boolean" }).notNull().default(false),
+  flaggedChunks: integer("flagged_chunks").notNull().default(0),
+  quarantinedChunks: integer("quarantined_chunks").notNull().default(0),
+  riskySourceIds: text("risky_source_ids").notNull().default("[]"),
+  riskDetails: text("risk_details").notNull().default("[]"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
