@@ -387,6 +387,51 @@ paths:
         "402":
           $ref: "#/components/responses/InsufficientTier"
 
+  /v1/context/optimize:
+    post:
+      tags: [Context Optimizer]
+      summary: Optimize runtime RAG context
+      description: |
+        Intelligence-tier endpoint that accepts already-retrieved context chunks
+        and returns a stateless optimization report. The first release performs
+        exact duplicate removal, preserves source IDs and metadata, and reports
+        estimated token savings.
+      operationId: optimizeContext
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextOptimizeRequest"
+            examples:
+              ragContext:
+                summary: Dedupe retrieved chunks before model context assembly
+                value:
+                  chunks:
+                    - id: doc-1:chunk-4
+                      content: Refunds are available within 30 days.
+                      source: help-center
+                      metadata:
+                        url: https://example.com/refunds
+                    - id: doc-2:chunk-9
+                      content: refunds are available within 30 days.
+                      source: help-center-copy
+      responses:
+        "200":
+          description: Optimization report
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [optimization]
+                properties:
+                  optimization:
+                    $ref: "#/components/schemas/ContextOptimizationResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
   /v1/api-keys/status:
     get:
       tags: [API Keys]
@@ -1826,6 +1871,86 @@ components:
         capabilities:
           $ref: "#/components/schemas/FirewallCapabilities"
 
+    ContextChunk:
+      type: object
+      required: [id, content]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+          minLength: 1
+        source:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ContextOptimizeRequest:
+      type: object
+      required: [chunks]
+      properties:
+        chunks:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/ContextChunk"
+
+    OptimizedContextChunk:
+      allOf:
+        - $ref: "#/components/schemas/ContextChunk"
+        - type: object
+          required: [sourceIds, inputTokens, outputTokens]
+          properties:
+            sourceIds:
+              type: array
+              items:
+                type: string
+            inputTokens:
+              type: integer
+            outputTokens:
+              type: integer
+
+    DroppedContextChunk:
+      type: object
+      required: [id, reason, duplicateOf, inputTokens]
+      properties:
+        id:
+          type: string
+        reason:
+          type: string
+          enum: [duplicate]
+        duplicateOf:
+          type: string
+        inputTokens:
+          type: integer
+
+    ContextOptimizationResult:
+      type: object
+      required: [optimized, dropped, metrics]
+      properties:
+        optimized:
+          type: array
+          items:
+            $ref: "#/components/schemas/OptimizedContextChunk"
+        dropped:
+          type: array
+          items:
+            $ref: "#/components/schemas/DroppedContextChunk"
+        metrics:
+          type: object
+          required: [inputChunks, outputChunks, droppedChunks, inputTokens, outputTokens, savedTokens, reductionPct]
+          properties:
+            inputChunks: { type: integer }
+            outputChunks: { type: integer }
+            droppedChunks: { type: integer }
+            inputTokens: { type: integer }
+            outputTokens: { type: integer }
+            savedTokens: { type: integer }
+            reductionPct:
+              type: number
+
     ChatMessage:
       type: object
       required: [role, content]
@@ -2161,6 +2286,8 @@ tags:
     description: User ratings, LLM judge scoring, and quality analytics.
   - name: Guardrails
     description: Tenant guardrail rules, Prompt Injection Firewall scans, settings, and events.
+  - name: Context Optimizer
+    description: Paid runtime context optimization for RAG and agentic systems.
   - name: Routing
     description: Routing engine configuration.
   - name: Providers
