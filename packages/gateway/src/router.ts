@@ -3,7 +3,7 @@ import { cors } from "hono/cors";
 import type { ProviderRegistry, CompletionRequest, CompletionResponse, StreamChunk } from "./providers/index.js";
 import { modelSupportsTools } from "./providers/capabilities.js";
 import type { Db } from "@provara/db";
-import { requests } from "@provara/db";
+import { guardrailLogs, requests } from "@provara/db";
 import { nanoid } from "nanoid";
 import { logCost } from "./cost/index.js";
 import { calculateCost } from "./cost/pricing.js";
@@ -36,6 +36,7 @@ import { createGuardrailRoutes } from "./routes/guardrails.js";
 import { createAlertRoutes } from "./routes/alerts.js";
 import { createPromptRoutes } from "./routes/prompts.js";
 import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
+import { checkToolCallAlignment } from "./guardrails/tool-call-alignment.js";
 import { getTenantId } from "./auth/tenant.js";
 import { getRequestAttribution } from "./auth/attribution.js";
 import { checkBudgetHardStop } from "./billing/budget-alerts.js";
@@ -1306,6 +1307,40 @@ export async function createRouter(ctx: RouterContext) {
     }
 
     const requestId = nanoid();
+    const toolCallAlignment = checkToolCallAlignment({
+      messages: request.messages,
+      tools: request.tools,
+      toolCalls: response.tool_calls,
+    });
+    for (const violation of toolCallAlignment.violations) {
+      await ctx.db.insert(guardrailLogs).values({
+        id: nanoid(),
+        requestId,
+        tenantId: tenantIdForGuardrails,
+        ruleId: null,
+        ruleName: "Tool-call alignment",
+        target: "output",
+        action: violation.action,
+        matchedContent: `${violation.toolName}: ${violation.matchedSnippet}`.slice(0, 120),
+      }).run();
+    }
+    if (!toolCallAlignment.passed) {
+      return c.json(
+        {
+          error: {
+            code: "tool_call_alignment_blocked",
+            message: `Tool call blocked by guardrail: ${toolCallAlignment.violations
+              .filter((violation) => violation.action === "block")
+              .map((violation) => violation.reason)
+              .join("; ")}`,
+            type: "guardrail_error",
+            violations: toolCallAlignment.violations,
+          },
+        },
+        400,
+      );
+    }
+
     await ctx.db
       .insert(requests)
       .values({
@@ -1468,6 +1503,9 @@ export async function createRouter(ctx: RouterContext) {
           usedFallback,
           usedLlmFallback: routingResult.usedLlmFallback,
         },
+        ...(toolCallAlignment.decision !== "allow"
+          ? { guardrails: { toolCallAlignment } }
+          : {}),
         ...(usedFallback && attemptErrors.length > 0 ? { errors: attemptErrors } : {}),
       },
     });
