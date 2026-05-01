@@ -5,6 +5,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import { ensureBuiltInRules } from "../guardrails/engine.js";
+import { PROMPT_INJECTION_FIREWALL_TYPE } from "../guardrails/patterns.js";
 
 export function createGuardrailRoutes(db: Db) {
   const app = new Hono();
@@ -60,6 +61,64 @@ export function createGuardrailRoutes(db: Db) {
 
     const rule = await db.select().from(guardrailRules).where(eq(guardrailRules.id, id)).get();
     return c.json({ rule }, 201);
+  });
+
+  // Configure the built-in Prompt Injection Firewall preset in one action.
+  app.patch("/presets/prompt-injection-firewall", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<{ enabled?: boolean; action?: "block" | "redact" | "flag" }>();
+    const validActions = new Set(["block", "redact", "flag"]);
+
+    if (body.enabled === undefined && body.action === undefined) {
+      return c.json(
+        { error: { message: "enabled or action is required", type: "validation_error" } },
+        400,
+      );
+    }
+    if (body.action !== undefined && !validActions.has(body.action)) {
+      return c.json(
+        { error: { message: "Invalid action", type: "validation_error" } },
+        400,
+      );
+    }
+
+    await ensureBuiltInRules(db, tenantId);
+
+    const updates: Record<string, unknown> = {};
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.action !== undefined) updates.action = body.action;
+
+    const tenantClause = tenantFilter(guardrailRules.tenantId, tenantId);
+    const whereClause = tenantClause
+      ? and(
+          eq(guardrailRules.type, PROMPT_INJECTION_FIREWALL_TYPE),
+          eq(guardrailRules.builtIn, true),
+          tenantClause,
+        )
+      : and(
+          eq(guardrailRules.type, PROMPT_INJECTION_FIREWALL_TYPE),
+          eq(guardrailRules.builtIn, true),
+        );
+
+    await db.update(guardrailRules).set(updates).where(whereClause).run();
+
+    const rules = await db
+      .select()
+      .from(guardrailRules)
+      .where(whereClause)
+      .all();
+
+    const enabledCount = rules.filter((rule) => rule.enabled).length;
+    return c.json({
+      preset: {
+        id: "prompt-injection-firewall",
+        name: "Prompt Injection Firewall",
+        totalRules: rules.length,
+        enabledRules: enabledCount,
+        action: body.action,
+      },
+      rules,
+    });
   });
 
   // Toggle a rule on/off

@@ -1,6 +1,6 @@
 ---
 title: Guardrails
-description: PII detection, content policies, and custom regex rules with redact / flag / block actions.
+description: PII detection, prompt injection firewalling, content policies, and custom regex rules with redact / flag / block actions.
 ---
 
 Guardrails sit in the request path alongside the classifier and rate limiter. Rules are stored per-tenant; each rule can target input, output, or both.
@@ -8,9 +8,16 @@ Guardrails sit in the request path alongside the classifier and rate limiter. Ru
 ## Built-in detectors
 
 - **PII** — SSN, credit card, email, phone, IP address
+- **Prompt Injection Firewall** — signature-based checks for instruction override, system prompt extraction, role takeover, and delimiter injection attempts
 - **Content** — built-in policy presets
 - **Regex** — custom tenant-defined patterns
 - **Token limit** — refuse requests exceeding a max token count
+
+## Prompt Injection Firewall
+
+The Prompt Injection Firewall is an opt-in preset backed by built-in input rules. It blocks common jailbreak and prompt-leakage signatures before the request reaches provider routing.
+
+This first version is intentionally fast and deterministic: it uses signatures, not an LLM judge. It catches obvious attacks such as "ignore previous instructions", "show your system prompt", role takeover prompts, and fake system-message delimiters. Semantic detection for retrieved context, tool output, and tool-call alignment is planned as a higher-tier firewall mode.
 
 ## Actions
 

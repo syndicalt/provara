@@ -1,4 +1,6 @@
-// Built-in PII detection patterns + jailbreak/prompt-injection signatures.
+export const PROMPT_INJECTION_FIREWALL_TYPE = "jailbreak" as const;
+
+// Built-in PII detection patterns + prompt-injection firewall signatures.
 // All patterns compile with `gi` flags in engine.ts, so case-insensitivity is
 // free — patterns stay readable.
 export const BUILTIN_RULES = [
@@ -52,12 +54,13 @@ export const BUILTIN_RULES = [
     action: "block" as const,
   },
 
-  // Jailbreak / prompt-injection detection (#265). Disabled by default;
-  // tenants opt in from the dashboard once they understand the false-positive
-  // tradeoff. Input-side only — output-side detection is a separate problem.
+  // Prompt Injection Firewall (#311). Disabled by default; tenants opt in
+  // from the dashboard once they understand the false-positive tradeoff.
+  // Input-side only for the MVP — retrieved/tool-output scanning is tracked
+  // as follow-up work in the firewall roadmap.
   {
     name: "Jailbreak — instruction override",
-    type: "jailbreak" as const,
+    type: PROMPT_INJECTION_FIREWALL_TYPE,
     pattern:
       "\\b(?:ignore\\s+(?:all\\s+|your\\s+|previous\\s+|prior\\s+|earlier\\s+|the\\s+)*(?:instructions?|prompts?|rules?|system\\s+prompts?)|forget\\s+(?:everything|all)\\s+(?:above|before)|disregard\\s+(?:the\\s+|your\\s+|previous\\s+)?(?:instructions?|rules?))\\b",
     target: "input" as const,
@@ -65,7 +68,7 @@ export const BUILTIN_RULES = [
   },
   {
     name: "Jailbreak — system prompt extraction",
-    type: "jailbreak" as const,
+    type: PROMPT_INJECTION_FIREWALL_TYPE,
     pattern:
       "\\b(?:reveal|show|print|output|repeat|display)\\s+(?:me\\s+)?(?:your|the)\\s+(?:system\\s+prompt|initial\\s+prompt|instructions?|rules?|guidelines?|original\\s+prompt)\\b",
     target: "input" as const,
@@ -73,7 +76,7 @@ export const BUILTIN_RULES = [
   },
   {
     name: "Jailbreak — role reversal / mode switch",
-    type: "jailbreak" as const,
+    type: PROMPT_INJECTION_FIREWALL_TYPE,
     pattern:
       "\\b(?:you\\s+are\\s+now\\s+(?:DAN|DUDE|STAN|Do\\s+Anything\\s+Now|Developer\\s+Mode|Admin\\s+Mode|Jailbroken)|pretend\\s+(?:you\\s+are|to\\s+be)\\s+(?:an?\\s+|the\\s+)?(?:unrestricted|uncensored|unfiltered|jailbroken|unlocked)|enable\\s+(?:developer|debug|admin|god|sudo)\\s+mode)\\b",
     target: "input" as const,
@@ -81,7 +84,7 @@ export const BUILTIN_RULES = [
   },
   {
     name: "Jailbreak — delimiter injection",
-    type: "jailbreak" as const,
+    type: PROMPT_INJECTION_FIREWALL_TYPE,
     pattern:
       "(?:#{2,}\\s*(?:new\\s+instructions?|end\\s+of\\s+system|override|system\\s+prompt)|</(?:system|instructions?)>|\\[\\s*SYSTEM\\s*\\]|\\n\\s*SYSTEM\\s*:)",
     target: "input" as const,

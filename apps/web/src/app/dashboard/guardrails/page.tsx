@@ -34,7 +34,7 @@ const TYPE_LABELS: Record<string, string> = {
   content: "Content Policy",
   regex: "Custom Regex",
   token_limit: "Token Limit",
-  jailbreak: "Jailbreak Detection",
+  jailbreak: "Prompt Injection Firewall",
 };
 
 function AddRuleForm({ onCreated }: { onCreated: () => void }) {
@@ -188,6 +188,14 @@ export default function GuardrailsPage() {
     fetchData();
   }
 
+  async function configurePromptInjectionFirewall(enabled: boolean) {
+    await gatewayFetchRaw("/v1/admin/guardrails/presets/prompt-injection-firewall", {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
+    });
+    fetchData();
+  }
+
   useEffect(() => { fetchData(); }, []);
 
   if (loading) {
@@ -200,16 +208,52 @@ export default function GuardrailsPage() {
 
   const builtInRules = rules.filter((r) => r.builtIn);
   const customRules = rules.filter((r) => !r.builtIn);
+  const firewallRules = builtInRules.filter((r) => r.type === "jailbreak");
+  const enabledFirewallRules = firewallRules.filter((r) => r.enabled).length;
+  const firewallEnabled = firewallRules.length > 0 && enabledFirewallRules === firewallRules.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">Guardrails</h1>
-          <p className="text-sm text-zinc-400 mt-1">Input/output filtering for PII detection, content policies, and custom patterns.</p>
+          <p className="text-sm text-zinc-400 mt-1">Gateway enforcement for PII, content policies, prompt injection signatures, and custom patterns.</p>
         </div>
         <AddRuleForm onCreated={fetchData} />
       </div>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-lg font-semibold">Prompt Injection Firewall</h2>
+              <span className={`text-xs px-2 py-0.5 rounded border ${
+                firewallEnabled
+                  ? "bg-emerald-900/40 text-emerald-300 border-emerald-800/50"
+                  : enabledFirewallRules > 0
+                    ? "bg-amber-900/40 text-amber-300 border-amber-800/50"
+                    : "bg-zinc-800 text-zinc-500 border-zinc-700"
+              }`}>
+                {enabledFirewallRules}/{firewallRules.length} rules enabled
+              </span>
+            </div>
+            <p className="text-sm text-zinc-400 mt-1 max-w-2xl">
+              Blocks common instruction override, system prompt extraction, role takeover, and delimiter injection attempts before provider routing.
+            </p>
+          </div>
+          <button
+            onClick={() => configurePromptInjectionFirewall(!firewallEnabled)}
+            disabled={firewallRules.length === 0}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 ${
+              firewallEnabled
+                ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                : "bg-blue-600 hover:bg-blue-500 text-white"
+            }`}
+          >
+            {firewallEnabled ? "Disable Firewall" : "Enable Firewall"}
+          </button>
+        </div>
+      </section>
 
       {/* Built-in Rules */}
       <section>

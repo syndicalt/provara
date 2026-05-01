@@ -577,9 +577,13 @@ describe("GET /v1/spend/trajectory (#219/T4)", () => {
 
   it("returns MTD cost and projection for a Team tenant", async () => {
     const owner = await seedOwner(db, "t-team", "team");
-    // Two spends in the current month.
-    await seedRequestAndCost(db, "m1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 2.5, createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) });
-    await seedRequestAndCost(db, "m2", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.5, createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) });
+    // Two spends in the current month. Keep them within the current day so
+    // this remains stable on the first day of a new month.
+    const now = new Date();
+    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const currentMonthTs = Math.max(monthStart + 1_000, now.getTime() - 60_000);
+    await seedRequestAndCost(db, "m1", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 2.5, createdAt: new Date(currentMonthTs) });
+    await seedRequestAndCost(db, "m2", { tenantId: "t-team", provider: "openai", model: "gpt-4.1-nano", cost: 1.5, createdAt: new Date(currentMonthTs) });
 
     const app = buildApp(db);
     const res = await app.request("/v1/spend/trajectory?period=month", {
