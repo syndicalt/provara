@@ -7,6 +7,14 @@ import { getTenantId, tenantFilter } from "../auth/tenant.js";
 import { tenantHasIntelligenceAccess } from "../auth/tier.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import {
+  FIREWALL_SCAN_MODES,
+  TOOL_CALL_ALIGNMENT_MODES,
+  getFirewallSettings,
+  upsertFirewallSettings,
+  type FirewallScanMode,
+  type ToolCallAlignmentMode,
+} from "../guardrails/firewall-settings.js";
+import {
   ensureBuiltInRules,
   loadRules,
   scanContent,
@@ -22,10 +30,6 @@ const SCAN_SOURCES = new Set<GuardrailScanSource>([
   "tool_output",
   "model_output",
 ]);
-
-type GuardrailScanMode = "signature" | "semantic" | "hybrid";
-
-const SCAN_MODES = new Set<GuardrailScanMode>(["signature", "semantic", "hybrid"]);
 
 const DECISION_RANK: Record<string, number> = {
   allow: 0,
@@ -104,6 +108,7 @@ export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
   // can check RAG chunks or tool output before adding them to model context.
   app.post("/scan", async (c) => {
     const tenantId = getTenantId(c.req.raw);
+    const settings = await getFirewallSettings(db, tenantId);
     const body = await c.req.json<{
       content?: unknown;
       source?: unknown;
@@ -127,13 +132,13 @@ export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
         400,
       );
     }
-    if (body.mode !== undefined && (typeof body.mode !== "string" || !SCAN_MODES.has(body.mode as GuardrailScanMode))) {
+    if (body.mode !== undefined && (typeof body.mode !== "string" || !FIREWALL_SCAN_MODES.has(body.mode as FirewallScanMode))) {
       return c.json(
         { error: { message: "mode must be one of: signature, semantic, hybrid", type: "validation_error" } },
         400,
       );
     }
-    const mode = (body.mode as GuardrailScanMode | undefined) ?? "signature";
+    const mode = (body.mode as FirewallScanMode | undefined) ?? settings.defaultScanMode;
 
     await ensureBuiltInRules(db, tenantId);
     const rules = await loadRules(db, tenantId);
@@ -245,6 +250,87 @@ export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
       .all();
 
     return c.json({ events });
+  });
+
+  app.get("/firewall/settings", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const settings = await getFirewallSettings(db, tenantId);
+    const hasIntelligenceAccess = await tenantHasIntelligenceAccess(db, tenantId);
+    return c.json({
+      settings,
+      capabilities: {
+        semanticScan: hasIntelligenceAccess,
+        hybridScan: hasIntelligenceAccess,
+      },
+    });
+  });
+
+  app.patch("/firewall/settings", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<{
+      defaultScanMode?: unknown;
+      toolCallAlignment?: unknown;
+      streamingEnforcement?: unknown;
+    }>();
+
+    const patch: {
+      defaultScanMode?: FirewallScanMode;
+      toolCallAlignment?: ToolCallAlignmentMode;
+      streamingEnforcement?: boolean;
+    } = {};
+
+    if (body.defaultScanMode !== undefined) {
+      if (typeof body.defaultScanMode !== "string" || !FIREWALL_SCAN_MODES.has(body.defaultScanMode as FirewallScanMode)) {
+        return c.json(
+          { error: { message: "defaultScanMode must be one of: signature, semantic, hybrid", type: "validation_error" } },
+          400,
+        );
+      }
+      const nextMode = body.defaultScanMode as FirewallScanMode;
+      if (nextMode !== "signature" && !(await tenantHasIntelligenceAccess(db, tenantId))) {
+        return c.json(
+          {
+            error: {
+              message: "Semantic and hybrid prompt-injection scans are available on Pro and higher plans.",
+              type: "insufficient_tier",
+            },
+            gate: { reason: "insufficient_tier", requiredTier: "pro" },
+          },
+          402,
+        );
+      }
+      patch.defaultScanMode = nextMode;
+    }
+
+    if (body.toolCallAlignment !== undefined) {
+      if (typeof body.toolCallAlignment !== "string" || !TOOL_CALL_ALIGNMENT_MODES.has(body.toolCallAlignment as ToolCallAlignmentMode)) {
+        return c.json(
+          { error: { message: "toolCallAlignment must be one of: off, flag, block", type: "validation_error" } },
+          400,
+        );
+      }
+      patch.toolCallAlignment = body.toolCallAlignment as ToolCallAlignmentMode;
+    }
+
+    if (body.streamingEnforcement !== undefined) {
+      if (typeof body.streamingEnforcement !== "boolean") {
+        return c.json(
+          { error: { message: "streamingEnforcement must be a boolean", type: "validation_error" } },
+          400,
+        );
+      }
+      patch.streamingEnforcement = body.streamingEnforcement;
+    }
+
+    const settings = await upsertFirewallSettings(db, tenantId, patch);
+    const hasIntelligenceAccess = await tenantHasIntelligenceAccess(db, tenantId);
+    return c.json({
+      settings,
+      capabilities: {
+        semanticScan: hasIntelligenceAccess,
+        hybridScan: hasIntelligenceAccess,
+      },
+    });
   });
 
   // Configure the built-in Prompt Injection Firewall preset in one action.

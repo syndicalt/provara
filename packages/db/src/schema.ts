@@ -304,6 +304,25 @@ export const firewallEvents = sqliteTable("firewall_events", {
   index("firewall_events_request_idx").on(table.requestId),
 ]);
 
+export const firewallSettings = sqliteTable("firewall_settings", {
+  tenantId: text("tenant_id").primaryKey(),
+  defaultScanMode: text("default_scan_mode", { enum: ["signature", "semantic", "hybrid"] })
+    .notNull()
+    .default("signature"),
+  toolCallAlignment: text("tool_call_alignment", { enum: ["off", "flag", "block"] })
+    .notNull()
+    .default("block"),
+  streamingEnforcement: integer("streaming_enforcement", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
