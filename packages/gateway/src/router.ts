@@ -21,6 +21,7 @@ import { createDemoRoutes } from "./routes/demo.js";
 import { createTokenRoutes } from "./routes/tokens.js";
 import { createFeedbackRoutes } from "./routes/feedback.js";
 import { createConversationRoutes } from "./routes/conversations.js";
+import { createContextRoutes } from "./routes/context.js";
 import { createShareHandlers } from "./routes/shares.js";
 import { createRoutingConfigRoutes } from "./routes/routing-config.js";
 import { createRoutingIsolationRoutes } from "./routes/routing-isolation.js";
@@ -410,8 +411,10 @@ export async function createRouter(ctx: RouterContext) {
   app.use("/v1/regression/*", tierGate);
   app.use("/v1/cost-migrations/*", tierGate);
   app.use("/v1/evals/*", tierGate);
+  app.use("/v1/context/*", tierGate);
   app.route("/v1/regression", createRegressionRoutes(ctx.db, routingEngine.regressionCellTable));
   app.route("/v1/cost-migrations", createMigrationRoutes(ctx.db, routingEngine.boostTable));
+  app.route("/v1/context", createContextRoutes());
 
   // Mount analytics routes
   app.route("/v1/analytics", createAnalyticsRoutes(ctx.db, ctx.registry));
