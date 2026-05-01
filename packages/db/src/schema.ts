@@ -279,6 +279,31 @@ export const guardrailLogs = sqliteTable("guardrail_logs", {
     .$defaultFn(() => new Date()),
 });
 
+export const firewallEvents = sqliteTable("firewall_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  requestId: text("request_id"),
+  surface: text("surface", { enum: ["scan", "tool_call_alignment"] }).notNull(),
+  source: text("source", { enum: ["user_input", "retrieved_context", "tool_output", "model_output"] }),
+  mode: text("mode", { enum: ["signature", "semantic", "hybrid"] }),
+  decision: text("decision", { enum: ["allow", "flag", "redact", "block", "quarantine"] }).notNull(),
+  action: text("action", { enum: ["allow", "flag", "redact", "block", "quarantine"] }).notNull(),
+  passed: integer("passed", { mode: "boolean" }).notNull(),
+  confidence: real("confidence"),
+  riskLevel: text("risk_level"),
+  category: text("category"),
+  toolName: text("tool_name"),
+  ruleName: text("rule_name"),
+  matchedContent: text("matched_content"),
+  details: text("details"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("firewall_events_tenant_created_idx").on(table.tenantId, table.createdAt),
+  index("firewall_events_request_idx").on(table.requestId),
+]);
+
 export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
