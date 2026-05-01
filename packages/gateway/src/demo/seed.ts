@@ -9,6 +9,7 @@ import {
   auditLogs,
   costLogs,
   costMigrations,
+  contextOptimizationEvents,
   customProviders,
   feedback,
   guardrailLogs,
@@ -613,6 +614,74 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
     tenantId,
     createdAt: new Date(now.getTime() - 21 * DAY_MS),
   }).run();
+
+  // 19. Context Optimizer visibility — enough recent rows for the
+  //     dashboard to show savings, duplicate drops, and source IDs.
+  const contextEvents = [
+    {
+      id: "coe_demo_support_docs",
+      inputChunks: 18,
+      outputChunks: 12,
+      droppedChunks: 6,
+      inputTokens: 12480,
+      outputTokens: 8380,
+      savedTokens: 4100,
+      reductionPct: 32.85,
+      duplicateSourceIds: ["refunds.md#4", "refunds-copy.md#1", "billing-faq#9", "billing-faq#10", "help-center#22", "help-center#23"],
+      createdAt: new Date(now.getTime() - 2 * 60 * 60 * 1000),
+    },
+    {
+      id: "coe_demo_policy_search",
+      inputChunks: 14,
+      outputChunks: 10,
+      droppedChunks: 4,
+      inputTokens: 9680,
+      outputTokens: 7030,
+      savedTokens: 2650,
+      reductionPct: 27.38,
+      duplicateSourceIds: ["security-policy#2", "security-policy#8", "sso-runbook#5", "sso-runbook#6"],
+      createdAt: new Date(now.getTime() - 8 * 60 * 60 * 1000),
+    },
+    {
+      id: "coe_demo_agent_runbook",
+      inputChunks: 22,
+      outputChunks: 15,
+      droppedChunks: 7,
+      inputTokens: 15220,
+      outputTokens: 10690,
+      savedTokens: 4530,
+      reductionPct: 29.76,
+      duplicateSourceIds: ["agent-runbook#11", "agent-runbook#12", "tool-calls#4", "tool-calls#7", "handoff#2", "handoff#3", "handoff#4"],
+      createdAt: new Date(now.getTime() - 1 * DAY_MS),
+    },
+    {
+      id: "coe_demo_onboarding",
+      inputChunks: 9,
+      outputChunks: 8,
+      droppedChunks: 1,
+      inputTokens: 5220,
+      outputTokens: 4700,
+      savedTokens: 520,
+      reductionPct: 9.96,
+      duplicateSourceIds: ["onboarding#14"],
+      createdAt: new Date(now.getTime() - 3 * DAY_MS),
+    },
+  ];
+  for (const event of contextEvents) {
+    await db.insert(contextOptimizationEvents).values({
+      id: event.id,
+      tenantId,
+      inputChunks: event.inputChunks,
+      outputChunks: event.outputChunks,
+      droppedChunks: event.droppedChunks,
+      inputTokens: event.inputTokens,
+      outputTokens: event.outputTokens,
+      savedTokens: event.savedTokens,
+      reductionPct: event.reductionPct,
+      duplicateSourceIds: JSON.stringify(event.duplicateSourceIds),
+      createdAt: event.createdAt,
+    }).run();
+  }
 }
 
 /** Wipe every row scoped to the demo tenant. Order matters where FKs apply. */
@@ -636,6 +705,7 @@ async function wipe(db: Db, tenantId: string): Promise<void> {
   await db.delete(routingWeightSnapshots).where(eq(routingWeightSnapshots.tenantId, tenantId)).run();
   await db.delete(spendBudgets).where(eq(spendBudgets.tenantId, tenantId)).run();
   await db.delete(costMigrations).where(eq(costMigrations.tenantId, tenantId)).run();
+  await db.delete(contextOptimizationEvents).where(eq(contextOptimizationEvents.tenantId, tenantId)).run();
   await db.delete(customProviders).where(eq(customProviders.tenantId, tenantId)).run();
   await db.delete(teamInvites).where(eq(teamInvites.tenantId, tenantId)).run();
   await db.delete(apiKeys).where(eq(apiKeys.tenantId, tenantId)).run();
