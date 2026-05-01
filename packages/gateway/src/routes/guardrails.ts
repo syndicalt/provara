@@ -1,9 +1,10 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { guardrailRules, guardrailLogs } from "@provara/db";
+import { firewallEvents, guardrailRules, guardrailLogs } from "@provara/db";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTenantId, tenantFilter } from "../auth/tenant.js";
+import { tenantHasIntelligenceAccess } from "../auth/tier.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import {
   ensureBuiltInRules,
@@ -11,6 +12,7 @@ import {
   scanContent,
   type GuardrailScanSource,
 } from "../guardrails/engine.js";
+import { recordFirewallEvent } from "../guardrails/firewall-events.js";
 import { judgePromptInjection } from "../guardrails/prompt-injection-judge.js";
 import { PROMPT_INJECTION_FIREWALL_TYPE } from "../guardrails/patterns.js";
 
@@ -139,6 +141,22 @@ export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
 
     const shouldRunSemantic = mode === "semantic" || (mode === "hybrid" && scan.decision !== "allow");
     if (shouldRunSemantic) {
+      const hasSemanticAccess = await tenantHasIntelligenceAccess(db, tenantId);
+      if (!hasSemanticAccess) {
+        return c.json(
+          {
+            error: {
+              message: "Semantic and hybrid prompt-injection scans are available on Pro and higher plans.",
+              type: "insufficient_tier",
+            },
+            gate: {
+              reason: "insufficient_tier",
+              requiredTier: "pro",
+            },
+          },
+          402,
+        );
+      }
       if (!registry) {
         return c.json(
           { error: { message: "semantic scan mode is not available in this route context", type: "semantic_unavailable" } },
@@ -157,6 +175,25 @@ export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
           );
         }
         const decision = stricterDecision(scan.decision, semantic.recommendedAction);
+        await recordFirewallEvent(db, {
+          tenantId,
+          surface: "scan",
+          source: body.source as GuardrailScanSource,
+          mode,
+          decision,
+          action: semantic.recommendedAction,
+          passed: decisionPassed(decision),
+          confidence: semantic.confidence,
+          riskLevel: semantic.riskLevel,
+          category: semantic.category,
+          ruleName: scan.violations[0]?.ruleName ?? null,
+          matchedContent: scan.violations[0]?.matchedSnippet ?? semantic.evidence,
+          details: {
+            semantic,
+            signatureDecision: scan.decision,
+            violationCount: scan.violations.length,
+          },
+        });
         return c.json({
           scan: {
             ...scan,
@@ -179,7 +216,35 @@ export function createGuardrailRoutes(db: Db, registry?: ProviderRegistry) {
       }
     }
 
+    await recordFirewallEvent(db, {
+      tenantId,
+      surface: "scan",
+      source: body.source as GuardrailScanSource,
+      mode,
+      decision: scan.decision,
+      action: scan.decision,
+      passed: scan.passed,
+      ruleName: scan.violations[0]?.ruleName ?? null,
+      matchedContent: scan.violations[0]?.matchedSnippet ?? null,
+      details: { violationCount: scan.violations.length },
+    });
     return c.json({ scan: { ...scan, mode } });
+  });
+
+  app.get("/firewall/events", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const rawLimit = Number(c.req.query("limit") ?? 50);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
+
+    const events = await db
+      .select()
+      .from(firewallEvents)
+      .where(tenantFilter(firewallEvents.tenantId, tenantId))
+      .orderBy(desc(firewallEvents.createdAt))
+      .limit(limit)
+      .all();
+
+    return c.json({ events });
   });
 
   // Configure the built-in Prompt Injection Firewall preset in one action.

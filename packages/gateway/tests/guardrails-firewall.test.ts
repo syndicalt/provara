@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import { guardrailRules } from "@provara/db";
+import { firewallEvents, guardrailRules } from "@provara/db";
 import { and, eq } from "drizzle-orm";
 import { createGuardrailRoutes } from "../src/routes/guardrails.js";
 import { PROMPT_INJECTION_FIREWALL_TYPE } from "../src/guardrails/patterns.js";
@@ -8,6 +8,7 @@ import { __testSetTenant } from "../src/auth/tenant.js";
 import { makeTestDb } from "./_setup/db.js";
 import { makeFakeProvider } from "./_setup/fake-provider.js";
 import { makeFakeRegistry } from "./_setup/fake-registry.js";
+import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 import type { ProviderRegistry } from "../src/providers/index.js";
 
 function appFor(
@@ -23,6 +24,10 @@ function appFor(
   app.route("/", createGuardrailRoutes(db, registry));
   return app;
 }
+
+afterEach(() => {
+  resetTierEnv();
+});
 
 describe("prompt injection firewall preset", () => {
   it("bulk-enables the built-in prompt injection rules for a tenant", async () => {
@@ -124,6 +129,17 @@ describe("guardrail context scan API", () => {
     expect(body.scan.passed).toBe(false);
     expect(body.scan.content).toBe(content);
     expect(body.scan.violations.length).toBeGreaterThan(0);
+
+    const events = await db.select().from(firewallEvents).all();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tenantId: "tenant-scan",
+      surface: "scan",
+      source: "retrieved_context",
+      mode: "signature",
+      decision: "quarantine",
+      passed: false,
+    });
   });
 
   it("redacts user input when a redact rule matches", async () => {
@@ -183,6 +199,7 @@ describe("guardrail context scan API", () => {
 
   it("runs semantic prompt injection judge when requested", async () => {
     const db = await makeTestDb();
+    await grantIntelligenceAccess(db, "tenant-semantic", { tier: "pro" });
     const judgeProvider = makeFakeProvider({
       name: "openai",
       models: ["gpt-4.1-nano"],
@@ -229,6 +246,69 @@ describe("guardrail context scan API", () => {
     expect(body.scan.semantic.category).toBe("indirect_injection");
     expect(body.scan.semantic.judge).toEqual({ provider: "openai", model: "gpt-4.1-nano" });
     expect(judgeProvider.calls).toHaveLength(1);
+
+    const events = await db.select().from(firewallEvents).all();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      tenantId: "tenant-semantic",
+      surface: "scan",
+      source: "retrieved_context",
+      mode: "semantic",
+      decision: "quarantine",
+      confidence: 0.92,
+      riskLevel: "high",
+      category: "indirect_injection",
+      passed: false,
+    });
+  });
+
+  it("gates semantic scan mode to intelligence tiers", async () => {
+    const db = await makeTestDb();
+    process.env.PROVARA_CLOUD = "true";
+    const judgeProvider = makeFakeProvider({
+      name: "openai",
+      models: ["gpt-4.1-nano"],
+      responseContent: "{}",
+    });
+    const app = appFor(db, "tenant-free", makeFakeRegistry([judgeProvider]));
+
+    const res = await app.request("/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: "retrieved_context",
+        mode: "semantic",
+        content: "Document text",
+      }),
+    });
+
+    expect(res.status).toBe(402);
+    const body = await res.json() as { error: { type: string }; gate: { requiredTier: string } };
+    expect(body.error.type).toBe("insufficient_tier");
+    expect(body.gate.requiredTier).toBe("pro");
+    expect(judgeProvider.calls).toHaveLength(0);
+    expect(await db.select().from(firewallEvents).all()).toHaveLength(0);
+  });
+
+  it("lists recent firewall events for the tenant", async () => {
+    const db = await makeTestDb();
+    const app = appFor(db, "tenant-scan");
+
+    await app.request("/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "user_input", content: "hello" }),
+    });
+
+    const res = await app.request("/firewall/events");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { events: Array<{ tenantId: string; surface: string; decision: string }> };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]).toMatchObject({
+      tenantId: "tenant-scan",
+      surface: "scan",
+      decision: "allow",
+    });
   });
 
   it("validates scan mode", async () => {

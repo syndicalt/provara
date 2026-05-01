@@ -36,13 +36,14 @@ import { createGuardrailRoutes } from "./routes/guardrails.js";
 import { createAlertRoutes } from "./routes/alerts.js";
 import { createPromptRoutes } from "./routes/prompts.js";
 import { loadRules, checkContent, logViolations } from "./guardrails/engine.js";
-import { checkToolCallAlignment } from "./guardrails/tool-call-alignment.js";
+import { recordFirewallEvent } from "./guardrails/firewall-events.js";
+import { checkToolCallAlignment, type ToolCallAlignmentResult } from "./guardrails/tool-call-alignment.js";
 import { getTenantId } from "./auth/tenant.js";
 import { getRequestAttribution } from "./auth/attribution.js";
 import { checkBudgetHardStop } from "./billing/budget-alerts.js";
 import { createJudge } from "./routing/judge.js";
 import { getCached, putCache, cacheStats } from "./cache/index.js";
-import { messagesHaveImage } from "./providers/types.js";
+import { messagesHaveImage, type ToolCall, type ToolCallDelta } from "./providers/types.js";
 import { publish as publishLive, subscribe as subscribeLive, buildPromptPreview, type LiveEvent } from "./live/emitter.js";
 import { createSemanticCache, type SemanticCache } from "./cache/semantic.js";
 import { createEmbeddingProvider } from "./embeddings/index.js";
@@ -78,6 +79,86 @@ interface RouterContext {
 // the stack not to leak), and prefer structural fields (name, code,
 // status) over free-text messages where possible.
 const SECRET_PATTERN = /(?:Bearer\s+[A-Za-z0-9][A-Za-z0-9\-_.=]{8,}|sk-[A-Za-z0-9\-_]{6,}|xai-[A-Za-z0-9\-_]{6,}|AIza[A-Za-z0-9\-_]{10,})/g;
+
+interface BufferedToolCall {
+  id?: string;
+  type?: "function";
+  function: { name?: string; arguments: string };
+}
+
+function bufferToolCallDeltas(buffer: Map<number, BufferedToolCall>, deltas: ToolCallDelta[]) {
+  for (const delta of deltas) {
+    const existing = buffer.get(delta.index) ?? { function: { arguments: "" } };
+    if (delta.id) existing.id = delta.id;
+    if (delta.type) existing.type = delta.type;
+    if (delta.function?.name) existing.function.name = delta.function.name;
+    if (delta.function?.arguments) {
+      existing.function.arguments += delta.function.arguments;
+    }
+    buffer.set(delta.index, existing);
+  }
+}
+
+function bufferedToolCalls(buffer: Map<number, BufferedToolCall>): ToolCall[] {
+  return [...buffer.entries()]
+    .sort(([a], [b]) => a - b)
+    .filter(([, call]) => call.function.name)
+    .map(([index, call]) => ({
+      id: call.id ?? `call_${index}`,
+      type: "function" as const,
+      function: {
+        name: call.function.name!,
+        arguments: call.function.arguments,
+      },
+    }));
+}
+
+function bufferedToolCallDeltas(buffer: Map<number, BufferedToolCall>): ToolCallDelta[] {
+  return bufferedToolCalls(buffer).map((call, index) => ({
+    index,
+    id: call.id,
+    type: "function" as const,
+    function: {
+      name: call.function.name,
+      arguments: call.function.arguments,
+    },
+  }));
+}
+
+async function recordToolCallAlignmentResult(
+  db: Db,
+  tenantId: string | null,
+  requestId: string,
+  result: ToolCallAlignmentResult,
+) {
+  for (const violation of result.violations) {
+    await db.insert(guardrailLogs).values({
+      id: nanoid(),
+      requestId,
+      tenantId,
+      ruleId: null,
+      ruleName: "Tool-call alignment",
+      target: "output",
+      action: violation.action,
+      matchedContent: `${violation.toolName}: ${violation.matchedSnippet}`.slice(0, 120),
+    }).run();
+    await recordFirewallEvent(db, {
+      tenantId,
+      requestId,
+      surface: "tool_call_alignment",
+      decision: result.decision,
+      action: violation.action,
+      passed: result.passed,
+      toolName: violation.toolName,
+      ruleName: "Tool-call alignment",
+      matchedContent: violation.matchedSnippet,
+      details: {
+        code: violation.code,
+        reason: violation.reason,
+      },
+    });
+  }
+}
 
 function redactSecrets(s: string): string {
   return s.replace(SECRET_PATTERN, "[redacted]");
@@ -803,6 +884,8 @@ export async function createRouter(ctx: RouterContext) {
           // emitted on this turn. Deltas for the same index arrive across
           // multiple chunks as the `function.arguments` JSON streams in.
           const streamToolCallIndexes = new Set<number>();
+          const streamToolCallBuffer = new Map<number, BufferedToolCall>();
+          let terminalFinishReason: StreamChunk["finish_reason"] | undefined;
 
           // SSE comments ":..." are legal keepalives ignored by parsers.
           // Cleared on the first real chunk or in finally{}.
@@ -814,20 +897,18 @@ export async function createRouter(ctx: RouterContext) {
             fullContent += chunk.content;
             if (chunk.usage) usage = chunk.usage;
             if (chunk.tool_calls) {
+              bufferToolCallDeltas(streamToolCallBuffer, chunk.tool_calls);
               for (const d of chunk.tool_calls) streamToolCallIndexes.add(d.index);
             }
-            // Forward the provider's real finish_reason when it arrives so
-            // OpenAI-SDK clients see "tool_calls" vs "stop" correctly. Fall
-            // back to "stop" only when a chunk signals done without an
-            // explicit reason (defensive — all adapters should set one).
-            const sseDelta: Record<string, unknown> = chunk.done ? {} : {};
-            if (!chunk.done && chunk.content) sseDelta.content = chunk.content;
-            if (chunk.tool_calls && chunk.tool_calls.length > 0) {
-              sseDelta.tool_calls = chunk.tool_calls;
+            if (chunk.done) {
+              terminalFinishReason = chunk.finish_reason;
+              return;
             }
-            const finishReasonForSse = chunk.done
-              ? chunk.finish_reason ?? "stop"
-              : null;
+            // Tool-call deltas are buffered until their JSON arguments are
+            // complete and aligned. Text content can still stream normally.
+            const sseDelta: Record<string, unknown> = chunk.done ? {} : {};
+            if (chunk.content) sseDelta.content = chunk.content;
+            if (Object.keys(sseDelta).length === 0) return;
             const sseData = JSON.stringify({
               id: `chatcmpl-${requestId}`,
               object: "chat.completion.chunk",
@@ -836,7 +917,7 @@ export async function createRouter(ctx: RouterContext) {
               choices: [{
                 index: 0,
                 delta: sseDelta,
-                finish_reason: finishReasonForSse,
+                finish_reason: null,
               }],
             });
             controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
@@ -855,6 +936,60 @@ export async function createRouter(ctx: RouterContext) {
               }
               emitChunk(chunk);
             }
+
+            const bufferedCalls = bufferedToolCalls(streamToolCallBuffer);
+            const streamAlignment = checkToolCallAlignment({
+              messages: request.messages,
+              tools: request.tools,
+              toolCalls: bufferedCalls,
+            });
+            await recordToolCallAlignmentResult(ctx.db, tenantIdForGuardrails, requestId, streamAlignment);
+            if (!streamAlignment.passed) {
+              const errorEvent = JSON.stringify({
+                error: {
+                  code: "tool_call_alignment_blocked",
+                  message: `Tool call blocked by guardrail: ${streamAlignment.violations
+                    .filter((violation) => violation.action === "block")
+                    .map((violation) => violation.reason)
+                    .join("; ")}`,
+                  type: "guardrail_error",
+                  violations: streamAlignment.violations,
+                },
+              });
+              controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+              return;
+            }
+
+            const bufferedDeltas = bufferedToolCallDeltas(streamToolCallBuffer);
+            if (bufferedDeltas.length > 0) {
+              const toolCallEvent = JSON.stringify({
+                id: `chatcmpl-${requestId}`,
+                object: "chat.completion.chunk",
+                created: Math.floor(Date.now() / 1000),
+                model: usedModel,
+                choices: [{
+                  index: 0,
+                  delta: { tool_calls: bufferedDeltas },
+                  finish_reason: null,
+                }],
+              });
+              controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
+            }
+
+            const terminalEvent = JSON.stringify({
+              id: `chatcmpl-${requestId}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model: usedModel,
+              choices: [{
+                index: 0,
+                delta: {},
+                finish_reason: terminalFinishReason ?? (bufferedDeltas.length > 0 ? "tool_calls" : "stop"),
+              }],
+            });
+            controller.enqueue(encoder.encode(`data: ${terminalEvent}\n\n`));
 
             const streamLatencyMs = Math.round(performance.now() - start);
             const streamCost = calculateCost(usedModel, usage.inputTokens, usage.outputTokens);
@@ -1059,15 +1194,24 @@ export async function createRouter(ctx: RouterContext) {
               const encoder = new TextEncoder();
               let fullContent = "";
               let usage = { inputTokens: 0, outputTokens: 0 };
+              const streamToolCallBuffer = new Map<number, BufferedToolCall>();
+              const streamToolCallIndexes = new Set<number>();
+              let terminalFinishReason: StreamChunk["finish_reason"] | undefined;
 
               const emitChunk = (chunk: StreamChunk) => {
                 fullContent += chunk.content;
                 if (chunk.usage) usage = chunk.usage;
-                const sseDelta: Record<string, unknown> = chunk.done ? {} : {};
-                if (!chunk.done && chunk.content) sseDelta.content = chunk.content;
                 if (chunk.tool_calls && chunk.tool_calls.length > 0) {
-                  sseDelta.tool_calls = chunk.tool_calls;
+                  bufferToolCallDeltas(streamToolCallBuffer, chunk.tool_calls);
+                  for (const d of chunk.tool_calls) streamToolCallIndexes.add(d.index);
                 }
+                if (chunk.done) {
+                  terminalFinishReason = chunk.finish_reason;
+                  return;
+                }
+                const sseDelta: Record<string, unknown> = {};
+                if (chunk.content) sseDelta.content = chunk.content;
+                if (Object.keys(sseDelta).length === 0) return;
                 const sseData = JSON.stringify({
                   id: `chatcmpl-${requestId}`,
                   object: "chat.completion.chunk",
@@ -1076,7 +1220,7 @@ export async function createRouter(ctx: RouterContext) {
                   choices: [{
                     index: 0,
                     delta: sseDelta,
-                    finish_reason: chunk.done ? chunk.finish_reason ?? "stop" : null,
+                    finish_reason: null,
                   }],
                 });
                 controller.enqueue(encoder.encode(`data: ${sseData}\n\n`));
@@ -1090,6 +1234,60 @@ export async function createRouter(ctx: RouterContext) {
                 for await (const chunk of { [Symbol.asyncIterator]: () => iterator }) {
                   emitChunk(chunk);
                 }
+
+                const bufferedCalls = bufferedToolCalls(streamToolCallBuffer);
+                const streamAlignment = checkToolCallAlignment({
+                  messages: request.messages,
+                  tools: request.tools,
+                  toolCalls: bufferedCalls,
+                });
+                await recordToolCallAlignmentResult(ctx.db, tenantIdForGuardrails, requestId, streamAlignment);
+                if (!streamAlignment.passed) {
+                  const errorEvent = JSON.stringify({
+                    error: {
+                      code: "tool_call_alignment_blocked",
+                      message: `Tool call blocked by guardrail: ${streamAlignment.violations
+                        .filter((violation) => violation.action === "block")
+                        .map((violation) => violation.reason)
+                        .join("; ")}`,
+                      type: "guardrail_error",
+                      violations: streamAlignment.violations,
+                    },
+                  });
+                  controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+                  controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                  controller.close();
+                  return;
+                }
+
+                const bufferedDeltas = bufferedToolCallDeltas(streamToolCallBuffer);
+                if (bufferedDeltas.length > 0) {
+                  const toolCallEvent = JSON.stringify({
+                    id: `chatcmpl-${requestId}`,
+                    object: "chat.completion.chunk",
+                    created: Math.floor(Date.now() / 1000),
+                    model: usedModel,
+                    choices: [{
+                      index: 0,
+                      delta: { tool_calls: bufferedDeltas },
+                      finish_reason: null,
+                    }],
+                  });
+                  controller.enqueue(encoder.encode(`data: ${toolCallEvent}\n\n`));
+                }
+
+                const terminalEvent = JSON.stringify({
+                  id: `chatcmpl-${requestId}`,
+                  object: "chat.completion.chunk",
+                  created: Math.floor(Date.now() / 1000),
+                  model: usedModel,
+                  choices: [{
+                    index: 0,
+                    delta: {},
+                    finish_reason: terminalFinishReason ?? (bufferedDeltas.length > 0 ? "tool_calls" : "stop"),
+                  }],
+                });
+                controller.enqueue(encoder.encode(`data: ${terminalEvent}\n\n`));
 
                 // Emit a final Provara meta event before [DONE] so the client
                 // can show cost/latency/tokens inline with the response. We
@@ -1133,6 +1331,7 @@ export async function createRouter(ctx: RouterContext) {
                     apiTokenId: attribution.apiTokenId,
                     abTestId: routingResult.abTestId || null,
                     promptVersionId: promptVersionId || null,
+                    toolCallsCount: streamToolCallIndexes.size,
                   })
                   .run();
 
@@ -1312,18 +1511,7 @@ export async function createRouter(ctx: RouterContext) {
       tools: request.tools,
       toolCalls: response.tool_calls,
     });
-    for (const violation of toolCallAlignment.violations) {
-      await ctx.db.insert(guardrailLogs).values({
-        id: nanoid(),
-        requestId,
-        tenantId: tenantIdForGuardrails,
-        ruleId: null,
-        ruleName: "Tool-call alignment",
-        target: "output",
-        action: violation.action,
-        matchedContent: `${violation.toolName}: ${violation.matchedSnippet}`.slice(0, 120),
-      }).run();
-    }
+    await recordToolCallAlignmentResult(ctx.db, tenantIdForGuardrails, requestId, toolCallAlignment);
     if (!toolCallAlignment.passed) {
       return c.json(
         {

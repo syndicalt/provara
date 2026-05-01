@@ -40,6 +40,10 @@ For non-streaming chat completions, Provara checks model-requested `tool_calls` 
 
 When a dangerous tool call is blocked, the chat response returns HTTP 400 with `error.code: "tool_call_alignment_blocked"` and writes a `Tool-call alignment` guardrail log. Streaming tool-call enforcement is not enabled yet because blocking safely requires buffering tool-call deltas before they are emitted to the client.
 
+Advanced firewall activity is also written to `firewall_events` for audit and analytics. Events record the surface (`scan` or `tool_call_alignment`), source, mode, decision, action, confidence/category fields when a semantic judge runs, tool name when applicable, and request/tenant metadata. Admins can fetch recent events from `GET /v1/admin/guardrails/firewall/events`.
+
+Semantic and hybrid scan modes are gated to tenants with Intelligence access. Signature scans remain the default deterministic path.
+
 ## Actions
 
 - **block** — refuse the request (HTTP 400)
