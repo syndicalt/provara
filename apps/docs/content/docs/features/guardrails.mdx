@@ -38,11 +38,13 @@ By default scans run in `signature` mode. Callers can opt into semantic classifi
 
 For non-streaming chat completions, Provara checks model-requested `tool_calls` before returning them to the client. The alignment check blocks undeclared tools, invalid JSON arguments, and arguments that appear to smuggle prompt-injection or secret-exfiltration instructions. Obvious lexical intent mismatches are logged as flags and allowed so the MVP avoids blocking legitimate short prompts.
 
-When a dangerous tool call is blocked, the chat response returns HTTP 400 with `error.code: "tool_call_alignment_blocked"` and writes a `Tool-call alignment` guardrail log. Streaming tool-call enforcement is not enabled yet because blocking safely requires buffering tool-call deltas before they are emitted to the client.
+When a dangerous tool call is blocked, the chat response returns HTTP 400 with `error.code: "tool_call_alignment_blocked"` and writes a `Tool-call alignment` guardrail log. Streaming tool-call enforcement buffers tool-call deltas until alignment checks pass, so blocked calls are not emitted to the client first.
 
 Advanced firewall activity is also written to `firewall_events` for audit and analytics. Events record the surface (`scan` or `tool_call_alignment`), source, mode, decision, action, confidence/category fields when a semantic judge runs, tool name when applicable, and request/tenant metadata. Admins can fetch recent events from `GET /v1/admin/guardrails/firewall/events`.
 
 Semantic and hybrid scan modes are gated to tenants with Intelligence access. Signature scans remain the default deterministic path.
+
+Tenant admins can tune firewall defaults through `GET/PATCH /v1/admin/guardrails/firewall/settings`. The defaults preserve the safe path: `defaultScanMode: "signature"`, `toolCallAlignment: "block"`, and `streamingEnforcement: true`. Teams can switch tool-call alignment to `flag` for observation mode or `off` for a temporary bypass while leaving scan defaults unchanged.
 
 ## Actions
 
