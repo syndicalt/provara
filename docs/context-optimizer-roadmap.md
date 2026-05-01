@@ -6,12 +6,24 @@ Provara already controls the model path: routing, spend, quality, evals, guardra
 
 The product goal is to make retrieved context cheaper, safer, more accurate, and measurable before it reaches the model.
 
+## Shipped Checkpoint
+
+Implemented as of `0.2.0`:
+- `POST /v1/context/optimize` for runtime exact duplicate removal.
+- Persisted `context_optimization_events`.
+- Tenant-scoped `GET /v1/context/summary` and `GET /v1/context/events`.
+- Dashboard visibility at `/dashboard/context`.
+- Demo tenant seed data for screenshot-ready examples.
+
+Next planned layer:
+- Risk-aware context optimization using the Prompt Injection Firewall for retrieved context quarantine and reporting.
+
 ## V1: Runtime Context Optimizer
 
 Optimize already-retrieved chunks at request time.
 
 Core capabilities:
-- Exact and near-duplicate removal.
+- Exact duplicate removal. Near-duplicate and semantic duplicate removal remain future work.
 - Token savings estimation.
 - Source and citation preservation.
 - Prompt Injection Firewall risk scanning for retrieved context.
@@ -138,4 +150,3 @@ The roadmap should advance through these algorithmic layers:
 - Pro: runtime optimization, exact/near dedupe, token savings, firewall scan.
 - Team: batch jobs, quality evaluation, retrieval analytics, basic connectors.
 - Enterprise: governance workflows, permission-aware connectors, vector export, audit reports, private deployment.
-

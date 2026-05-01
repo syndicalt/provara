@@ -6,6 +6,14 @@ All notable Provara changes are tracked here.
 
 ### Added
 
+- Context Optimizer V1 for Intelligence-tier tenants:
+  - Runtime exact-duplicate removal through `POST /v1/context/optimize`.
+  - Source ID preservation for duplicate chunks.
+  - Estimated input/output tokens, saved tokens, dropped chunks, and reduction percentage.
+  - Persisted `context_optimization_events` for visibility and reporting.
+  - Tenant-scoped visibility APIs: `GET /v1/context/events` and `GET /v1/context/summary`.
+  - Dashboard page at `/dashboard/context` with summary cards and recent optimization events.
+  - Demo tenant seed data for screenshot-ready Context Optimizer examples.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
 - Optional semantic and hybrid prompt-injection scan modes using the configured judge model.
@@ -19,6 +27,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
+- Context Optimizer roadmap now marks V1 runtime optimization and V1.1 dashboard visibility as shipped checkpoints, with risk-aware optimization as the next planned layer.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
@@ -33,12 +42,13 @@ All notable Provara changes are tracked here.
 ### Upgrade Notes
 
 - Run database migrations through `0044_firewall_settings`.
+- For Context Optimizer visibility, run database migrations through `0045_context_optimization_events`.
 - New tables:
   - `firewall_events`
   - `firewall_settings`
+  - `context_optimization_events`
 - Existing tenants keep the safe default firewall settings:
   - `defaultScanMode: "signature"`
   - `toolCallAlignment: "block"`
   - `streamingEnforcement: true`
 - The public OpenAPI copy in `apps/web/public/openapi.yaml` is generated from `packages/gateway/openapi.yaml` during web build.
-
