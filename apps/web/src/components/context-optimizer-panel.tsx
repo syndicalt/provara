@@ -741,6 +741,7 @@ export function ContextOptimizerPanel() {
   const [fileMessage, setFileMessage] = useState<string | null>(null);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [connectorManagementOpen, setConnectorManagementOpen] = useState(false);
   const [state, setState] = useState<LoadState>({
     summary: null,
     events: [],
@@ -907,6 +908,7 @@ export function ContextOptimizerPanel() {
   const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
   const collectionRows = useMemo(() => state.collections, [state.collections]);
   const sourceRows = useMemo(() => state.sources, [state.sources]);
+  const syncableSourceRows = useMemo(() => sourceRows.filter((source) => source.syncStatus !== "synced"), [sourceRows]);
   const credentialRows = useMemo(() => state.credentials, [state.credentials]);
   const githubCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "github_token"), [credentialRows]);
   const awsCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "aws_access_key"), [credentialRows]);
@@ -1190,6 +1192,22 @@ export function ContextOptimizerPanel() {
     setFileMessage("File loaded.");
   }
 
+  function applySyncedSource(body: { source: ContextSource; collection?: ContextCollection }) {
+    setState((prev) => ({
+      ...prev,
+      sources: prev.sources.map((source) => source.id === body.source.id ? body.source : source),
+      collections: body.collection
+        ? prev.collections.map((collection) => collection.id === body.collection?.id ? body.collection as ContextCollection : collection)
+        : prev.collections,
+    }));
+  }
+
+  async function requestSourceSync(sourceId: string): Promise<{ source: ContextSource; collection?: ContextCollection; synced?: boolean }> {
+    const res = await gatewayFetchRaw(`/v1/context/sources/${sourceId}/sync`, { method: "POST" });
+    if (!res.ok) throw new Error("Failed to sync source");
+    return await res.json() as { source: ContextSource; collection?: ContextCollection; synced?: boolean };
+  }
+
   async function createFileUploadSource() {
     if (!firstCollection || !fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()) return;
     setFileSubmitting(true);
@@ -1216,12 +1234,17 @@ export function ContextOptimizerPanel() {
           ...prev.sources.filter((source) => source.id !== body.source.id),
         ],
       }));
+      setSyncingSourceId(body.source.id);
+      setFileMessage("File source created. Syncing...");
+      const syncBody = await requestSourceSync(body.source.id);
+      applySyncedSource(syncBody);
       setFileDraft({ name: "", filename: "", contentType: "text/plain", content: "" });
-      setFileMessage("File source created.");
+      setFileMessage(syncBody.synced === false ? "File uploaded. No changes to sync." : "File uploaded and synced.");
     } catch (err) {
       setFileMessage(err instanceof Error ? err.message : "Failed to create file upload source");
     } finally {
       setFileSubmitting(false);
+      setSyncingSourceId(null);
     }
   }
 
@@ -1229,16 +1252,8 @@ export function ContextOptimizerPanel() {
     setSyncingSourceId(sourceId);
     setSyncMessage(null);
     try {
-      const res = await gatewayFetchRaw(`/v1/context/sources/${sourceId}/sync`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to sync source");
-      const body = await res.json() as { source: ContextSource; collection?: ContextCollection; synced?: boolean };
-      setState((prev) => ({
-        ...prev,
-        sources: prev.sources.map((source) => source.id === body.source.id ? body.source : source),
-        collections: body.collection
-          ? prev.collections.map((collection) => collection.id === body.collection?.id ? body.collection as ContextCollection : collection)
-          : prev.collections,
-      }));
+      const body = await requestSourceSync(sourceId);
+      applySyncedSource(body);
       setSyncMessage(body.synced === false ? "Sync complete: no changes." : "Sync complete.");
     } catch (err) {
       setSyncMessage(err instanceof Error ? err.message : "Failed to sync source");
@@ -1439,13 +1454,26 @@ export function ContextOptimizerPanel() {
       </section>
 
       <section>
-        <div className="mb-3">
-          <h2 className="text-lg font-semibold text-zinc-100">Connector Management</h2>
-          <p className="mt-1 text-sm text-zinc-500">Credential metadata, Confluence spaces, S3 buckets, GitHub repository sources, file upload sources, and manual source sync controls.</p>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-100">Connector Management</h2>
+            <p className="mt-1 text-sm text-zinc-500">Credential metadata, Confluence spaces, S3 buckets, GitHub repository sources, file upload sources, and manual source sync controls.</p>
+          </div>
+          <button
+            type="button"
+            aria-expanded={connectorManagementOpen}
+            aria-controls="context-connector-management"
+            aria-label={`${connectorManagementOpen ? "Hide" : "Show"} Connector Management`}
+            className="self-start rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 sm:self-auto"
+            onClick={() => setConnectorManagementOpen((open) => !open)}
+          >
+            {connectorManagementOpen ? "Hide" : "Show"}
+          </button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+        {connectorManagementOpen && (
+        <div id="context-connector-management" className="grid gap-4 lg:grid-cols-2">
+          <div className="order-1 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">GitHub Token Credentials</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1486,8 +1514,8 @@ export function ContextOptimizerPanel() {
             </div>
 
             <div className="mt-4 overflow-hidden rounded-md border border-zinc-800">
-              {credentialRows.length === 0 ? (
-                <div className="p-4 text-sm text-zinc-500">No connector credentials yet.</div>
+              {githubCredentialRows.length === 0 ? (
+                <div className="p-4 text-sm text-zinc-500">No GitHub credentials yet.</div>
               ) : (
                 <table className="min-w-full divide-y divide-zinc-800 text-sm">
                   <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
@@ -1498,7 +1526,7 @@ export function ContextOptimizerPanel() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800">
-                    {credentialRows.map((credential) => (
+                    {githubCredentialRows.map((credential) => (
                       <tr key={credential.id}>
                         <td className="px-3 py-2">
                           <div className="font-medium text-zinc-200">{credential.name}</div>
@@ -1522,7 +1550,7 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="order-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">AWS Access Key Credential</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1580,7 +1608,7 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="order-5 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">Confluence API Token Credential</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1627,7 +1655,7 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="order-7 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">File Upload Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1670,7 +1698,7 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="order-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">S3 Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1770,7 +1798,7 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="order-6 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">Confluence Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1870,7 +1898,7 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
 
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="order-2 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">GitHub Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1979,13 +2007,26 @@ export function ContextOptimizerPanel() {
             </div>
           </div>
         </div>
+        )}
       </section>
 
       <section>
-        <div className="mb-3">
-          <h2 className="text-lg font-semibold text-zinc-100">Collection Sources</h2>
-          <p className="mt-1 text-sm text-zinc-500">Manual connector sources and sync status for the first managed collection.</p>
-          {syncMessage && <p className="mt-1 text-xs text-zinc-400">{syncMessage}</p>}
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-100">Collection Sources</h2>
+            <p className="mt-1 text-sm text-zinc-500">Manual connector sources and sync status for the first managed collection.</p>
+            {syncMessage && <p className="mt-1 text-xs text-zinc-400">{syncMessage}</p>}
+          </div>
+          {syncableSourceRows.length > 0 && (
+            <button
+              type="button"
+              className="self-start rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 lg:self-auto"
+              disabled={syncingSourceId !== null}
+              onClick={() => void syncSource(syncableSourceRows[0]?.id ?? "")}
+            >
+              {syncingSourceId ? "Syncing..." : `Sync Pending (${syncableSourceRows.length})`}
+            </button>
+          )}
         </div>
 
         {state.loading ? (
