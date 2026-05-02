@@ -13,6 +13,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { tenantFilter, tenantScoped } from "../auth/tenant.js";
 import { decrypt, encrypt, hasMasterKey } from "../crypto/index.js";
+import { storeContextDocumentObject } from "../storage/documents.js";
 import { estimateContextTokens } from "./optimizer.js";
 
 const MAX_COLLECTION_NAME_CHARS = 120;
@@ -1286,9 +1287,22 @@ export async function ingestContextDocument(
   if (rawBlocks.length === 0) throw new Error("text is required");
   const now = new Date();
   const documentId = nanoid();
+  const documentContentHash = hashContent(input.text);
+  const storage = await storeContextDocumentObject({
+    tenantId,
+    collectionId,
+    documentId,
+    title: input.title ?? input.source ?? "Untitled document",
+    text: input.text,
+    contentHash: documentContentHash,
+  });
+  const documentMetadata: Record<string, unknown> = {
+    ...(input.metadata ?? {}),
+    ...(storage ? { documentStorage: storage } : {}),
+  };
   const blockRows = rawBlocks.map((content, index) => {
     const metadata = {
-      ...(input.metadata ?? {}),
+      ...documentMetadata,
       sourceDocumentId: documentId,
       blockOrdinal: index,
     };
@@ -1315,8 +1329,8 @@ export async function ingestContextDocument(
     title: input.title ?? input.source ?? "Untitled document",
     source: input.source ?? null,
     sourceUri: input.sourceUri ?? null,
-    contentHash: hashContent(input.text),
-    metadata: JSON.stringify(input.metadata ?? {}),
+    contentHash: documentContentHash,
+    metadata: JSON.stringify(documentMetadata),
     blockCount: blockRows.length,
     tokenCount,
     createdAt: now,

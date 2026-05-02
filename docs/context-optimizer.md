@@ -132,6 +132,20 @@ GET /v1/context/collections/{id}/export
 
 Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters.
 
+Raw context document object storage is optional. When `DOCUMENT_STORAGE_DRIVER=r2` is set on the API service, Provara writes the raw document text to Cloudflare R2 before committing the database document metadata and searchable blocks. Configure:
+
+```text
+DOCUMENT_STORAGE_DRIVER=r2
+R2_ENDPOINT=https://305aa000c2183ba4d6ef3be09b39cb4a.r2.cloudflarestorage.com
+R2_BUCKET=provara-contextdocs
+R2_ACCESS_KEY_ID=...
+R2_SECRET_ACCESS_KEY=...
+R2_REGION=auto
+R2_PREFIX=contextdocs/
+```
+
+`R2_ENDPOINT` may also be provided as the bucket URL, such as `https://305aa000c2183ba4d6ef3be09b39cb4a.r2.cloudflarestorage.com/provara-contextdocs`; Provara normalizes that form and keeps `R2_BUCKET` as the canonical bucket name. Stored document metadata includes the R2 bucket, object key, object URI, byte size, content hash, and storage timestamp. Secret values are never persisted in document metadata.
+
 Manual sources are the connector foundation. `POST /v1/context/collections/{id}/sources` creates a tenant-scoped source with content, source URI, external ID, and metadata. `POST /v1/context/sources/{id}/sync` ingests that source into the existing `context_documents` and `context_blocks` pipeline, records `synced` or `failed` status on the source, persists the last error for failed syncs, and skips unchanged already-synced sources without duplicating documents.
 
 File upload sources use `type: "file_upload"` with text content and a `file` metadata object:
