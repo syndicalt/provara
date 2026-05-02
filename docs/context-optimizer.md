@@ -21,14 +21,14 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
-- Connector ingestion foundation with tenant-scoped manual sources and sync status.
+- Connector ingestion with tenant-scoped manual and GitHub repository sources.
 - Canonical context block distillation with review status and approved-only export.
 - Canonical review audit events with reviewer notes and actor attribution when available.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
 
-It does not yet perform specific external connector pulls from systems such as GitHub, Confluence, Drive, or S3. Those belong to later roadmap phases.
+It does not yet perform connector pulls from systems such as Confluence, Drive, or S3. Those belong to later roadmap phases.
 
 ## API
 
@@ -131,6 +131,26 @@ Collections are tenant-scoped containers for reusable context. The document inge
 
 Manual sources are the connector foundation. `POST /v1/context/collections/{id}/sources` creates a tenant-scoped source with content, source URI, external ID, and metadata. `POST /v1/context/sources/{id}/sync` ingests that source into the existing `context_documents` and `context_blocks` pipeline, records `synced` or `failed` status on the source, persists the last error for failed syncs, and skips unchanged already-synced sources without duplicating documents.
 
+GitHub repository sources use `type: "github_repository"` with a `github` config object:
+
+```json
+{
+  "name": "Docs repository",
+  "type": "github_repository",
+  "github": {
+    "owner": "acme",
+    "repo": "docs",
+    "branch": "main",
+    "path": "docs",
+    "extensions": [".md", ".txt"],
+    "maxFiles": 100,
+    "maxFileBytes": 250000
+  }
+}
+```
+
+GitHub sync fetches the repository tree and selected blobs through GitHub's JSON API, bounds files by extension/count/size, stores repo/path/SHA metadata on ingested documents and blocks, and skips files whose blob SHA has already synced.
+
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
 Before a canonical block can be approved, `POST /v1/context/canonical-blocks/{id}/policy-check` runs active Guardrails rules against the block as `retrieved_context`. The result persists `policyStatus`, `policyCheckedAt`, and per-rule evidence. `block` and retrieved-context `quarantine` decisions set `policyStatus: "failed"` and approval returns `409 policy_error`; `draft` and `rejected` transitions remain available without a passing check.
@@ -180,7 +200,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Collection Sources section shows manual sources for the first managed collection, including source URI, sync status, document count, last synced time, update time, and last sync error. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, source sync, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Collection Sources section shows manual and GitHub sources for the first managed collection, including source URI or repo/branch/path, sync status, document count, last synced time, update time, and last sync error. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, source sync, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -219,8 +239,8 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is specific external connector ingestion:
+The next behavior layer is additional external connector ingestion:
 
-- GitHub, Confluence, Google Drive, SharePoint, Notion, Zendesk/Intercom, and S3/file upload connectors.
+- Confluence, Google Drive, SharePoint, Notion, Zendesk/Intercom, and S3/file upload connectors.
 - Source provenance and sync metadata for managed collections.
 - Connector-level review and policy defaults.

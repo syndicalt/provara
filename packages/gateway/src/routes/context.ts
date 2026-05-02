@@ -397,6 +397,8 @@ async function applyRiskScan(
 export interface ContextRouteOptions {
   embeddings?: EmbeddingProvider | null;
   dbKeys?: Record<string, string>;
+  githubFetch?: typeof fetch;
+  githubToken?: string;
 }
 
 async function applyRequestedRanking(
@@ -752,7 +754,10 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     const sourceId = c.req.param("id");
 
     try {
-      const result = await syncContextSource(db, tenantId, sourceId);
+      const result = await syncContextSource(db, tenantId, sourceId, {
+        fetch: routeOptions.githubFetch,
+        githubToken: routeOptions.githubToken,
+      });
       return c.json({
         source: result.source,
         collection: result.collection,
