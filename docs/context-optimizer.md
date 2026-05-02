@@ -9,6 +9,7 @@ The shipped V1 implementation is intentionally narrow:
 - Exact duplicate detection after whitespace normalization and case folding.
 - Optional semantic near-duplicate detection with deterministic token similarity.
 - Optional lexical relevance scoring and reranking for retained chunks.
+- Optional embedding-backed relevance scoring and reranking with lexical fallback.
 - Optional stale-context detection from bounded freshness metadata.
 - Optional conflicting-context detection with bounded heuristic claim checks.
 - Optional extractive compression with bounded sentence selection.
@@ -37,7 +38,7 @@ The request accepts already-retrieved context chunks:
 {
   "dedupeMode": "semantic",
   "semanticThreshold": 0.72,
-  "rankMode": "lexical",
+  "rankMode": "embedding",
   "query": "What is the refund window?",
   "minRelevanceScore": 0.2,
   "freshnessMode": "metadata",
@@ -78,7 +79,7 @@ The response includes:
 
 `dedupeMode` defaults to `exact` for backwards compatibility. Set `dedupeMode` to `semantic` to also remove near duplicates using deterministic token overlap scoring. `semanticThreshold` defaults to `0.72` and accepts values from `0.5` to `1`.
 
-`rankMode` defaults to `none`. Set `rankMode` to `lexical` and provide `query` to score retained chunks with deterministic token matching and stable reranking. Provara caps query tokens internally, stores aggregate relevance metrics only, and does not persist the query text. `minRelevanceScore` defaults to `0.2` and controls the low-relevance chunk count.
+`rankMode` defaults to `none`. Set `rankMode` to `lexical` and provide `query` to score retained chunks with deterministic token matching and stable reranking. Set `rankMode` to `embedding` to score retained chunks by cosine similarity against the configured embedding provider. Embedding scoring bounds input text, batches chunk embeddings, stores aggregate relevance metrics only, and falls back to lexical scoring if embeddings are unavailable or fail. Provara does not persist the query text. `minRelevanceScore` defaults to `0.2` and controls the low-relevance chunk count.
 
 `freshnessMode` defaults to `off`. Set `freshnessMode` to `metadata` to score retained chunks from bounded freshness metadata. Provara checks common fields such as `updatedAt`, `lastModified`, `publishedAt`, and `expiresAt`, stores aggregate freshness metrics only, and does not persist the full metadata payload. `maxContextAgeDays` defaults to `180`.
 
@@ -177,5 +178,5 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 The next behavior layer is retrieval quality:
 
-- Stale and conflicting context detection.
-- Embedding-backed relevance scoring.
+- Stronger contradiction scoring beyond bounded heuristic checks.
+- Abstractive compression with strict provenance and fallback behavior.

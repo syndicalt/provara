@@ -21,12 +21,13 @@ Implemented as of `0.2.0`:
 - `context_retrieval_events` with retrieval efficiency, unused context, duplicate rate, risky context rate, source IDs, and dashboard visibility.
 - Optional semantic near-duplicate detection with separate near-duplicate event, summary, retrieval, and dashboard metrics.
 - Optional lexical relevance scoring and stable reranking with aggregate relevance metrics and dashboard visibility.
+- Optional embedding-backed relevance scoring and reranking with lexical fallback.
 - Optional stale-context detection from freshness metadata with aggregate freshness metrics and dashboard visibility.
 - Optional conflicting-context detection with bounded heuristic status/numeric/metadata checks and dashboard visibility.
 - Optional extractive compression with bounded sentence selection, compression savings metrics, and dashboard visibility.
 
 Next planned layer:
-- Embedding-backed relevance, contradiction scoring, and abstractive compression.
+- Contradiction scoring and abstractive compression.
 
 ## V1: Runtime Context Optimizer
 
@@ -36,6 +37,7 @@ Core capabilities:
 - Exact duplicate removal.
 - Optional semantic near-duplicate removal through deterministic token similarity.
 - Optional lexical relevance scoring and reranking.
+- Optional embedding-backed relevance scoring and reranking.
 - Optional freshness scoring from chunk metadata.
 - Optional conflict detection across retained chunks.
 - Optional extractive compression for retained chunks.

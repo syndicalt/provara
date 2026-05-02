@@ -1,3 +1,6 @@
+import type { EmbeddingProvider } from "../embeddings/index.js";
+import { cosineSimilarity } from "../embeddings/index.js";
+
 export interface ContextChunk {
   id: string;
   content: string;
@@ -77,7 +80,7 @@ export interface ContextOptimizationResult {
 export interface ContextOptimizationOptions {
   dedupeMode?: "exact" | "semantic";
   semanticThreshold?: number;
-  rankMode?: "none" | "lexical";
+  rankMode?: "none" | "lexical" | "embedding";
   query?: string;
   minRelevanceScore?: number;
   freshnessMode?: "off" | "metadata";
@@ -206,6 +209,107 @@ function applyLexicalRanking(
     lowRelevanceChunks,
     rerankedChunks,
   };
+}
+
+function applyScoredRanking(
+  chunks: OptimizedContextChunk[],
+  scores: number[],
+  minRelevanceScore: number,
+): { chunks: OptimizedContextChunk[]; avgRelevanceScore: number | null; lowRelevanceChunks: number; rerankedChunks: number } {
+  if (chunks.length === 0 || scores.length !== chunks.length) {
+    return { chunks, avgRelevanceScore: null, lowRelevanceChunks: 0, rerankedChunks: 0 };
+  }
+
+  let total = 0;
+  let lowRelevanceChunks = 0;
+  const scored = chunks.map((chunk, index) => {
+    const relevanceScore = Number(Math.max(0, Math.min(1, scores[index] ?? 0)).toFixed(4));
+    total += relevanceScore;
+    if (relevanceScore < minRelevanceScore) lowRelevanceChunks += 1;
+    return { chunk: { ...chunk, relevanceScore }, index };
+  });
+
+  scored.sort((left, right) => {
+    if (right.chunk.relevanceScore !== left.chunk.relevanceScore) {
+      return (right.chunk.relevanceScore ?? 0) - (left.chunk.relevanceScore ?? 0);
+    }
+    return left.index - right.index;
+  });
+
+  let rerankedChunks = 0;
+  const ranked = scored.map((item, newIndex) => {
+    if (item.index !== newIndex) rerankedChunks += 1;
+    return item.chunk;
+  });
+
+  return {
+    chunks: ranked,
+    avgRelevanceScore: Number((total / chunks.length).toFixed(4)),
+    lowRelevanceChunks,
+    rerankedChunks,
+  };
+}
+
+function withRanking(
+  result: ContextOptimizationResult,
+  ranking: { chunks: OptimizedContextChunk[]; avgRelevanceScore: number | null; lowRelevanceChunks: number; rerankedChunks: number },
+): ContextOptimizationResult {
+  return {
+    ...result,
+    optimized: ranking.chunks,
+    metrics: {
+      ...result.metrics,
+      avgRelevanceScore: ranking.avgRelevanceScore,
+      lowRelevanceChunks: ranking.lowRelevanceChunks,
+      rerankedChunks: ranking.rerankedChunks,
+    },
+  };
+}
+
+export function rankContextOptimizationResultLexically(
+  result: ContextOptimizationResult,
+  options: { query?: string; minRelevanceScore?: number },
+): ContextOptimizationResult {
+  const minRelevanceScore = Math.max(0, Math.min(1, options.minRelevanceScore ?? 0.2));
+  return withRanking(result, applyLexicalRanking(result.optimized, options.query, minRelevanceScore));
+}
+
+const MAX_EMBEDDING_INPUT_CHARS = 6_000;
+const EMBEDDING_BATCH_SIZE = 8;
+
+function boundedEmbeddingInput(content: string): string {
+  return content.replace(/\s+/g, " ").trim().slice(0, MAX_EMBEDDING_INPUT_CHARS);
+}
+
+export async function rankContextOptimizationResultWithEmbeddings(
+  result: ContextOptimizationResult,
+  embeddings: EmbeddingProvider,
+  options: { query?: string; minRelevanceScore?: number },
+): Promise<ContextOptimizationResult> {
+  const query = boundedEmbeddingInput(options.query ?? "");
+  if (!query || result.optimized.length === 0) {
+    return withRanking(result, {
+      chunks: result.optimized,
+      avgRelevanceScore: null,
+      lowRelevanceChunks: 0,
+      rerankedChunks: 0,
+    });
+  }
+
+  const queryVector = await embeddings.embed(query);
+  const scores: number[] = [];
+  for (let index = 0; index < result.optimized.length; index += EMBEDDING_BATCH_SIZE) {
+    const batch = result.optimized.slice(index, index + EMBEDDING_BATCH_SIZE);
+    const vectors = await Promise.all(
+      batch.map((chunk) => embeddings.embed(boundedEmbeddingInput(chunk.content))),
+    );
+    for (const vector of vectors) {
+      scores.push(cosineSimilarity(queryVector, vector));
+    }
+  }
+
+  const minRelevanceScore = Math.max(0, Math.min(1, options.minRelevanceScore ?? 0.2));
+  return withRanking(result, applyScoredRanking(result.optimized, scores, minRelevanceScore));
 }
 
 const DAY_MS = 86_400_000;

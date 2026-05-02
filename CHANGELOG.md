@@ -19,6 +19,7 @@ All notable Provara changes are tracked here.
   - Context retrieval analytics with persisted `context_retrieval_events`, retrieval efficiency, unused context, duplicate rate, risky context rate, demo rows, APIs, and dashboard visibility.
   - Context Optimizer semantic near-duplicate mode with `dedupeMode: "semantic"`, configurable similarity threshold, separate near-duplicate source IDs/rates, demo rows, APIs, and dashboard visibility.
   - Context Optimizer lexical relevance mode with `rankMode: "lexical"`, query-scored stable reranking, low-relevance/reranked metrics, demo rows, APIs, and dashboard visibility.
+  - Context Optimizer embedding relevance mode with `rankMode: "embedding"`, cosine-similarity reranking through the configured embedding provider, and lexical fallback when embeddings are unavailable.
   - Context Optimizer stale-context detection with `freshnessMode: "metadata"`, freshness/stale metrics from bounded metadata parsing, demo rows, APIs, and dashboard visibility.
   - Context Optimizer conflicting-context detection with `conflictMode: "heuristic"`, bounded status/numeric/metadata checks, conflict metrics, demo rows, APIs, and dashboard visibility.
   - Context Optimizer extractive compression with `compressionMode: "extractive"`, bounded sentence selection, compression savings metrics, demo rows, APIs, and dashboard visibility.
@@ -35,7 +36,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, stale-context detection, conflicting-context detection, and extractive compression as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, and extractive compression as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.

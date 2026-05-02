@@ -2103,19 +2103,19 @@ components:
           description: Similarity threshold used when dedupeMode is semantic.
         rankMode:
           type: string
-          enum: [none, lexical]
+          enum: [none, lexical, embedding]
           default: none
-          description: Lexical mode scores and reranks retained chunks against query with deterministic local token matching.
+          description: Lexical mode scores retained chunks with deterministic local token matching. Embedding mode scores retained chunks with the configured embedding provider and falls back to lexical scoring when embeddings are unavailable.
         query:
           type: string
           maxLength: 2000
-          description: User query used for lexical relevance scoring. Not persisted.
+          description: User query used for relevance scoring. Not persisted.
         minRelevanceScore:
           type: number
           minimum: 0
           maximum: 1
           default: 0.2
-          description: Chunks below this score are counted as low relevance when rankMode is lexical.
+          description: Chunks below this score are counted as low relevance when rankMode is lexical or embedding.
         freshnessMode:
           type: string
           enum: [off, metadata]
@@ -2164,7 +2164,7 @@ components:
               type: integer
             relevanceScore:
               type: number
-              description: Lexical relevance score when rankMode is lexical.
+              description: Relevance score when rankMode is lexical or embedding.
             freshnessScore:
               type: number
               description: Metadata freshness score when freshnessMode is metadata.
