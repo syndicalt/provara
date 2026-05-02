@@ -1,7 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { contextOptimizationEvents, contextQualityEvents, contextRetrievalEvents, guardrailRules } from "@provara/db";
+import {
+  contextBlocks,
+  contextCollections,
+  contextDocuments,
+  contextOptimizationEvents,
+  contextQualityEvents,
+  contextRetrievalEvents,
+  guardrailRules,
+} from "@provara/db";
 import type { ProviderRegistry } from "../src/providers/index.js";
 import type { CompletionRequest, CompletionResponse, Provider, StreamChunk } from "../src/providers/types.js";
 import type { EmbeddingProvider } from "../src/embeddings/index.js";
@@ -1542,5 +1550,158 @@ describe("POST /v1/context/optimize", () => {
       avgDelta: 0.5,
     });
     expect(summaryBody.summary.latestAt).toEqual(expect.any(String));
+  });
+});
+
+describe("managed context collections", () => {
+  let db: Db;
+
+  beforeEach(async () => {
+    db = await makeTestDb();
+    resetTierEnv();
+    process.env.PROVARA_CLOUD = "true";
+  });
+
+  afterEach(() => {
+    resetTierEnv();
+  });
+
+  it("creates and lists tenant-scoped collections", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+
+    const createRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Support KB", description: "Approved support articles" }),
+    });
+    expect(createRes.status).toBe(201);
+    const createBody = await createRes.json() as {
+      collection: { id: string; tenantId: string; name: string; description: string; documentCount: number; blockCount: number };
+    };
+    expect(createBody.collection).toMatchObject({
+      tenantId: "tenant-pro",
+      name: "Support KB",
+      description: "Approved support articles",
+      documentCount: 0,
+      blockCount: 0,
+    });
+
+    await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({ name: "Other KB" }),
+    });
+
+    const listRes = await app.request("/v1/context/collections", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json() as { collections: Array<{ tenantId: string; name: string }> };
+    expect(listBody.collections).toEqual([
+      expect.objectContaining({ tenantId: "tenant-pro", name: "Support KB" }),
+    ]);
+  });
+
+  it("ingests text into deterministic blocks with provenance metadata", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Policy KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const text = [
+      "Refunds require a receipt and must be requested within 30 days.",
+      "Enterprise customers can request an exception through support.",
+      "Billing admins can download invoices from the billing workspace.",
+    ].join("\n\n");
+    const ingestRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        title: "Refund policy",
+        text,
+        source: "help-center",
+        sourceUri: "https://example.com/refunds",
+        metadata: { owner: "support" },
+      }),
+    });
+
+    expect(ingestRes.status).toBe(201);
+    const ingestBody = await ingestRes.json() as {
+      collection: { documentCount: number; blockCount: number; tokenCount: number };
+      document: { title: string; blockCount: number; tokenCount: number; metadata: Record<string, unknown> };
+      blocks: Array<{ ordinal: number; source: string; metadata: Record<string, unknown>; contentHash: string; tokenCount: number }>;
+    };
+    expect(ingestBody.collection.documentCount).toBe(1);
+    expect(ingestBody.collection.blockCount).toBe(1);
+    expect(ingestBody.collection.tokenCount).toBeGreaterThan(0);
+    expect(ingestBody.document).toMatchObject({
+      title: "Refund policy",
+      blockCount: 1,
+      metadata: { owner: "support" },
+    });
+    expect(ingestBody.blocks).toHaveLength(1);
+    expect(ingestBody.blocks[0]).toMatchObject({
+      ordinal: 0,
+      source: "help-center",
+      metadata: expect.objectContaining({ owner: "support", blockOrdinal: 0 }),
+      contentHash: expect.any(String),
+      tokenCount: expect.any(Number),
+    });
+
+    const rows = await db.select().from(contextBlocks).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].content).toContain("Refunds require a receipt");
+  });
+
+  it("rejects invalid ingest requests before writing rows", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Empty guard" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const ingestRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ title: "Bad", text: "   " }),
+    });
+
+    expect(ingestRes.status).toBe(400);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
+    expect(await db.select().from(contextBlocks).all()).toHaveLength(0);
+    const collections = await db.select().from(contextCollections).all();
+    expect(collections).toHaveLength(1);
+    expect(collections[0]).toMatchObject({ documentCount: 0, blockCount: 0, tokenCount: 0 });
+  });
+
+  it("does not ingest into another tenant collection", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Private KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const ingestRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({ title: "Cross tenant", text: "This should not write." }),
+    });
+
+    expect(ingestRes.status).toBe(404);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
+    expect(await db.select().from(contextBlocks).all()).toHaveLength(0);
   });
 });

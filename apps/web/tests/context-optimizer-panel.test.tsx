@@ -159,6 +159,24 @@ describe("ContextOptimizerPanel", () => {
           ],
         }));
       }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({
+          collections: [
+            {
+              id: "collection-1",
+              tenantId: "tenant-pro",
+              name: "Support KB",
+              description: "Approved support context",
+              status: "active",
+              documentCount: 2,
+              blockCount: 8,
+              tokenCount: 1400,
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T22:00:00.000Z",
+            },
+          ],
+        }));
+      }
       return Promise.resolve(jsonResponse({
         events: [
           {
@@ -241,6 +259,9 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("Compression").length).toBeGreaterThan(0);
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();
     expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
+    expect(screen.getByText("Managed Collections")).toBeInTheDocument();
+    expect(screen.getByText("Support KB")).toBeInTheDocument();
+    expect(screen.getByText("Approved support context")).toBeInTheDocument();
   });
 
   it("updates and persists optimizer payload controls", async () => {
@@ -316,6 +337,9 @@ describe("ContextOptimizerPanel", () => {
             latestAt: null,
           },
         }));
+      }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({ collections: [] }));
       }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
@@ -417,6 +441,9 @@ describe("ContextOptimizerPanel", () => {
       if (path === "/v1/context/retrieval/events?limit=10") {
         return Promise.resolve(jsonResponse({ events: [] }));
       }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({ collections: [] }));
+      }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
 
@@ -425,6 +452,7 @@ describe("ContextOptimizerPanel", () => {
     expect(await screen.findByText("No context optimization events yet.")).toBeInTheDocument();
     expect(screen.getByText("No context quality checks yet.")).toBeInTheDocument();
     expect(screen.getByText("No context retrieval events yet.")).toBeInTheDocument();
+    expect(screen.getByText("No managed context collections yet.")).toBeInTheDocument();
   });
 
   it("shows upgrade messaging for gated tenants", async () => {

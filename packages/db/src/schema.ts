@@ -422,6 +422,71 @@ export const contextRetrievalEvents = sqliteTable("context_retrieval_events", {
   index("context_retrieval_events_optimization_idx").on(table.optimizationEventId),
 ]);
 
+export const contextCollections = sqliteTable("context_collections", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
+  documentCount: integer("document_count").notNull().default(0),
+  blockCount: integer("block_count").notNull().default(0),
+  tokenCount: integer("token_count").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_collections_tenant_updated_idx").on(table.tenantId, table.updatedAt),
+  uniqueIndex("context_collections_tenant_name_idx").on(table.tenantId, table.name),
+]);
+
+export const contextDocuments = sqliteTable("context_documents", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  collectionId: text("collection_id")
+    .notNull()
+    .references(() => contextCollections.id),
+  title: text("title").notNull(),
+  source: text("source"),
+  sourceUri: text("source_uri"),
+  contentHash: text("content_hash").notNull(),
+  metadata: text("metadata").notNull().default("{}"),
+  blockCount: integer("block_count").notNull(),
+  tokenCount: integer("token_count").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_documents_tenant_collection_idx").on(table.tenantId, table.collectionId),
+  index("context_documents_hash_idx").on(table.contentHash),
+]);
+
+export const contextBlocks = sqliteTable("context_blocks", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  collectionId: text("collection_id")
+    .notNull()
+    .references(() => contextCollections.id),
+  documentId: text("document_id")
+    .notNull()
+    .references(() => contextDocuments.id),
+  ordinal: integer("ordinal").notNull(),
+  content: text("content").notNull(),
+  contentHash: text("content_hash").notNull(),
+  tokenCount: integer("token_count").notNull(),
+  source: text("source"),
+  metadata: text("metadata").notNull().default("{}"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_blocks_tenant_collection_idx").on(table.tenantId, table.collectionId),
+  index("context_blocks_document_ordinal_idx").on(table.documentId, table.ordinal),
+  uniqueIndex("context_blocks_document_ordinal_unique_idx").on(table.documentId, table.ordinal),
+]);
+
 export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),

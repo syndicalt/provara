@@ -470,6 +470,96 @@ paths:
         "402":
           $ref: "#/components/responses/InsufficientTier"
 
+  /v1/context/collections:
+    get:
+      tags: [Context Optimizer]
+      summary: List managed context collections
+      operationId: listContextCollections
+      responses:
+        "200":
+          description: Managed context collections
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collections]
+                properties:
+                  collections:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextCollection"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+    post:
+      tags: [Context Optimizer]
+      summary: Create a managed context collection
+      operationId: createContextCollection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContextCollectionRequest"
+      responses:
+        "201":
+          description: Created collection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collection]
+                properties:
+                  collection:
+                    $ref: "#/components/schemas/ContextCollection"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "409":
+          description: Collection name already exists.
+
+  /v1/context/collections/{id}/documents:
+    post:
+      tags: [Context Optimizer]
+      summary: Ingest text into a managed context collection
+      description: Deterministically chunks plain text into stored context blocks with source and metadata provenance.
+      operationId: ingestContextDocument
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestContextDocumentRequest"
+      responses:
+        "201":
+          description: Ingested document and stored blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collection, document, blocks]
+                properties:
+                  collection:
+                    $ref: "#/components/schemas/ContextCollection"
+                  document:
+                    $ref: "#/components/schemas/ContextDocument"
+                  blocks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextBlockMetadata"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+
   /v1/context/summary:
     get:
       tags: [Context Optimizer]
@@ -2515,6 +2605,161 @@ components:
           type: string
           format: date-time
           nullable: true
+
+    CreateContextCollectionRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 1000
+
+    IngestContextDocumentRequest:
+      type: object
+      required: [text]
+      properties:
+        title:
+          type: string
+          maxLength: 200
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500000
+        source:
+          type: string
+          maxLength: 120
+        sourceUri:
+          type: string
+          maxLength: 2000
+        metadata:
+          type: object
+          additionalProperties: true
+
+    ContextCollection:
+      type: object
+      required: [id, tenantId, name, description, status, documentCount, blockCount, tokenCount, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, archived]
+        documentCount:
+          type: integer
+        blockCount:
+          type: integer
+        tokenCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContextDocument:
+      type: object
+      required: [id, tenantId, collectionId, title, source, sourceUri, contentHash, metadata, blockCount, tokenCount, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        collectionId:
+          type: string
+        title:
+          type: string
+        source:
+          type: string
+          nullable: true
+        sourceUri:
+          type: string
+          nullable: true
+        contentHash:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+        blockCount:
+          type: integer
+        tokenCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    ContextBlock:
+      type: object
+      required: [id, tenantId, collectionId, documentId, ordinal, content, contentHash, tokenCount, source, metadata, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        collectionId:
+          type: string
+        documentId:
+          type: string
+        ordinal:
+          type: integer
+        content:
+          type: string
+        contentHash:
+          type: string
+        tokenCount:
+          type: integer
+        source:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ContextBlockMetadata:
+      type: object
+      required: [id, tenantId, collectionId, documentId, ordinal, contentHash, tokenCount, source, metadata, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        collectionId:
+          type: string
+        documentId:
+          type: string
+        ordinal:
+          type: integer
+        contentHash:
+          type: string
+        tokenCount:
+          type: integer
+        source:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
 
     ContextQualityEvaluateRequest:
       type: object
