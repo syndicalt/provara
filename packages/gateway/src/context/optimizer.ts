@@ -13,6 +13,7 @@ export interface OptimizedContextChunk {
   metadata?: Record<string, unknown>;
   inputTokens: number;
   outputTokens: number;
+  relevanceScore?: number;
 }
 
 export interface DroppedContextChunk {
@@ -52,12 +53,18 @@ export interface ContextOptimizationResult {
     outputTokens: number;
     savedTokens: number;
     reductionPct: number;
+    avgRelevanceScore: number | null;
+    lowRelevanceChunks: number;
+    rerankedChunks: number;
   };
 }
 
 export interface ContextOptimizationOptions {
   dedupeMode?: "exact" | "semantic";
   semanticThreshold?: number;
+  rankMode?: "none" | "lexical";
+  query?: string;
+  minRelevanceScore?: number;
 }
 
 export function estimateContextTokens(text: string): number {
@@ -95,6 +102,15 @@ function tokenSet(content: string): Set<string> {
   return new Set(tokenizeForSimilarity(content));
 }
 
+function boundedTokenSet(content: string, maxTokens: number): Set<string> {
+  const tokens = tokenizeForSimilarity(content);
+  const set = new Set<string>();
+  for (let i = 0; i < tokens.length && set.size < maxTokens; i += 1) {
+    set.add(tokens[i]);
+  }
+  return set;
+}
+
 function semanticSimilarity(left: Set<string>, right: Set<string>): number {
   if (left.size === 0 || right.size === 0) return 0;
   let intersection = 0;
@@ -108,12 +124,67 @@ function semanticSimilarity(left: Set<string>, right: Set<string>): number {
   return Number(Math.max(jaccard, overlap).toFixed(4));
 }
 
+function lexicalRelevanceScore(queryTokens: Set<string>, content: string): number {
+  if (queryTokens.size === 0) return 0;
+  const chunkTokens = tokenSet(content);
+  if (chunkTokens.size === 0) return 0;
+  let matches = 0;
+  for (const token of queryTokens) {
+    if (chunkTokens.has(token)) matches += 1;
+  }
+  const coverage = matches / queryTokens.size;
+  const density = matches / Math.min(chunkTokens.size, queryTokens.size * 4);
+  return Number(((coverage * 0.75) + (density * 0.25)).toFixed(4));
+}
+
+function applyLexicalRanking(
+  chunks: OptimizedContextChunk[],
+  query: string | undefined,
+  minRelevanceScore: number,
+): { chunks: OptimizedContextChunk[]; avgRelevanceScore: number | null; lowRelevanceChunks: number; rerankedChunks: number } {
+  const queryTokens = query ? boundedTokenSet(query, 32) : new Set<string>();
+  if (queryTokens.size === 0 || chunks.length === 0) {
+    return { chunks, avgRelevanceScore: null, lowRelevanceChunks: 0, rerankedChunks: 0 };
+  }
+
+  let total = 0;
+  let lowRelevanceChunks = 0;
+  const scored = chunks.map((chunk, index) => {
+    const relevanceScore = lexicalRelevanceScore(queryTokens, chunk.content);
+    total += relevanceScore;
+    if (relevanceScore < minRelevanceScore) lowRelevanceChunks += 1;
+    return { chunk: { ...chunk, relevanceScore }, index };
+  });
+
+  scored.sort((left, right) => {
+    if (right.chunk.relevanceScore !== left.chunk.relevanceScore) {
+      return (right.chunk.relevanceScore ?? 0) - (left.chunk.relevanceScore ?? 0);
+    }
+    return left.index - right.index;
+  });
+
+  let rerankedChunks = 0;
+  const ranked = scored.map((item, newIndex) => {
+    if (item.index !== newIndex) rerankedChunks += 1;
+    return item.chunk;
+  });
+
+  return {
+    chunks: ranked,
+    avgRelevanceScore: Number((total / chunks.length).toFixed(4)),
+    lowRelevanceChunks,
+    rerankedChunks,
+  };
+}
+
 export function optimizeContextChunks(
   chunks: ContextChunk[],
   options: ContextOptimizationOptions = {},
 ): ContextOptimizationResult {
   const dedupeMode = options.dedupeMode ?? "exact";
   const semanticThreshold = Math.max(0.5, Math.min(1, options.semanticThreshold ?? 0.72));
+  const rankMode = options.rankMode ?? "none";
+  const minRelevanceScore = Math.max(0, Math.min(1, options.minRelevanceScore ?? 0.2));
   const seen = new Map<string, OptimizedContextChunk>();
   const optimized: OptimizedContextChunk[] = [];
   const dropped: DroppedContextChunk[] = [];
@@ -179,12 +250,15 @@ export function optimizeContextChunks(
   }
 
   const outputTokens = optimized.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
+  const ranking = rankMode === "lexical"
+    ? applyLexicalRanking(optimized, options.query, minRelevanceScore)
+    : { chunks: optimized, avgRelevanceScore: null, lowRelevanceChunks: 0, rerankedChunks: 0 };
   const savedTokens = Math.max(0, inputTokens - outputTokens);
   const reductionPct = inputTokens === 0 ? 0 : Number(((savedTokens / inputTokens) * 100).toFixed(2));
   const nearDuplicateChunks = dropped.filter((chunk) => chunk.reason === "near_duplicate").length;
 
   return {
-    optimized,
+    optimized: ranking.chunks,
     dropped,
     flagged: [],
     quarantined: [],
@@ -199,6 +273,9 @@ export function optimizeContextChunks(
       outputTokens,
       savedTokens,
       reductionPct,
+      avgRelevanceScore: ranking.avgRelevanceScore,
+      lowRelevanceChunks: ranking.lowRelevanceChunks,
+      rerankedChunks: ranking.rerankedChunks,
     },
   };
 }

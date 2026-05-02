@@ -36,6 +36,9 @@ describe("ContextOptimizerPanel", () => {
             outputTokens: 730,
             savedTokens: 270,
             reductionPct: 27,
+            avgRelevanceScore: 0.61,
+            lowRelevanceChunks: 2,
+            rerankedChunks: 4,
             flaggedChunks: 1,
             quarantinedChunks: 2,
             latestAt: "2026-05-01T21:00:00.000Z",
@@ -89,6 +92,9 @@ describe("ContextOptimizerPanel", () => {
             retrievedTokens: 1000,
             usedTokens: 620,
             unusedTokens: 380,
+            avgRelevanceScore: 0.61,
+            lowRelevanceChunks: 2,
+            rerankedChunks: 4,
             efficiencyPct: 62,
             duplicateRatePct: 20,
             nearDuplicateRatePct: 10,
@@ -113,6 +119,9 @@ describe("ContextOptimizerPanel", () => {
               retrievedTokens: 500,
               usedTokens: 300,
               unusedTokens: 200,
+              avgRelevanceScore: 0.58,
+              lowRelevanceChunks: 1,
+              rerankedChunks: 2,
               efficiencyPct: 60,
               duplicateRatePct: 20,
               nearDuplicateRatePct: 20,
@@ -138,6 +147,9 @@ describe("ContextOptimizerPanel", () => {
             outputTokens: 300,
             savedTokens: 200,
             reductionPct: 40,
+            avgRelevanceScore: 0.58,
+            lowRelevanceChunks: 1,
+            rerankedChunks: 2,
             duplicateSourceIds: ["chunk-b"],
             nearDuplicateSourceIds: ["chunk-c"],
             riskScanned: true,
@@ -173,6 +185,7 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("refunds#1")).toBeInTheDocument();
     expect(screen.getByText("Retrieval Efficiency")).toBeInTheDocument();
     expect(screen.getByText("Unused Context")).toBeInTheDocument();
+    expect(screen.getAllByText("Relevance").length).toBeGreaterThan(0);
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();
     expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
   });
@@ -191,6 +204,9 @@ describe("ContextOptimizerPanel", () => {
             outputTokens: 0,
             savedTokens: 0,
             reductionPct: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
             flaggedChunks: 0,
             quarantinedChunks: 0,
             latestAt: null,
@@ -225,6 +241,9 @@ describe("ContextOptimizerPanel", () => {
             retrievedTokens: 0,
             usedTokens: 0,
             unusedTokens: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
             efficiencyPct: 0,
             duplicateRatePct: 0,
             nearDuplicateRatePct: 0,

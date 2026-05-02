@@ -59,6 +59,8 @@ describe("#229 — demo tenant seed", () => {
     expect(contextEvents).toHaveLength(4);
     expect(contextEvents.reduce((sum, row) => sum + row.savedTokens, 0)).toBe(11800);
     expect(contextEvents.reduce((sum, row) => sum + row.nearDuplicateChunks, 0)).toBeGreaterThan(0);
+    expect(contextEvents.reduce((sum, row) => sum + row.rerankedChunks, 0)).toBeGreaterThan(0);
+    expect(contextEvents.some((row) => row.avgRelevanceScore !== null)).toBe(true);
     expect(contextEvents.reduce((sum, row) => sum + row.flaggedChunks, 0)).toBe(1);
     expect(contextEvents.reduce((sum, row) => sum + row.quarantinedChunks, 0)).toBe(1);
     expect(JSON.parse(contextEvents[0].duplicateSourceIds)).toEqual(expect.any(Array));
@@ -81,6 +83,7 @@ describe("#229 — demo tenant seed", () => {
     expect(retrievalEvents).toHaveLength(4);
     expect(retrievalEvents.reduce((sum, row) => sum + row.unusedChunks, 0)).toBeGreaterThan(0);
     expect(retrievalEvents.reduce((sum, row) => sum + row.nearDuplicateChunks, 0)).toBeGreaterThan(0);
+    expect(retrievalEvents.reduce((sum, row) => sum + row.lowRelevanceChunks, 0)).toBeGreaterThan(0);
     expect(JSON.parse(retrievalEvents[0].unusedSourceIds)).toEqual(expect.any(Array));
   });
 

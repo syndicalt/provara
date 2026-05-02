@@ -88,10 +88,29 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
     return { error: "semanticThreshold must be a number between 0.5 and 1" };
   }
 
+  const rankMode = value.rankMode;
+  if (rankMode !== undefined && rankMode !== "none" && rankMode !== "lexical") {
+    return { error: "rankMode must be either none or lexical" };
+  }
+  const query = value.query;
+  if (query !== undefined && (typeof query !== "string" || query.length > 2000)) {
+    return { error: "query must be a string with at most 2000 characters" };
+  }
+  const minRelevanceScore = value.minRelevanceScore;
+  if (
+    minRelevanceScore !== undefined &&
+    (typeof minRelevanceScore !== "number" || !Number.isFinite(minRelevanceScore) || minRelevanceScore < 0 || minRelevanceScore > 1)
+  ) {
+    return { error: "minRelevanceScore must be a number between 0 and 1" };
+  }
+
   return {
     options: {
       dedupeMode: mode === "semantic" ? "semantic" : "exact",
       semanticThreshold: typeof threshold === "number" ? threshold : undefined,
+      rankMode: rankMode === "lexical" ? "lexical" : "none",
+      query: typeof query === "string" ? query : undefined,
+      minRelevanceScore: typeof minRelevanceScore === "number" ? minRelevanceScore : undefined,
     },
   };
 }
@@ -159,6 +178,12 @@ function validateQualityBody(value: unknown): {
 function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizationResult {
   const outputTokens = result.optimized.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
   const savedTokens = Math.max(0, result.metrics.inputTokens - outputTokens);
+  const relevanceScores = result.optimized
+    .map((chunk) => chunk.relevanceScore)
+    .filter((score): score is number => typeof score === "number");
+  const avgRelevanceScore = relevanceScores.length === 0
+    ? null
+    : Number((relevanceScores.reduce((sum, score) => sum + score, 0) / relevanceScores.length).toFixed(4));
   return {
     ...result,
     metrics: {
@@ -171,6 +196,10 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
       reductionPct: result.metrics.inputTokens === 0
         ? 0
         : Number(((savedTokens / result.metrics.inputTokens) * 100).toFixed(2)),
+      avgRelevanceScore,
+      lowRelevanceChunks: relevanceScores.length === 0
+        ? 0
+        : result.optimized.filter((chunk) => (chunk.relevanceScore ?? 0) < 0.2).length,
     },
   };
 }

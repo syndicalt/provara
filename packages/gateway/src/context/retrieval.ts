@@ -18,6 +18,9 @@ export interface ContextRetrievalEvent {
   retrievedTokens: number;
   usedTokens: number;
   unusedTokens: number;
+  avgRelevanceScore: number | null;
+  lowRelevanceChunks: number;
+  rerankedChunks: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -61,6 +64,9 @@ function eventFromRow(row: typeof contextRetrievalEvents.$inferSelect): ContextR
     retrievedTokens: row.retrievedTokens,
     usedTokens: row.usedTokens,
     unusedTokens: row.unusedTokens,
+    avgRelevanceScore: row.avgRelevanceScore,
+    lowRelevanceChunks: row.lowRelevanceChunks,
+    rerankedChunks: row.rerankedChunks,
     efficiencyPct: row.efficiencyPct,
     duplicateRatePct: row.duplicateRatePct,
     nearDuplicateRatePct: row.nearDuplicateRatePct,
@@ -109,6 +115,9 @@ export async function recordContextRetrievalEvent(
     retrievedTokens,
     usedTokens,
     unusedTokens,
+    avgRelevanceScore: result.metrics.avgRelevanceScore,
+    lowRelevanceChunks: result.metrics.lowRelevanceChunks,
+    rerankedChunks: result.metrics.rerankedChunks,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(duplicateChunks, retrievedChunks),
     nearDuplicateRatePct: pct(nearDuplicateChunks, retrievedChunks),
@@ -154,6 +163,9 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
       retrievedTokens: sql<number>`coalesce(sum(${contextRetrievalEvents.retrievedTokens}), 0)`,
       usedTokens: sql<number>`coalesce(sum(${contextRetrievalEvents.usedTokens}), 0)`,
       unusedTokens: sql<number>`coalesce(sum(${contextRetrievalEvents.unusedTokens}), 0)`,
+      avgRelevanceScore: sql<number | null>`avg(${contextRetrievalEvents.avgRelevanceScore})`,
+      lowRelevanceChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.lowRelevanceChunks}), 0)`,
+      rerankedChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.rerankedChunks}), 0)`,
     })
     .from(contextRetrievalEvents)
     .where(whereClause)
@@ -181,6 +193,11 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
     retrievedTokens,
     usedTokens,
     unusedTokens: row?.unusedTokens ?? 0,
+    avgRelevanceScore: row?.avgRelevanceScore === null || row?.avgRelevanceScore === undefined
+      ? null
+      : Number(row.avgRelevanceScore.toFixed(4)),
+    lowRelevanceChunks: row?.lowRelevanceChunks ?? 0,
+    rerankedChunks: row?.rerankedChunks ?? 0,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(row?.duplicateChunks ?? 0, retrievedChunks),
     nearDuplicateRatePct: pct(row?.nearDuplicateChunks ?? 0, retrievedChunks),

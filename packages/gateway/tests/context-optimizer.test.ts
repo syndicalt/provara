@@ -127,6 +127,33 @@ describe("context optimizer core", () => {
       nearDuplicateChunks: 1,
     });
   });
+
+  it("scores and reranks retained chunks with bounded lexical relevance", () => {
+    const result = optimizeContextChunks([
+      {
+        id: "billing",
+        content: "Invoices can be downloaded from the billing workspace.",
+      },
+      {
+        id: "refunds",
+        content: "Refunds are available for paid accounts during the 30 day refund window.",
+      },
+      {
+        id: "security",
+        content: "Enterprise plans include audit logs and SAML single sign on.",
+      },
+    ], {
+      rankMode: "lexical",
+      query: "How do paid account refunds work?",
+      minRelevanceScore: 0.2,
+    });
+
+    expect(result.optimized.map((chunk) => chunk.id)).toEqual(["refunds", "billing", "security"]);
+    expect(result.optimized[0].relevanceScore).toBeGreaterThan(result.optimized[1].relevanceScore ?? 0);
+    expect(result.metrics.avgRelevanceScore).toEqual(expect.any(Number));
+    expect(result.metrics.lowRelevanceChunks).toBeGreaterThan(0);
+    expect(result.metrics.rerankedChunks).toBe(2);
+  });
 });
 
 describe("POST /v1/context/optimize", () => {
@@ -186,13 +213,23 @@ describe("POST /v1/context/optimize", () => {
       optimization: {
         optimized: Array<{ id: string; sourceIds: string[]; metadata?: Record<string, unknown> }>;
         dropped: Array<{ id: string; duplicateOf: string }>;
-        metrics: { inputChunks: number; outputChunks: number; droppedChunks: number };
+        metrics: {
+          inputChunks: number;
+          outputChunks: number;
+          droppedChunks: number;
+          avgRelevanceScore: number | null;
+          lowRelevanceChunks: number;
+          rerankedChunks: number;
+        };
       };
       event: {
         tenantId: string;
         droppedChunks: number;
         nearDuplicateChunks: number;
         savedTokens: number;
+        avgRelevanceScore: number | null;
+        lowRelevanceChunks: number;
+        rerankedChunks: number;
         duplicateSourceIds: string[];
         nearDuplicateSourceIds: string[];
       };
@@ -202,6 +239,9 @@ describe("POST /v1/context/optimize", () => {
         unusedChunks: number;
         duplicateChunks: number;
         riskyChunks: number;
+        avgRelevanceScore: number | null;
+        lowRelevanceChunks: number;
+        rerankedChunks: number;
         usedSourceIds: string[];
         unusedSourceIds: string[];
       };
@@ -217,11 +257,17 @@ describe("POST /v1/context/optimize", () => {
       inputChunks: 3,
       outputChunks: 2,
       droppedChunks: 1,
+      avgRelevanceScore: null,
+      lowRelevanceChunks: 0,
+      rerankedChunks: 0,
     });
     expect(body.event).toMatchObject({
       tenantId: "tenant-pro",
       droppedChunks: 1,
       nearDuplicateChunks: 0,
+      avgRelevanceScore: null,
+      lowRelevanceChunks: 0,
+      rerankedChunks: 0,
       duplicateSourceIds: ["b"],
       nearDuplicateSourceIds: [],
     });
@@ -231,6 +277,9 @@ describe("POST /v1/context/optimize", () => {
       unusedChunks: 1,
       duplicateChunks: 1,
       riskyChunks: 0,
+      avgRelevanceScore: null,
+      lowRelevanceChunks: 0,
+      rerankedChunks: 0,
       usedSourceIds: ["a", "c"],
       unusedSourceIds: ["b"],
     });
@@ -252,6 +301,68 @@ describe("POST /v1/context/optimize", () => {
       unusedChunks: 1,
       duplicateChunks: 1,
       riskyChunks: 0,
+    });
+  });
+
+  it("records relevance analytics for lexical ranking", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        rankMode: "lexical",
+        query: "How do paid account refunds work?",
+        minRelevanceScore: 0.2,
+        chunks: [
+          { id: "billing", content: "Invoices can be downloaded from the billing workspace." },
+          { id: "refunds", content: "Refunds are available for paid accounts during the 30 day refund window." },
+          { id: "security", content: "Enterprise plans include audit logs and SAML single sign on." },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ id: string; relevanceScore?: number }>;
+        metrics: {
+          avgRelevanceScore: number | null;
+          lowRelevanceChunks: number;
+          rerankedChunks: number;
+        };
+      };
+      event: {
+        avgRelevanceScore: number | null;
+        lowRelevanceChunks: number;
+        rerankedChunks: number;
+      };
+      retrieval: {
+        avgRelevanceScore: number | null;
+        lowRelevanceChunks: number;
+        rerankedChunks: number;
+      };
+    };
+
+    expect(body.optimization.optimized.map((chunk) => chunk.id)).toEqual(["refunds", "billing", "security"]);
+    expect(body.optimization.optimized[0].relevanceScore).toEqual(expect.any(Number));
+    expect(body.optimization.metrics.avgRelevanceScore).toEqual(expect.any(Number));
+    expect(body.optimization.metrics.lowRelevanceChunks).toBeGreaterThan(0);
+    expect(body.optimization.metrics.rerankedChunks).toBe(2);
+    expect(body.event).toMatchObject({
+      avgRelevanceScore: body.optimization.metrics.avgRelevanceScore,
+      lowRelevanceChunks: body.optimization.metrics.lowRelevanceChunks,
+      rerankedChunks: body.optimization.metrics.rerankedChunks,
+    });
+    expect(body.retrieval).toMatchObject({
+      avgRelevanceScore: body.optimization.metrics.avgRelevanceScore,
+      lowRelevanceChunks: body.optimization.metrics.lowRelevanceChunks,
+      rerankedChunks: body.optimization.metrics.rerankedChunks,
     });
   });
 
