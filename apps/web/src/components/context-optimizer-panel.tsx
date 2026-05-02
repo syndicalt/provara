@@ -207,7 +207,7 @@ export interface ContextSource {
   id: string;
   collectionId: string;
   name: string;
-  type: "manual" | "github_repository";
+  type: "manual" | "github_repository" | "file_upload";
   externalId: string | null;
   sourceUri: string | null;
   syncStatus: "pending" | "synced" | "failed";
@@ -282,6 +282,7 @@ interface OptimizerDraftSettings {
 }
 
 const OPTIMIZER_SETTINGS_STORAGE_KEY = "provara:context-optimizer:settings";
+const MAX_FILE_UPLOAD_BYTES = 500_000;
 
 const DEFAULT_OPTIMIZER_SETTINGS: OptimizerDraftSettings = {
   dedupeMode: "semantic",
@@ -324,6 +325,7 @@ function formatTimestamp(value: string | null): string {
 
 function formatContextSourceType(type: ContextSource["type"]): string {
   if (type === "github_repository") return "GitHub";
+  if (type === "file_upload") return "File Upload";
   return "Manual";
 }
 
@@ -337,6 +339,15 @@ function formatContextSourceDetail(source: ContextSource): string {
     const branch = typeof github.branch === "string" ? github.branch : "main";
     const path = typeof github.path === "string" && github.path ? `/${github.path}` : "";
     if (owner && repo) return `${owner}/${repo}@${branch}${path}`;
+  }
+  if (source.type === "file_upload") {
+    const file = typeof source.metadata.file === "object" && source.metadata.file !== null && !Array.isArray(source.metadata.file)
+      ? source.metadata.file as Record<string, unknown>
+      : {};
+    const filename = typeof file.filename === "string" ? file.filename : "";
+    const contentType = typeof file.contentType === "string" ? file.contentType : "";
+    const sizeBytes = typeof file.sizeBytes === "number" ? file.sizeBytes : null;
+    if (filename) return `${filename}${contentType ? ` (${contentType}` : ""}${contentType && sizeBytes !== null ? `, ${formatInteger(sizeBytes)} bytes)` : contentType ? ")" : ""}`;
   }
   return source.sourceUri || source.externalId || source.id;
 }
@@ -665,6 +676,14 @@ export function ContextOptimizerPanel() {
   });
   const [sourceSubmitting, setSourceSubmitting] = useState(false);
   const [sourceMessage, setSourceMessage] = useState<string | null>(null);
+  const [fileDraft, setFileDraft] = useState({
+    name: "",
+    filename: "",
+    contentType: "text/plain",
+    content: "",
+  });
+  const [fileSubmitting, setFileSubmitting] = useState(false);
+  const [fileMessage, setFileMessage] = useState<string | null>(null);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>({
@@ -946,6 +965,59 @@ export function ContextOptimizerPanel() {
     }
   }
 
+  async function loadUploadFile(file: File | undefined) {
+    setFileMessage(null);
+    if (!file) return;
+    if (file.size > MAX_FILE_UPLOAD_BYTES) {
+      setFileDraft({ name: "", filename: "", contentType: "text/plain", content: "" });
+      setFileMessage(`File must be at most ${formatInteger(MAX_FILE_UPLOAD_BYTES)} bytes.`);
+      return;
+    }
+    const content = await file.text();
+    setFileDraft({
+      name: file.name.replace(/\.[^.]+$/, "") || file.name,
+      filename: file.name,
+      contentType: file.type || "text/plain",
+      content,
+    });
+    setFileMessage("File loaded.");
+  }
+
+  async function createFileUploadSource() {
+    if (!firstCollection || !fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()) return;
+    setFileSubmitting(true);
+    setFileMessage(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: fileDraft.name.trim(),
+          type: "file_upload",
+          content: fileDraft.content,
+          file: {
+            filename: fileDraft.filename,
+            contentType: fileDraft.contentType || "text/plain",
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create file upload source");
+      const body = await res.json() as { source: ContextSource };
+      setState((prev) => ({
+        ...prev,
+        sources: [
+          body.source,
+          ...prev.sources.filter((source) => source.id !== body.source.id),
+        ],
+      }));
+      setFileDraft({ name: "", filename: "", contentType: "text/plain", content: "" });
+      setFileMessage("File source created.");
+    } catch (err) {
+      setFileMessage(err instanceof Error ? err.message : "Failed to create file upload source");
+    } finally {
+      setFileSubmitting(false);
+    }
+  }
+
   async function syncSource(sourceId: string) {
     setSyncingSourceId(sourceId);
     setSyncMessage(null);
@@ -1162,7 +1234,7 @@ export function ContextOptimizerPanel() {
       <section>
         <div className="mb-3">
           <h2 className="text-lg font-semibold text-zinc-100">Connector Management</h2>
-          <p className="mt-1 text-sm text-zinc-500">Credential metadata, GitHub repository sources, and manual source sync controls.</p>
+          <p className="mt-1 text-sm text-zinc-500">Credential metadata, GitHub repository sources, file upload sources, and manual source sync controls.</p>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -1244,10 +1316,53 @@ export function ContextOptimizerPanel() {
           </div>
 
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">File Upload Source</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-file-upload" className="text-xs font-medium uppercase tracking-wider text-zinc-500">File</label>
+                <input
+                  id="context-file-upload"
+                  type="file"
+                  accept=".txt,.md,.mdx,.rst,.adoc,.csv,.json,text/plain,text/markdown,application/json,text/csv"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 file:mr-3 file:rounded file:border-0 file:bg-zinc-800 file:px-2 file:py-1 file:text-xs file:text-zinc-100"
+                  onChange={(event) => void loadUploadFile(event.target.files?.[0])}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-file-source-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">File Source Name</label>
+                <input
+                  id="context-file-source-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={fileDraft.name}
+                  onChange={(event) => setFileDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+            </div>
+            {fileDraft.filename && (
+              <div className="mt-3 rounded-md border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400">
+                <span className="text-zinc-300">{fileDraft.filename}</span>
+                <span className="ml-2">{fileDraft.contentType}</span>
+                <span className="ml-2">{formatInteger(new Blob([fileDraft.content]).size)} bytes</span>
+              </div>
+            )}
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={fileSubmitting || !firstCollection || !fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()}
+                onClick={() => void createFileUploadSource()}
+              >
+                {fileSubmitting ? "Creating..." : "Create File Source"}
+              </button>
+              {fileMessage && <span className="text-xs text-zinc-400">{fileMessage}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">GitHub Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
-                <label htmlFor="context-source-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Source Name</label>
+                <label htmlFor="context-source-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">GitHub Source Name</label>
                 <input
                   id="context-source-name"
                   className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"

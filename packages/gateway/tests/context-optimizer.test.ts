@@ -1804,6 +1804,116 @@ describe("managed context collections", () => {
     expect(await db.select().from(contextBlocks).all()).toHaveLength(1);
   });
 
+  it("creates and idempotently syncs file upload context sources", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Upload KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Uploaded refunds",
+        type: "file_upload",
+        content: "Uploaded refunds require a receipt within 30 days.",
+        file: {
+          filename: "../refunds.md",
+          contentType: "text/markdown",
+        },
+        metadata: { owner: "support" },
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as {
+      source: { id: string; type: string; sourceUri: string; metadata: Record<string, unknown> };
+    };
+    expect(sourceBody.source).toMatchObject({
+      type: "file_upload",
+      sourceUri: "upload://refunds.md",
+      metadata: {
+        owner: "support",
+        file: { filename: "refunds.md", contentType: "text/markdown" },
+      },
+    });
+    expect(JSON.stringify(sourceBody)).not.toContain("Uploaded refunds require");
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+    const syncBody = await syncRes.json() as {
+      synced: boolean;
+      source: { syncStatus: string; documentCount: number };
+      document: { title: string; source: string; sourceUri: string; metadata: Record<string, unknown> };
+      blocks: Array<{ source: string; metadata: Record<string, unknown> }>;
+    };
+    expect(syncBody.synced).toBe(true);
+    expect(syncBody.source).toMatchObject({ syncStatus: "synced", documentCount: 1 });
+    expect(syncBody.document).toMatchObject({
+      title: "refunds.md",
+      source: "source:file_upload",
+      sourceUri: "upload://refunds.md",
+      metadata: expect.objectContaining({
+        contextSourceId: sourceBody.source.id,
+        contextSourceType: "file_upload",
+        file: expect.objectContaining({ filename: "refunds.md" }),
+      }),
+    });
+    expect(syncBody.blocks[0]).toMatchObject({
+      source: "source:file_upload",
+      metadata: expect.objectContaining({ contextSourceType: "file_upload" }),
+    });
+
+    const syncAgainRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncAgainRes.status).toBe(200);
+    const syncAgainBody = await syncAgainRes.json() as { synced: boolean; source: { documentCount: number } };
+    expect(syncAgainBody).toMatchObject({ synced: false, source: { documentCount: 1 } });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(1);
+    expect(await db.select().from(contextBlocks).all()).toHaveLength(1);
+  });
+
+  it("rejects unsafe file upload source payloads", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Unsafe Upload KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const missingFileRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Missing file", type: "file_upload", content: "Some text." }),
+    });
+    expect(missingFileRes.status).toBe(400);
+    expect(await missingFileRes.json()).toMatchObject({ error: { message: "file config is required" } });
+
+    const binaryRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Binary file",
+        type: "file_upload",
+        content: "valid text\0with null",
+        file: { filename: "binary.dat", contentType: "application/octet-stream" },
+      }),
+    });
+    expect(binaryRes.status).toBe(400);
+    expect(await binaryRes.json()).toMatchObject({ error: { message: "file content must be text" } });
+    expect(await db.select().from(contextSources).all()).toHaveLength(0);
+  });
+
   it("persists failed source sync status without writing documents", async () => {
     await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
     const app = buildApp(db);

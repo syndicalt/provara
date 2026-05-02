@@ -21,13 +21,13 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
-- Connector ingestion with tenant-scoped manual and GitHub repository sources plus encrypted connector credentials.
+- Connector ingestion with tenant-scoped manual, file upload, and GitHub repository sources plus encrypted connector credentials.
 - Canonical context block distillation with review status and approved-only export.
 - Canonical review audit events with reviewer notes and actor attribution when available.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
-- Dashboard connector management for GitHub credentials, GitHub repository source creation, and manual source sync.
+- Dashboard connector management for GitHub credentials, file upload source creation, GitHub repository source creation, and manual source sync.
 
 It does not yet perform connector pulls from systems such as Confluence, Drive, or S3. Those belong to later roadmap phases.
 
@@ -134,6 +134,22 @@ Collections are tenant-scoped containers for reusable context. The document inge
 
 Manual sources are the connector foundation. `POST /v1/context/collections/{id}/sources` creates a tenant-scoped source with content, source URI, external ID, and metadata. `POST /v1/context/sources/{id}/sync` ingests that source into the existing `context_documents` and `context_blocks` pipeline, records `synced` or `failed` status on the source, persists the last error for failed syncs, and skips unchanged already-synced sources without duplicating documents.
 
+File upload sources use `type: "file_upload"` with text content and a `file` metadata object:
+
+```json
+{
+  "name": "Uploaded handbook",
+  "type": "file_upload",
+  "content": "# Refund policy\nRefunds require a receipt within 30 days.",
+  "file": {
+    "filename": "handbook.md",
+    "contentType": "text/markdown"
+  }
+}
+```
+
+Upload ingestion is text-only and bounded to 500,000 UTF-8 bytes. Provara sanitizes the filename, stores file metadata on the source, uses an `upload://` source URI, and syncs the content through the same document/block pipeline as manual sources.
+
 GitHub repository sources use `type: "github_repository"` with a `github` config object:
 
 ```json
@@ -206,7 +222,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, list credential metadata without secret values, create GitHub repository sources for the first managed collection, and bind a source to a stored credential. The Collection Sources section shows manual and GitHub sources for the first managed collection, including source URI or repo/branch/path, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, list credential metadata without secret values, create text file upload sources, create GitHub repository sources for the first managed collection, and bind a GitHub source to a stored credential. The Collection Sources section shows manual, file upload, and GitHub sources for the first managed collection, including source URI, filename metadata, or repo/branch/path, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 

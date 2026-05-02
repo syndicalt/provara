@@ -33,11 +33,14 @@ const MAX_GITHUB_FILE_BYTES = 250_000;
 const MAX_GITHUB_FILES = 100;
 const MAX_CREDENTIAL_NAME_CHARS = 120;
 const MAX_CREDENTIAL_VALUE_CHARS = 20_000;
+const MAX_UPLOAD_FILENAME_CHARS = 240;
+const MAX_UPLOAD_CONTENT_TYPE_CHARS = 120;
+const MAX_UPLOAD_BYTES = 500_000;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
 const BLOCK_INSERT_BATCH_SIZE = 50;
 
-type ContextSourceType = "manual" | "github_repository";
+type ContextSourceType = "manual" | "github_repository" | "file_upload";
 
 export interface GitHubSourceConfig {
   owner: string;
@@ -48,6 +51,12 @@ export interface GitHubSourceConfig {
   maxFileBytes: number;
   maxFiles: number;
   credentialId?: string;
+}
+
+export interface FileUploadSourceConfig {
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
 }
 
 export interface ContextConnectorCredential {
@@ -181,6 +190,7 @@ export interface CreateContextSourceInput {
   content?: string;
   metadata?: Record<string, unknown>;
   github?: GitHubSourceConfig;
+  file?: FileUploadSourceConfig;
 }
 
 export interface CreateContextConnectorCredentialInput {
@@ -234,6 +244,35 @@ function normalizeGithubExtension(value: string): string {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return "";
   return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+function sanitizeUploadFilename(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean)
+    .at(-1)
+    ?.replace(/[^\w .@()+,-]/g, "_")
+    .replace(/\s+/g, " ")
+    .slice(0, MAX_UPLOAD_FILENAME_CHARS)
+    .trim() ?? "";
+}
+
+function isSafeUploadedText(value: string): boolean {
+  if (value.includes("\0")) return false;
+  let controlCount = 0;
+  const limit = Math.min(value.length, 8_192);
+  for (let index = 0; index < limit; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 32 && code !== 9 && code !== 10 && code !== 13) controlCount += 1;
+  }
+  return controlCount <= Math.max(4, Math.floor(limit * 0.01));
+}
+
+function normalizeUploadContentType(value: string | undefined): string {
+  const trimmed = value?.trim().toLowerCase() || "text/plain";
+  return trimmed.slice(0, MAX_UPLOAD_CONTENT_TYPE_CHARS);
 }
 
 function parseGithubConfig(metadata: Record<string, unknown>): GitHubSourceConfig {
@@ -518,15 +557,22 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
   if (name.error) return { error: name.error };
   if (!name.value) return { error: "name is required" };
   const type = body.type === undefined ? "manual" : body.type;
-  if (type !== "manual" && type !== "github_repository") return { error: "type must be manual or github_repository" };
+  if (type !== "manual" && type !== "github_repository" && type !== "file_upload") {
+    return { error: "type must be manual, github_repository, or file_upload" };
+  }
   const externalId = trimOptional(body.externalId, "externalId", MAX_SOURCE_URI_CHARS);
   if (externalId.error) return { error: externalId.error };
   const sourceUri = trimOptional(body.sourceUri, "sourceUri", MAX_SOURCE_URI_CHARS);
   if (sourceUri.error) return { error: sourceUri.error };
-  if (type === "manual" && typeof body.content !== "string") return { error: "content is required" };
+  if ((type === "manual" || type === "file_upload") && typeof body.content !== "string") return { error: "content is required" };
   if (body.content !== undefined && typeof body.content !== "string") return { error: "content must be a string" };
   if (typeof body.content === "string" && body.content.length > MAX_INGEST_TEXT_CHARS) {
     return { error: `content must be at most ${MAX_INGEST_TEXT_CHARS} characters` };
+  }
+  if (type === "file_upload" && typeof body.content === "string") {
+    const byteLength = Buffer.byteLength(body.content, "utf8");
+    if (byteLength > MAX_UPLOAD_BYTES) return { error: `file content must be at most ${MAX_UPLOAD_BYTES} bytes` };
+    if (!isSafeUploadedText(body.content)) return { error: "file content must be text" };
   }
 
   let metadata: Record<string, unknown> | undefined;
@@ -597,6 +643,21 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
     };
   }
 
+  let file: FileUploadSourceConfig | undefined;
+  if (type === "file_upload") {
+    if (typeof body.file !== "object" || body.file === null || Array.isArray(body.file)) {
+      return { error: "file config is required" };
+    }
+    const raw = body.file as Record<string, unknown>;
+    if (typeof raw.filename !== "string") return { error: "file.filename is required" };
+    const filename = sanitizeUploadFilename(raw.filename);
+    if (!filename) return { error: "file.filename is required" };
+    if (filename === "." || filename === "..") return { error: "file.filename is invalid" };
+    const contentType = typeof raw.contentType === "string" ? normalizeUploadContentType(raw.contentType) : "text/plain";
+    const sizeBytes = typeof body.content === "string" ? Buffer.byteLength(body.content, "utf8") : 0;
+    file = { filename, contentType, sizeBytes };
+  }
+
   return {
     value: {
       name: name.value,
@@ -606,6 +667,7 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
       content: typeof body.content === "string" ? body.content : undefined,
       metadata,
       github,
+      file,
     },
   };
 }
@@ -819,11 +881,21 @@ export async function createContextSource(
   const id = nanoid();
   const metadata = input.github
     ? { ...(input.metadata ?? {}), github: input.github, githubSyncedFiles: {} }
-    : input.metadata ?? {};
+    : input.file
+      ? { ...(input.metadata ?? {}), file: input.file }
+      : input.metadata ?? {};
   const sourceUri = input.sourceUri
-    ?? (input.github ? `https://github.com/${input.github.owner}/${input.github.repo}/tree/${encodeURIComponent(input.github.branch)}` : null);
+    ?? (input.github
+      ? `https://github.com/${input.github.owner}/${input.github.repo}/tree/${encodeURIComponent(input.github.branch)}`
+      : input.file
+        ? `upload://${encodeURIComponent(input.file.filename)}`
+        : null);
   const externalId = input.externalId
-    ?? (input.github ? `github:${input.github.owner}/${input.github.repo}:${input.github.branch}:${input.github.path ?? ""}` : id);
+    ?? (input.github
+      ? `github:${input.github.owner}/${input.github.repo}:${input.github.branch}:${input.github.path ?? ""}`
+      : input.file
+        ? `upload:${hashContent(`${input.file.filename}:${input.content ?? ""}`).slice(0, 32)}`
+        : id);
   const content = input.content ?? "";
   await db.insert(contextSources).values({
     id,
@@ -1209,13 +1281,18 @@ export async function syncContextSource(
 
   const now = new Date();
   try {
+    const metadata = parseMetadata(sourceRow.metadata);
+    const file = sourceRow.type === "file_upload" && typeof metadata.file === "object" && metadata.file !== null && !Array.isArray(metadata.file)
+      ? metadata.file as Record<string, unknown>
+      : null;
+    const title = typeof file?.filename === "string" && file.filename.trim() ? file.filename.trim() : sourceRow.name;
     const result = await ingestContextDocument(db, tenantId, sourceRow.collectionId, {
-      title: sourceRow.name,
+      title,
       text: sourceRow.content,
       source: `source:${sourceRow.type}`,
       sourceUri: sourceRow.sourceUri ?? undefined,
       metadata: {
-        ...parseMetadata(sourceRow.metadata),
+        ...metadata,
         contextSourceId: sourceRow.id,
         contextSourceType: sourceRow.type,
         externalId: sourceRow.externalId,

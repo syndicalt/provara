@@ -3075,7 +3075,7 @@ components:
           maxLength: 200
         type:
           type: string
-          enum: [manual, github_repository]
+          enum: [manual, github_repository, file_upload]
         externalId:
           type: string
           maxLength: 2000
@@ -3084,13 +3084,27 @@ components:
           maxLength: 2000
         content:
           type: string
-          description: Required for manual sources.
+          description: Required for manual and file_upload sources.
           maxLength: 500000
         github:
           $ref: "#/components/schemas/GitHubContextSourceConfig"
+        file:
+          $ref: "#/components/schemas/FileUploadContextSourceConfig"
         metadata:
           type: object
           additionalProperties: true
+
+    FileUploadContextSourceConfig:
+      type: object
+      required: [filename]
+      properties:
+        filename:
+          type: string
+          minLength: 1
+          maxLength: 240
+        contentType:
+          type: string
+          maxLength: 120
 
     CreateContextConnectorCredentialRequest:
       type: object
@@ -3259,7 +3273,7 @@ components:
           type: string
         type:
           type: string
-          enum: [manual, github_repository]
+          enum: [manual, github_repository, file_upload]
         externalId:
           type: string
           nullable: true
