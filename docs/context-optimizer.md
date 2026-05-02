@@ -11,6 +11,7 @@ The shipped V1 implementation is intentionally narrow:
 - Optional lexical relevance scoring and reranking for retained chunks.
 - Optional stale-context detection from bounded freshness metadata.
 - Optional conflicting-context detection with bounded heuristic claim checks.
+- Optional extractive compression with bounded sentence selection.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
 - Optional risk scanning with active Guardrails rules for retrieved context.
@@ -42,6 +43,8 @@ The request accepts already-retrieved context chunks:
   "freshnessMode": "metadata",
   "maxContextAgeDays": 180,
   "conflictMode": "heuristic",
+  "compressionMode": "extractive",
+  "maxSentencesPerChunk": 3,
   "scanRisk": true,
   "chunks": [
     {
@@ -64,14 +67,14 @@ The request accepts already-retrieved context chunks:
 
 The response includes:
 
-- `optimization.optimized`: chunks retained for model context, optionally reranked and scored for relevance/freshness/conflicts.
+- `optimization.optimized`: chunks retained for model context, optionally reranked, scored for relevance/freshness/conflicts, and extractively compressed.
 - `optimization.dropped`: exact duplicate and near-duplicate chunks removed from model context.
 - `optimization.conflicts`: lightweight conflict groups found across retained chunks.
 - `optimization.flagged`: risky chunks removed from model context but marked for operator review.
 - `optimization.quarantined`: risky chunks removed from model context before provider routing.
-- `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, reduction percentage, relevance, freshness, and conflict metrics.
+- `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, reduction percentage, relevance, freshness, conflict, and compression metrics.
 - `event`: the persisted visibility record for the optimization call.
-- `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, risky context rate, and conflict rate.
+- `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, risky context rate, conflict rate, and compression savings.
 
 `dedupeMode` defaults to `exact` for backwards compatibility. Set `dedupeMode` to `semantic` to also remove near duplicates using deterministic token overlap scoring. `semanticThreshold` defaults to `0.72` and accepts values from `0.5` to `1`.
 
@@ -80,6 +83,8 @@ The response includes:
 `freshnessMode` defaults to `off`. Set `freshnessMode` to `metadata` to score retained chunks from bounded freshness metadata. Provara checks common fields such as `updatedAt`, `lastModified`, `publishedAt`, and `expiresAt`, stores aggregate freshness metrics only, and does not persist the full metadata payload. `maxContextAgeDays` defaults to `180`.
 
 `conflictMode` defaults to `off`. Set `conflictMode` to `heuristic` to detect lightweight contradictions across retained chunks. The first implementation uses bounded local signals: shared metadata keys, status disagreements, and numeric claim disagreements such as different day/hour/percent/USD values on the same topic. It caps extracted signals and pair comparisons, so this stays deterministic and local; embedding or NLI-backed contradiction checks remain future paid-layer work.
+
+`compressionMode` defaults to `off`. Set `compressionMode` to `extractive` to keep the highest-value sentences from retained chunks. The selector uses bounded sentence splitting, capped query tokens, stable local scoring, and preserves original sentence order in the compressed chunk. It records `compressedChunks`, `compressionSavedTokens`, and `compressionRatePct`. `maxSentencesPerChunk` defaults to `3` and accepts values from `1` to `8`. Abstractive/LLM compression is intentionally out of scope for this mode.
 
 `scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 

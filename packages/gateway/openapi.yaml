@@ -2136,6 +2136,17 @@ components:
           enum: [off, heuristic]
           default: off
           description: Heuristic mode detects lightweight status, numeric, and metadata conflicts across retained chunks.
+        compressionMode:
+          type: string
+          enum: [off, extractive]
+          default: off
+          description: Extractive mode keeps the highest-value sentences from retained chunks using deterministic local scoring.
+        maxSentencesPerChunk:
+          type: number
+          minimum: 1
+          maximum: 8
+          default: 3
+          description: Maximum retained sentences per chunk when compressionMode is extractive.
 
     OptimizedContextChunk:
       allOf:
@@ -2168,6 +2179,15 @@ components:
               items:
                 type: string
               description: Conflict group ids involving this chunk.
+            compressed:
+              type: boolean
+              description: Whether extractive compression shortened this chunk.
+            originalTokens:
+              type: integer
+              description: Pre-compression token estimate for this retained chunk.
+            compressedTokens:
+              type: integer
+              description: Post-compression token estimate for this retained chunk.
 
     ContextConflict:
       type: object
@@ -2256,7 +2276,7 @@ components:
             $ref: "#/components/schemas/RiskyContextChunk"
         metrics:
           type: object
-          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks, avgFreshnessScore, staleChunks, conflictChunks, conflictGroups]
+          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks, avgFreshnessScore, staleChunks, conflictChunks, conflictGroups, compressedChunks, compressionSavedTokens, compressionRatePct]
           properties:
             inputChunks: { type: integer }
             outputChunks: { type: integer }
@@ -2280,6 +2300,9 @@ components:
             staleChunks: { type: integer }
             conflictChunks: { type: integer }
             conflictGroups: { type: integer }
+            compressedChunks: { type: integer }
+            compressionSavedTokens: { type: integer }
+            compressionRatePct: { type: number }
 
     ContextOptimizationEvent:
       type: object
@@ -2301,6 +2324,9 @@ components:
         - staleChunks
         - conflictChunks
         - conflictGroups
+        - compressedChunks
+        - compressionSavedTokens
+        - compressionRatePct
         - conflictSourceIds
         - conflictDetails
         - duplicateSourceIds
@@ -2349,6 +2375,12 @@ components:
           type: integer
         conflictGroups:
           type: integer
+        compressedChunks:
+          type: integer
+        compressionSavedTokens:
+          type: integer
+        compressionRatePct:
+          type: number
         conflictSourceIds:
           type: array
           items:
@@ -2415,6 +2447,9 @@ components:
         - staleChunks
         - conflictChunks
         - conflictGroups
+        - compressedChunks
+        - compressionSavedTokens
+        - compressionRatePct
         - flaggedChunks
         - quarantinedChunks
         - latestAt
@@ -2453,6 +2488,12 @@ components:
           type: integer
         conflictGroups:
           type: integer
+        compressedChunks:
+          type: integer
+        compressionSavedTokens:
+          type: integer
+        compressionRatePct:
+          type: number
         flaggedChunks:
           type: integer
         quarantinedChunks:
@@ -2611,6 +2652,9 @@ components:
         - staleChunks
         - conflictChunks
         - conflictGroups
+        - compressedChunks
+        - compressionSavedTokens
+        - compressionRatePct
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
@@ -2664,6 +2708,12 @@ components:
           type: integer
         conflictGroups:
           type: integer
+        compressedChunks:
+          type: integer
+        compressionSavedTokens:
+          type: integer
+        compressionRatePct:
+          type: number
         efficiencyPct:
           type: number
         duplicateRatePct:
@@ -2714,6 +2764,9 @@ components:
         - staleChunks
         - conflictChunks
         - conflictGroups
+        - compressedChunks
+        - compressionSavedTokens
+        - compressionRatePct
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
@@ -2757,6 +2810,12 @@ components:
           type: integer
         conflictGroups:
           type: integer
+        compressedChunks:
+          type: integer
+        compressionSavedTokens:
+          type: integer
+        compressionRatePct:
+          type: number
         efficiencyPct:
           type: number
         duplicateRatePct:

@@ -21,6 +21,7 @@ All notable Provara changes are tracked here.
   - Context Optimizer lexical relevance mode with `rankMode: "lexical"`, query-scored stable reranking, low-relevance/reranked metrics, demo rows, APIs, and dashboard visibility.
   - Context Optimizer stale-context detection with `freshnessMode: "metadata"`, freshness/stale metrics from bounded metadata parsing, demo rows, APIs, and dashboard visibility.
   - Context Optimizer conflicting-context detection with `conflictMode: "heuristic"`, bounded status/numeric/metadata checks, conflict metrics, demo rows, APIs, and dashboard visibility.
+  - Context Optimizer extractive compression with `compressionMode: "extractive"`, bounded sentence selection, compression savings metrics, demo rows, APIs, and dashboard visibility.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
 - Optional semantic and hybrid prompt-injection scan modes using the configured judge model.
@@ -34,7 +35,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, stale-context detection, and conflicting-context detection as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, stale-context detection, conflicting-context detection, and extractive compression as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
@@ -49,7 +50,7 @@ All notable Provara changes are tracked here.
 ### Upgrade Notes
 
 - Run database migrations through `0044_firewall_settings`.
-- For Context Optimizer visibility, risk reporting, quality scoring, retrieval analytics, semantic near-duplicate metrics, relevance metrics, freshness metrics, and conflict metrics, run database migrations through `0052_context_conflict_metrics`.
+- For Context Optimizer visibility, risk reporting, quality scoring, retrieval analytics, semantic near-duplicate metrics, relevance metrics, freshness metrics, conflict metrics, and compression metrics, run database migrations through `0053_context_compression_metrics`.
 - New tables:
   - `firewall_events`
   - `firewall_settings`

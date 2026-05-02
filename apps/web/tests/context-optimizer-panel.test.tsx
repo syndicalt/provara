@@ -43,6 +43,9 @@ describe("ContextOptimizerPanel", () => {
             staleChunks: 2,
             conflictChunks: 2,
             conflictGroups: 1,
+            compressedChunks: 3,
+            compressionSavedTokens: 120,
+            compressionRatePct: 12,
             flaggedChunks: 1,
             quarantinedChunks: 2,
             latestAt: "2026-05-01T21:00:00.000Z",
@@ -103,6 +106,9 @@ describe("ContextOptimizerPanel", () => {
             staleChunks: 2,
             conflictChunks: 2,
             conflictGroups: 1,
+            compressedChunks: 3,
+            compressionSavedTokens: 120,
+            compressionRatePct: 12,
             efficiencyPct: 62,
             duplicateRatePct: 20,
             nearDuplicateRatePct: 10,
@@ -135,6 +141,9 @@ describe("ContextOptimizerPanel", () => {
               staleChunks: 1,
               conflictChunks: 2,
               conflictGroups: 1,
+              compressedChunks: 2,
+              compressionSavedTokens: 80,
+              compressionRatePct: 16,
               efficiencyPct: 60,
               duplicateRatePct: 20,
               nearDuplicateRatePct: 20,
@@ -169,6 +178,9 @@ describe("ContextOptimizerPanel", () => {
             staleChunks: 1,
             conflictChunks: 2,
             conflictGroups: 1,
+            compressedChunks: 2,
+            compressionSavedTokens: 80,
+            compressionRatePct: 16,
             conflictSourceIds: ["chunk-a", "chunk-c"],
             conflictDetails: [
               {
@@ -220,6 +232,7 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("Freshness").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Conflicts").length).toBeGreaterThan(0);
     expect(screen.getByText("Conflict Rate")).toBeInTheDocument();
+    expect(screen.getByText("Compression")).toBeInTheDocument();
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();
     expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
   });
@@ -245,6 +258,9 @@ describe("ContextOptimizerPanel", () => {
             staleChunks: 0,
             conflictChunks: 0,
             conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
             flaggedChunks: 0,
             quarantinedChunks: 0,
             latestAt: null,
@@ -286,6 +302,9 @@ describe("ContextOptimizerPanel", () => {
             staleChunks: 0,
             conflictChunks: 0,
             conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
             efficiencyPct: 0,
             duplicateRatePct: 0,
             nearDuplicateRatePct: 0,

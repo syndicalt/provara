@@ -20,6 +20,9 @@ export interface ContextOptimizationSummary {
   staleChunks: number;
   conflictChunks: number;
   conflictGroups: number;
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
   flaggedChunks: number;
   quarantinedChunks: number;
   latestAt: string | null;
@@ -43,6 +46,9 @@ export interface ContextOptimizationEvent {
   staleChunks: number;
   conflictChunks: number;
   conflictGroups: number;
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
   conflictSourceIds: string[];
   conflictDetails: Array<{
     id: string;
@@ -112,6 +118,9 @@ export interface ContextRetrievalSummary {
   staleChunks: number;
   conflictChunks: number;
   conflictGroups: number;
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -140,6 +149,9 @@ export interface ContextRetrievalEvent {
   staleChunks: number;
   conflictChunks: number;
   conflictGroups: number;
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -440,7 +452,7 @@ export function ContextOptimizerPanel() {
           <h2 className="text-lg font-semibold text-zinc-100">Retrieval Analytics</h2>
           <p className="mt-1 text-sm text-zinc-500">Context usage and retrieval health.</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <StatTile
             label="Retrieval Efficiency"
             value={formatPercent(retrievalSummary?.efficiencyPct ?? 0)}
@@ -470,6 +482,12 @@ export function ContextOptimizerPanel() {
             value={formatInteger(retrievalSummary?.conflictChunks ?? 0)}
             detail={`${formatInteger(retrievalSummary?.conflictGroups ?? 0)} conflict groups`}
             tone={riskTone(retrievalSummary?.conflictChunks ?? 0)}
+          />
+          <StatTile
+            label="Compression"
+            value={formatInteger(retrievalSummary?.compressionSavedTokens ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.compressedChunks ?? 0)} compressed chunks`}
+            tone={metricTone(retrievalSummary?.compressionSavedTokens ?? 0)}
           />
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-4">

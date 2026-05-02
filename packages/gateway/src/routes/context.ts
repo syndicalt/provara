@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import {
+  compressContextOptimizationResult,
   optimizeContextChunks,
   type ContextChunk,
   type ContextOptimizationOptions,
@@ -135,6 +136,22 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
   if (conflictMode !== undefined && conflictMode !== "off" && conflictMode !== "heuristic") {
     return { error: "conflictMode must be either off or heuristic" };
   }
+  const compressionMode = value.compressionMode;
+  if (compressionMode !== undefined && compressionMode !== "off" && compressionMode !== "extractive") {
+    return { error: "compressionMode must be either off or extractive" };
+  }
+  const maxSentencesPerChunk = value.maxSentencesPerChunk;
+  if (
+    maxSentencesPerChunk !== undefined &&
+    (
+      typeof maxSentencesPerChunk !== "number" ||
+      !Number.isFinite(maxSentencesPerChunk) ||
+      maxSentencesPerChunk < 1 ||
+      maxSentencesPerChunk > 8
+    )
+  ) {
+    return { error: "maxSentencesPerChunk must be a number between 1 and 8" };
+  }
 
   return {
     options: {
@@ -147,6 +164,8 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
       maxContextAgeDays: typeof maxContextAgeDays === "number" ? maxContextAgeDays : undefined,
       referenceTime: parsedReferenceTime,
       conflictMode: conflictMode === "heuristic" ? "heuristic" : "off",
+      compressionMode: compressionMode === "extractive" ? "extractive" : "off",
+      maxSentencesPerChunk: typeof maxSentencesPerChunk === "number" ? maxSentencesPerChunk : undefined,
     },
   };
 }
@@ -231,6 +250,11 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
     conflict.chunkIds.every((chunkId) => safeIds.has(chunkId))
   ));
   const conflictChunkIds = new Set(conflicts.flatMap((conflict) => conflict.chunkIds));
+  const compressionSavedTokens = result.optimized.reduce(
+    (sum, chunk) => sum + Math.max(0, (chunk.originalTokens ?? chunk.inputTokens) - chunk.outputTokens),
+    0,
+  );
+  const preCompressionTokens = outputTokens + compressionSavedTokens;
   return {
     ...result,
     conflicts,
@@ -252,6 +276,11 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
       staleChunks: result.optimized.filter((chunk) => chunk.stale).length,
       conflictChunks: result.optimized.filter((chunk) => conflictChunkIds.has(chunk.id)).length,
       conflictGroups: conflicts.length,
+      compressedChunks: result.optimized.filter((chunk) => chunk.compressed).length,
+      compressionSavedTokens,
+      compressionRatePct: preCompressionTokens === 0
+        ? 0
+        : Number(((compressionSavedTokens / preCompressionTokens) * 100).toFixed(2)),
     },
   };
 }
@@ -335,10 +364,20 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
       );
     }
 
-    const baseOptimization = optimizeContextChunks(parsed.chunks, dedupe.options);
-    const optimization = scanRisk.scanRisk
+    const deferCompression = scanRisk.scanRisk && dedupe.options.compressionMode === "extractive";
+    const baseOptions = deferCompression
+      ? { ...dedupe.options, compressionMode: "off" as const }
+      : dedupe.options;
+    const baseOptimization = optimizeContextChunks(parsed.chunks, baseOptions);
+    const scannedOptimization = scanRisk.scanRisk
       ? await applyRiskScan(db, tenantId, baseOptimization)
       : baseOptimization;
+    const optimization = deferCompression
+      ? compressContextOptimizationResult(scannedOptimization, {
+        query: dedupe.options.query,
+        maxSentencesPerChunk: dedupe.options.maxSentencesPerChunk,
+      })
+      : scannedOptimization;
     const event = await recordContextOptimizationEvent(db, tenantId, optimization, {
       riskScanned: scanRisk.scanRisk ?? false,
     });
