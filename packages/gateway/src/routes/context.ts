@@ -3,12 +3,15 @@ import type { Db } from "@provara/db";
 import {
   compressContextOptimizationResult,
   optimizeContextChunks,
+  rankContextOptimizationResultLexically,
+  rankContextOptimizationResultWithEmbeddings,
   type ContextChunk,
   type ContextOptimizationOptions,
   type ContextOptimizationResult,
   type OptimizedContextChunk,
   type RiskyContextChunk,
 } from "../context/optimizer.js";
+import { createEmbeddingProvider, type EmbeddingProvider } from "../embeddings/index.js";
 import {
   listContextOptimizationEvents,
   recordContextOptimizationEvent,
@@ -90,8 +93,8 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
   }
 
   const rankMode = value.rankMode;
-  if (rankMode !== undefined && rankMode !== "none" && rankMode !== "lexical") {
-    return { error: "rankMode must be either none or lexical" };
+  if (rankMode !== undefined && rankMode !== "none" && rankMode !== "lexical" && rankMode !== "embedding") {
+    return { error: "rankMode must be either none, lexical, or embedding" };
   }
   const query = value.query;
   if (query !== undefined && (typeof query !== "string" || query.length > 2000)) {
@@ -157,7 +160,7 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
     options: {
       dedupeMode: mode === "semantic" ? "semantic" : "exact",
       semanticThreshold: typeof threshold === "number" ? threshold : undefined,
-      rankMode: rankMode === "lexical" ? "lexical" : "none",
+      rankMode: rankMode === "lexical" || rankMode === "embedding" ? rankMode : "none",
       query: typeof query === "string" ? query : undefined,
       minRelevanceScore: typeof minRelevanceScore === "number" ? minRelevanceScore : undefined,
       freshnessMode: freshnessMode === "metadata" ? "metadata" : "off",
@@ -327,7 +330,47 @@ async function applyRiskScan(
   });
 }
 
-export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
+export interface ContextRouteOptions {
+  embeddings?: EmbeddingProvider | null;
+  dbKeys?: Record<string, string>;
+}
+
+async function applyRequestedRanking(
+  result: ContextOptimizationResult,
+  options: ContextOptimizationOptions,
+  routeOptions: ContextRouteOptions,
+): Promise<ContextOptimizationResult> {
+  if (options.rankMode === "lexical") {
+    return result;
+  }
+  if (options.rankMode !== "embedding") {
+    return result;
+  }
+
+  const embeddings = routeOptions.embeddings !== undefined
+    ? routeOptions.embeddings
+    : createEmbeddingProvider({ dbKeys: routeOptions.dbKeys });
+  if (!embeddings) {
+    return rankContextOptimizationResultLexically(result, {
+      query: options.query,
+      minRelevanceScore: options.minRelevanceScore,
+    });
+  }
+
+  try {
+    return await rankContextOptimizationResultWithEmbeddings(result, embeddings, {
+      query: options.query,
+      minRelevanceScore: options.minRelevanceScore,
+    });
+  } catch {
+    return rankContextOptimizationResultLexically(result, {
+      query: options.query,
+      minRelevanceScore: options.minRelevanceScore,
+    });
+  }
+}
+
+export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOptions: ContextRouteOptions = {}) {
   const app = new Hono();
 
   app.post("/optimize", async (c) => {
@@ -364,20 +407,24 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
       );
     }
 
-    const deferCompression = scanRisk.scanRisk && dedupe.options.compressionMode === "extractive";
+    const deferAsyncRanking = dedupe.options.rankMode === "embedding";
+    const deferCompression = (scanRisk.scanRisk || deferAsyncRanking) && dedupe.options.compressionMode === "extractive";
     const baseOptions = deferCompression
-      ? { ...dedupe.options, compressionMode: "off" as const }
+      ? { ...dedupe.options, rankMode: deferAsyncRanking ? "none" as const : dedupe.options.rankMode, compressionMode: "off" as const }
+      : deferAsyncRanking
+        ? { ...dedupe.options, rankMode: "none" as const }
       : dedupe.options;
     const baseOptimization = optimizeContextChunks(parsed.chunks, baseOptions);
     const scannedOptimization = scanRisk.scanRisk
       ? await applyRiskScan(db, tenantId, baseOptimization)
       : baseOptimization;
+    const rankedOptimization = await applyRequestedRanking(scannedOptimization, dedupe.options, routeOptions);
     const optimization = deferCompression
-      ? compressContextOptimizationResult(scannedOptimization, {
+      ? compressContextOptimizationResult(rankedOptimization, {
         query: dedupe.options.query,
         maxSentencesPerChunk: dedupe.options.maxSentencesPerChunk,
       })
-      : scannedOptimization;
+      : rankedOptimization;
     const event = await recordContextOptimizationEvent(db, tenantId, optimization, {
       riskScanned: scanRisk.scanRisk ?? false,
     });

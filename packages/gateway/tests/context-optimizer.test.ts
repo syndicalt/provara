@@ -4,8 +4,9 @@ import type { Db } from "@provara/db";
 import { contextOptimizationEvents, contextQualityEvents, contextRetrievalEvents, guardrailRules } from "@provara/db";
 import type { ProviderRegistry } from "../src/providers/index.js";
 import type { CompletionRequest, CompletionResponse, Provider, StreamChunk } from "../src/providers/types.js";
+import type { EmbeddingProvider } from "../src/embeddings/index.js";
 import { optimizeContextChunks } from "../src/context/optimizer.js";
-import { createContextRoutes } from "../src/routes/context.js";
+import { createContextRoutes, type ContextRouteOptions } from "../src/routes/context.js";
 import { makeTestDb } from "./_setup/db.js";
 import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 
@@ -46,11 +47,24 @@ function fakeRegistry(content = '{"rawScore": 4, "optimizedScore": 3, "rationale
   };
 }
 
-function buildApp(db: Db, registry?: ProviderRegistry) {
+function buildApp(db: Db, registry?: ProviderRegistry, routeOptions?: ContextRouteOptions) {
   const app = new Hono();
   app.use("/v1/context/*", requireIntelligenceTier(db));
-  app.route("/v1/context", createContextRoutes(db, registry));
+  app.route("/v1/context", createContextRoutes(db, registry, routeOptions));
   return app;
+}
+
+function fakeEmbeddings(vectors: Record<string, number[]>): EmbeddingProvider {
+  return {
+    name: "test-embeddings",
+    model: "test-embedding-model",
+    dim: 3,
+    async embed(text: string): Promise<number[]> {
+      const key = Object.keys(vectors).find((candidate) => text.includes(candidate));
+      if (!key) return [0, 0, 1];
+      return vectors[key];
+    },
+  };
 }
 
 describe("context optimizer core", () => {
@@ -763,6 +777,147 @@ describe("POST /v1/context/optimize", () => {
       lowRelevanceChunks: body.optimization.metrics.lowRelevanceChunks,
       rerankedChunks: body.optimization.metrics.rerankedChunks,
     });
+  });
+
+  it("records relevance analytics for embedding ranking", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const embeddings = fakeEmbeddings({
+      refund: [1, 0, 0],
+      billing: [0.2, 0.8, 0],
+      security: [0, 1, 0],
+    });
+    const app = buildApp(db, undefined, { embeddings });
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        rankMode: "embedding",
+        query: "refund",
+        minRelevanceScore: 0.5,
+        chunks: [
+          { id: "security", content: "security controls and saml setup" },
+          { id: "billing", content: "billing workspace invoices" },
+          { id: "refunds", content: "refund policy for paid accounts" },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ id: string; relevanceScore?: number }>;
+        metrics: {
+          avgRelevanceScore: number | null;
+          lowRelevanceChunks: number;
+          rerankedChunks: number;
+        };
+      };
+      event: {
+        avgRelevanceScore: number | null;
+        lowRelevanceChunks: number;
+        rerankedChunks: number;
+      };
+      retrieval: {
+        avgRelevanceScore: number | null;
+        lowRelevanceChunks: number;
+        rerankedChunks: number;
+      };
+    };
+
+    expect(body.optimization.optimized.map((chunk) => chunk.id)).toEqual(["refunds", "billing", "security"]);
+    expect(body.optimization.optimized[0].relevanceScore).toBe(1);
+    expect(body.optimization.metrics.avgRelevanceScore).toEqual(expect.any(Number));
+    expect(body.optimization.metrics.lowRelevanceChunks).toBeGreaterThan(0);
+    expect(body.optimization.metrics.rerankedChunks).toBe(2);
+    expect(body.event).toMatchObject({
+      avgRelevanceScore: body.optimization.metrics.avgRelevanceScore,
+      lowRelevanceChunks: body.optimization.metrics.lowRelevanceChunks,
+      rerankedChunks: body.optimization.metrics.rerankedChunks,
+    });
+    expect(body.retrieval).toMatchObject({
+      avgRelevanceScore: body.optimization.metrics.avgRelevanceScore,
+      lowRelevanceChunks: body.optimization.metrics.lowRelevanceChunks,
+      rerankedChunks: body.optimization.metrics.rerankedChunks,
+    });
+  });
+
+  it("falls back to lexical relevance when embedding ranking is unavailable", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db, undefined, { embeddings: null });
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        rankMode: "embedding",
+        query: "refund paid account",
+        minRelevanceScore: 0.2,
+        chunks: [
+          { id: "security", content: "Enterprise plans include audit logs and SAML single sign on." },
+          { id: "refunds", content: "Refunds are available for paid accounts during the 30 day refund window." },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ id: string; relevanceScore?: number }>;
+        metrics: { avgRelevanceScore: number | null; rerankedChunks: number };
+      };
+    };
+
+    expect(body.optimization.optimized.map((chunk) => chunk.id)).toEqual(["refunds", "security"]);
+    expect(body.optimization.optimized[0].relevanceScore).toEqual(expect.any(Number));
+    expect(body.optimization.metrics.avgRelevanceScore).toEqual(expect.any(Number));
+    expect(body.optimization.metrics.rerankedChunks).toBe(2);
+  });
+
+  it("falls back to lexical relevance when embedding ranking fails", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const embeddings: EmbeddingProvider = {
+      name: "broken",
+      model: "broken",
+      dim: 3,
+      async embed(): Promise<number[]> {
+        throw new Error("embedding provider unavailable");
+      },
+    };
+    const app = buildApp(db, undefined, { embeddings });
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        rankMode: "embedding",
+        query: "refund paid account",
+        chunks: [
+          { id: "security", content: "Enterprise plans include audit logs and SAML single sign on." },
+          { id: "refunds", content: "Refunds are available for paid accounts during the 30 day refund window." },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: { optimized: Array<{ id: string; relevanceScore?: number }> };
+    };
+
+    expect(body.optimization.optimized.map((chunk) => chunk.id)).toEqual(["refunds", "security"]);
+    expect(body.optimization.optimized[0].relevanceScore).toEqual(expect.any(Number));
   });
 
   it("records near-duplicate analytics for semantic mode", async () => {
