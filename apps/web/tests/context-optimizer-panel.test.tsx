@@ -448,6 +448,9 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Support KB")).toBeInTheDocument();
     expect(screen.getByText("Approved support context")).toBeInTheDocument();
     expect(screen.getByText("Connector Management")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Connector Management" })).toBeInTheDocument();
+    expect(screen.queryByText("GitHub Token Credentials")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show Connector Management" }));
     expect(screen.getByText("GitHub Token Credentials")).toBeInTheDocument();
     expect(screen.getByText("GitHub Source")).toBeInTheDocument();
     expect(screen.getAllByText("GitHub Docs").length).toBeGreaterThan(0);
@@ -878,6 +881,7 @@ describe("ContextOptimizerPanel", () => {
     render(<ContextOptimizerPanel />);
 
     expect(await screen.findByText("Connector Management")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show Connector Management" }));
     fireEvent.change(screen.getByLabelText("Credential Name"), { target: { value: "Docs token" } });
     fireEvent.change(screen.getByLabelText("Token"), { target: { value: "ghp_secret_token_123" } });
     fireEvent.click(screen.getByText("Save Credential"));
@@ -912,7 +916,7 @@ describe("ContextOptimizerPanel", () => {
     fireEvent.change(screen.getByLabelText("File Source Name"), { target: { value: "Uploaded guide" } });
     fireEvent.click(screen.getByText("Create File Source"));
 
-    expect(await screen.findByText("File source created.")).toBeInTheDocument();
+    expect(await screen.findByText("File uploaded and synced.")).toBeInTheDocument();
     expect(screen.getByText("guide.md (text/markdown, 35 bytes)")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("Uploaded guide content for context.");
 
@@ -938,6 +942,7 @@ describe("ContextOptimizerPanel", () => {
 
     expect(await screen.findByText("Confluence source created.")).toBeInTheDocument();
     expect(screen.getAllByText("https://acme.atlassian.net/wiki/spaces/SUP (policy)").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Sync Pending (2)" })).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("GitHub Source Name"), { target: { value: "Docs repo" } });
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });
@@ -954,7 +959,7 @@ describe("ContextOptimizerPanel", () => {
     fireEvent.click(screen.getAllByRole("button", { name: "Sync" })[0] as HTMLElement);
     expect(await screen.findByText("Sync complete.")).toBeInTheDocument();
     expect(screen.getAllByText("1").length).toBeGreaterThan(0);
-    expect(screen.getByText("synced")).toBeInTheDocument();
+    expect(screen.getAllByText("synced").length).toBeGreaterThan(0);
   });
 
   it("updates and persists optimizer payload controls", async () => {
