@@ -590,7 +590,7 @@ paths:
           description: Collection not found.
     post:
       tags: [Context Optimizer]
-      summary: Create a manual connector source for a managed context collection
+      summary: Create a connector source for a managed context collection
       operationId: createContextSource
       parameters:
         - in: path
@@ -3017,7 +3017,7 @@ components:
 
     CreateContextSourceRequest:
       type: object
-      required: [name, content]
+      required: [name]
       properties:
         name:
           type: string
@@ -3025,7 +3025,7 @@ components:
           maxLength: 200
         type:
           type: string
-          enum: [manual]
+          enum: [manual, github_repository]
         externalId:
           type: string
           maxLength: 2000
@@ -3034,10 +3034,52 @@ components:
           maxLength: 2000
         content:
           type: string
+          description: Required for manual sources.
           maxLength: 500000
+        github:
+          $ref: "#/components/schemas/GitHubContextSourceConfig"
         metadata:
           type: object
           additionalProperties: true
+
+    GitHubContextSourceConfig:
+      type: object
+      required: [owner, repo]
+      properties:
+        owner:
+          type: string
+          minLength: 1
+          maxLength: 100
+        repo:
+          type: string
+          minLength: 1
+          maxLength: 100
+        branch:
+          type: string
+          default: main
+          maxLength: 200
+        path:
+          type: string
+          description: Optional repository path prefix to ingest.
+          maxLength: 1000
+        extensions:
+          type: array
+          description: File extensions to ingest. Defaults to markdown/text documentation extensions.
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 24
+        maxFileBytes:
+          type: integer
+          minimum: 1
+          maximum: 250000
+          default: 250000
+        maxFiles:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 100
 
     ContextCollection:
       type: object
@@ -3120,7 +3162,7 @@ components:
           type: string
         type:
           type: string
-          enum: [manual]
+          enum: [manual, github_repository]
         externalId:
           type: string
           nullable: true

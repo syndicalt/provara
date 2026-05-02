@@ -223,7 +223,23 @@ describe("ContextOptimizerPanel", () => {
               lastDocumentId: "doc-1",
               documentCount: 1,
               lastError: null,
+              metadata: {},
               updatedAt: "2026-05-01T22:03:00.000Z",
+            },
+            {
+              id: "source-2",
+              collectionId: "collection-1",
+              name: "Docs repository",
+              type: "github_repository",
+              externalId: "github:acme/docs:main:docs",
+              sourceUri: "https://github.com/acme/docs/tree/main",
+              syncStatus: "synced",
+              lastSyncedAt: "2026-05-01T22:04:00.000Z",
+              lastDocumentId: "doc-2",
+              documentCount: 2,
+              lastError: null,
+              metadata: { github: { owner: "acme", repo: "docs", branch: "main", path: "docs" } },
+              updatedAt: "2026-05-01T22:04:00.000Z",
             },
           ],
         }));
@@ -353,6 +369,8 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Collection Sources")).toBeInTheDocument();
     expect(screen.getByText("Refund source")).toBeInTheDocument();
     expect(screen.getByText("file://refunds.md")).toBeInTheDocument();
+    expect(screen.getByText("Docs repository")).toBeInTheDocument();
+    expect(screen.getByText("acme/docs@main/docs")).toBeInTheDocument();
     expect(screen.getByText("Canonical")).toBeInTheDocument();
     expect(screen.getByText("Approved")).toBeInTheDocument();
     expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();

@@ -84,6 +84,13 @@ function fakeEmbeddings(vectors: Record<string, number[]>): EmbeddingProvider {
   };
 }
 
+function githubJson(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
 describe("context optimizer core", () => {
   it("drops exact duplicate chunks and reports token savings", () => {
     const result = optimizeContextChunks([
@@ -1816,6 +1823,137 @@ describe("managed context collections", () => {
     expect(rows).toEqual([
       expect.objectContaining({ syncStatus: "failed", lastError: "text is required", documentCount: 0 }),
     ]);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
+  });
+
+  it("creates and idempotently syncs GitHub repository sources", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const githubFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/git/trees/main")) {
+        return githubJson({
+          tree: [
+            { path: "docs/readme.md", type: "blob", sha: "sha-readme", size: 61 },
+            { path: "docs/api.txt", type: "blob", sha: "sha-api", size: 42 },
+            { path: "src/private.ts", type: "blob", sha: "sha-private", size: 20 },
+          ],
+        });
+      }
+      if (url.includes("/git/blobs/sha-readme")) {
+        return githubJson({
+          encoding: "base64",
+          size: 61,
+          content: Buffer.from("Refunds are available within 30 days from GitHub docs.").toString("base64"),
+        });
+      }
+      if (url.includes("/git/blobs/sha-api")) {
+        return githubJson({
+          encoding: "base64",
+          size: 42,
+          content: Buffer.from("API clients should send account identifiers.").toString("base64"),
+        });
+      }
+      return githubJson({ message: "not found" }, 404);
+    });
+    const app = buildApp(db, undefined, { githubFetch });
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "GitHub KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Docs repository",
+        type: "github_repository",
+        github: {
+          owner: "acme",
+          repo: "docs",
+          branch: "main",
+          path: "docs",
+          extensions: [".md", ".txt"],
+          maxFiles: 10,
+          maxFileBytes: 1_000,
+        },
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as { source: { id: string; type: string; metadata: Record<string, unknown> } };
+    expect(sourceBody.source.type).toBe("github_repository");
+    expect(sourceBody.source.metadata.github).toMatchObject({ owner: "acme", repo: "docs", branch: "main" });
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+    const syncBody = await syncRes.json() as {
+      synced: boolean;
+      source: { syncStatus: string; documentCount: number; metadata: Record<string, unknown> };
+      collection: { documentCount: number; blockCount: number };
+      document: { id: string; source: string; metadata: Record<string, unknown> };
+      blocks: Array<{ source: string; metadata: Record<string, unknown> }>;
+    };
+    expect(syncBody.synced).toBe(true);
+    expect(syncBody.source).toMatchObject({ syncStatus: "synced", documentCount: 2 });
+    expect(syncBody.collection).toMatchObject({ documentCount: 2, blockCount: 2 });
+    expect(syncBody.document.source).toBe("source:github_repository");
+    expect(syncBody.blocks).toHaveLength(2);
+    expect(syncBody.blocks[0]).toMatchObject({
+      source: "source:github_repository",
+      metadata: expect.objectContaining({ contextSourceId: sourceBody.source.id, githubOwner: "acme", githubRepo: "docs" }),
+    });
+    expect(syncBody.source.metadata.githubSyncedFiles).toMatchObject({
+      "docs/readme.md": "sha-readme",
+      "docs/api.txt": "sha-api",
+    });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
+
+    const syncAgainRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncAgainRes.status).toBe(200);
+    const syncAgainBody = await syncAgainRes.json() as { synced: boolean; source: { documentCount: number }; document: unknown; blocks: unknown[] };
+    expect(syncAgainBody).toMatchObject({ synced: false, source: { documentCount: 2 }, document: null, blocks: [] });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
+    expect(githubFetch.mock.calls.filter(([url]) => String(url).includes("/git/blobs/"))).toHaveLength(2);
+  });
+
+  it("persists failed GitHub source sync status without writing documents", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const githubFetch = vi.fn(async () => githubJson({ message: "rate limited" }, 403));
+    const app = buildApp(db, undefined, { githubFetch });
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "GitHub Failure KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Broken repository",
+        type: "github_repository",
+        github: { owner: "acme", repo: "docs", branch: "main" },
+      }),
+    });
+    const sourceBody = await sourceRes.json() as { source: { id: string } };
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(500);
+    const rows = await db.select().from(contextSources).all();
+    expect(rows).toEqual([
+      expect.objectContaining({ type: "github_repository", syncStatus: "failed", documentCount: 0 }),
+    ]);
+    expect(rows[0]?.lastError).toContain("GitHub request failed (403)");
     expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
   });
 

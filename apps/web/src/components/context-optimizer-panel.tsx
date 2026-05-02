@@ -207,7 +207,7 @@ export interface ContextSource {
   id: string;
   collectionId: string;
   name: string;
-  type: "manual";
+  type: "manual" | "github_repository";
   externalId: string | null;
   sourceUri: string | null;
   syncStatus: "pending" | "synced" | "failed";
@@ -215,6 +215,7 @@ export interface ContextSource {
   lastDocumentId: string | null;
   documentCount: number;
   lastError: string | null;
+  metadata: Record<string, unknown>;
   updatedAt: string;
 }
 
@@ -307,6 +308,25 @@ function formatTimestamp(value: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unknown";
   return date.toLocaleString();
+}
+
+function formatContextSourceType(type: ContextSource["type"]): string {
+  if (type === "github_repository") return "GitHub";
+  return "Manual";
+}
+
+function formatContextSourceDetail(source: ContextSource): string {
+  if (source.type === "github_repository") {
+    const github = typeof source.metadata.github === "object" && source.metadata.github !== null && !Array.isArray(source.metadata.github)
+      ? source.metadata.github as Record<string, unknown>
+      : {};
+    const owner = typeof github.owner === "string" ? github.owner : "";
+    const repo = typeof github.repo === "string" ? github.repo : "";
+    const branch = typeof github.branch === "string" ? github.branch : "main";
+    const path = typeof github.path === "string" && github.path ? `/${github.path}` : "";
+    if (owner && repo) return `${owner}/${repo}@${branch}${path}`;
+  }
+  return source.sourceUri || source.externalId || source.id;
 }
 
 function metricTone(value: number): string {
@@ -1019,11 +1039,11 @@ export function ContextOptimizerPanel() {
                       <td className="px-4 py-3">
                         <div className="font-medium text-zinc-200">{source.name}</div>
                         <div className="mt-1 max-w-xl truncate text-xs text-zinc-500">
-                          {source.sourceUri || source.externalId || source.id}
+                          {formatContextSourceDetail(source)}
                         </div>
                         {source.lastError && <div className="mt-1 text-xs text-red-300">{source.lastError}</div>}
                       </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{source.type}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatContextSourceType(source.type)}</td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span className={`rounded border px-2 py-0.5 text-xs capitalize ${
                           source.syncStatus === "synced"

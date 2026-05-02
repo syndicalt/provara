@@ -22,9 +22,28 @@ const MAX_METADATA_CHARS = 20_000;
 const MAX_REVIEW_NOTE_CHARS = 2_000;
 const MAX_BULK_CANONICAL_BLOCK_IDS = 100;
 const MAX_INGEST_TEXT_CHARS = 500_000;
+const MAX_GITHUB_OWNER_CHARS = 100;
+const MAX_GITHUB_REPO_CHARS = 100;
+const MAX_GITHUB_BRANCH_CHARS = 200;
+const MAX_GITHUB_PATH_CHARS = 1_000;
+const MAX_GITHUB_EXTENSION_CHARS = 24;
+const MAX_GITHUB_FILE_BYTES = 250_000;
+const MAX_GITHUB_FILES = 100;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
 const BLOCK_INSERT_BATCH_SIZE = 50;
+
+type ContextSourceType = "manual" | "github_repository";
+
+export interface GitHubSourceConfig {
+  owner: string;
+  repo: string;
+  branch: string;
+  path?: string;
+  extensions: string[];
+  maxFileBytes: number;
+  maxFiles: number;
+}
 
 export interface ContextCollection {
   id: string;
@@ -102,7 +121,7 @@ export interface ContextSource {
   tenantId: string | null;
   collectionId: string;
   name: string;
-  type: "manual";
+  type: ContextSourceType;
   externalId: string | null;
   sourceUri: string | null;
   contentHash: string;
@@ -140,16 +159,39 @@ export interface IngestContextDocumentInput {
 
 export interface CreateContextSourceInput {
   name: string;
-  type: "manual";
+  type: ContextSourceType;
   externalId?: string;
   sourceUri?: string;
-  content: string;
+  content?: string;
   metadata?: Record<string, unknown>;
+  github?: GitHubSourceConfig;
 }
 
 export interface ValidationResult<T> {
   value?: T;
   error?: string;
+}
+
+interface GitHubTreeItem {
+  path: string;
+  type: string;
+  sha: string;
+  size?: number;
+}
+
+interface GitHubFileCandidate {
+  path: string;
+  sha: string;
+  size: number;
+}
+
+interface GitHubSyncFile extends GitHubFileCandidate {
+  content: string;
+}
+
+export interface ContextSourceSyncOptions {
+  fetch?: typeof fetch;
+  githubToken?: string;
 }
 
 function hashContent(content: string): string {
@@ -164,6 +206,36 @@ function parseMetadata(value: string | null): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function normalizeGithubExtension(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return "";
+  return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+function parseGithubConfig(metadata: Record<string, unknown>): GitHubSourceConfig {
+  const github = metadata.github;
+  if (typeof github !== "object" || github === null || Array.isArray(github)) {
+    throw new Error("github source config is required");
+  }
+  const raw = github as Record<string, unknown>;
+  const owner = typeof raw.owner === "string" ? raw.owner : "";
+  const repo = typeof raw.repo === "string" ? raw.repo : "";
+  const branch = typeof raw.branch === "string" ? raw.branch : "main";
+  const path = typeof raw.path === "string" && raw.path.trim() ? raw.path.trim().replace(/^\/+|\/+$/g, "") : undefined;
+  const extensions = Array.isArray(raw.extensions)
+    ? raw.extensions.filter((value): value is string => typeof value === "string").map(normalizeGithubExtension).filter(Boolean)
+    : [".md", ".mdx", ".txt", ".rst", ".adoc"];
+  const maxFileBytes = typeof raw.maxFileBytes === "number" && Number.isFinite(raw.maxFileBytes)
+    ? Math.min(Math.max(Math.trunc(raw.maxFileBytes), 1), MAX_GITHUB_FILE_BYTES)
+    : MAX_GITHUB_FILE_BYTES;
+  const maxFiles = typeof raw.maxFiles === "number" && Number.isFinite(raw.maxFiles)
+    ? Math.min(Math.max(Math.trunc(raw.maxFiles), 1), MAX_GITHUB_FILES)
+    : MAX_GITHUB_FILES;
+
+  if (!owner || !repo || !branch) throw new Error("github owner, repo, and branch are required");
+  return { owner, repo, branch, path, extensions, maxFileBytes, maxFiles };
 }
 
 function collectionFromRow(row: typeof contextCollections.$inferSelect): ContextCollection {
@@ -409,13 +481,17 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
   const name = trimOptional(body.name, "name", MAX_DOCUMENT_TITLE_CHARS);
   if (name.error) return { error: name.error };
   if (!name.value) return { error: "name is required" };
-  if (body.type !== undefined && body.type !== "manual") return { error: "type must be manual" };
+  const type = body.type === undefined ? "manual" : body.type;
+  if (type !== "manual" && type !== "github_repository") return { error: "type must be manual or github_repository" };
   const externalId = trimOptional(body.externalId, "externalId", MAX_SOURCE_URI_CHARS);
   if (externalId.error) return { error: externalId.error };
   const sourceUri = trimOptional(body.sourceUri, "sourceUri", MAX_SOURCE_URI_CHARS);
   if (sourceUri.error) return { error: sourceUri.error };
-  if (typeof body.content !== "string") return { error: "content is required" };
-  if (body.content.length > MAX_INGEST_TEXT_CHARS) return { error: `content must be at most ${MAX_INGEST_TEXT_CHARS} characters` };
+  if (type === "manual" && typeof body.content !== "string") return { error: "content is required" };
+  if (body.content !== undefined && typeof body.content !== "string") return { error: "content must be a string" };
+  if (typeof body.content === "string" && body.content.length > MAX_INGEST_TEXT_CHARS) {
+    return { error: `content must be at most ${MAX_INGEST_TEXT_CHARS} characters` };
+  }
 
   let metadata: Record<string, unknown> | undefined;
   if (body.metadata !== undefined) {
@@ -427,14 +503,70 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
     metadata = body.metadata as Record<string, unknown>;
   }
 
+  let github: GitHubSourceConfig | undefined;
+  if (type === "github_repository") {
+    if (typeof body.github !== "object" || body.github === null || Array.isArray(body.github)) {
+      return { error: "github config is required" };
+    }
+    const raw = body.github as Record<string, unknown>;
+    const owner = trimOptional(raw.owner, "github.owner", MAX_GITHUB_OWNER_CHARS);
+    if (owner.error) return { error: owner.error };
+    if (!owner.value) return { error: "github.owner is required" };
+    const repo = trimOptional(raw.repo, "github.repo", MAX_GITHUB_REPO_CHARS);
+    if (repo.error) return { error: repo.error };
+    if (!repo.value) return { error: "github.repo is required" };
+    const branch = trimOptional(raw.branch, "github.branch", MAX_GITHUB_BRANCH_CHARS);
+    if (branch.error) return { error: branch.error };
+    const path = trimOptional(raw.path, "github.path", MAX_GITHUB_PATH_CHARS);
+    if (path.error) return { error: path.error };
+
+    let extensions = [".md", ".mdx", ".txt", ".rst", ".adoc"];
+    if (raw.extensions !== undefined) {
+      if (!Array.isArray(raw.extensions)) return { error: "github.extensions must be an array" };
+      if (raw.extensions.length === 0 || raw.extensions.length > 20) return { error: "github.extensions must contain 1 to 20 entries" };
+      extensions = [];
+      for (const [index, entry] of raw.extensions.entries()) {
+        if (typeof entry !== "string") return { error: `github.extensions[${index}] must be a string` };
+        const normalized = normalizeGithubExtension(entry);
+        if (!normalized) return { error: `github.extensions[${index}] is required` };
+        if (normalized.length > MAX_GITHUB_EXTENSION_CHARS) {
+          return { error: `github.extensions[${index}] must be at most ${MAX_GITHUB_EXTENSION_CHARS} characters` };
+        }
+        if (!extensions.includes(normalized)) extensions.push(normalized);
+      }
+    }
+
+    const maxFileBytes = raw.maxFileBytes === undefined ? MAX_GITHUB_FILE_BYTES : raw.maxFileBytes;
+    if (typeof maxFileBytes !== "number" || !Number.isFinite(maxFileBytes)) return { error: "github.maxFileBytes must be a number" };
+    if (maxFileBytes < 1 || maxFileBytes > MAX_GITHUB_FILE_BYTES) {
+      return { error: `github.maxFileBytes must be between 1 and ${MAX_GITHUB_FILE_BYTES}` };
+    }
+    const maxFiles = raw.maxFiles === undefined ? MAX_GITHUB_FILES : raw.maxFiles;
+    if (typeof maxFiles !== "number" || !Number.isFinite(maxFiles)) return { error: "github.maxFiles must be a number" };
+    if (maxFiles < 1 || maxFiles > MAX_GITHUB_FILES) {
+      return { error: `github.maxFiles must be between 1 and ${MAX_GITHUB_FILES}` };
+    }
+
+    github = {
+      owner: owner.value,
+      repo: repo.value,
+      branch: branch.value ?? "main",
+      path: path.value?.replace(/^\/+|\/+$/g, ""),
+      extensions,
+      maxFileBytes: Math.trunc(maxFileBytes),
+      maxFiles: Math.trunc(maxFiles),
+    };
+  }
+
   return {
     value: {
       name: name.value,
-      type: "manual",
+      type,
       externalId: externalId.value,
       sourceUri: sourceUri.value,
-      content: body.content,
+      content: typeof body.content === "string" ? body.content : undefined,
       metadata,
+      github,
     },
   };
 }
@@ -574,19 +706,27 @@ export async function createContextSource(
 
   const now = new Date();
   const id = nanoid();
+  const metadata = input.github
+    ? { ...(input.metadata ?? {}), github: input.github, githubSyncedFiles: {} }
+    : input.metadata ?? {};
+  const sourceUri = input.sourceUri
+    ?? (input.github ? `https://github.com/${input.github.owner}/${input.github.repo}/tree/${encodeURIComponent(input.github.branch)}` : null);
+  const externalId = input.externalId
+    ?? (input.github ? `github:${input.github.owner}/${input.github.repo}:${input.github.branch}:${input.github.path ?? ""}` : id);
+  const content = input.content ?? "";
   await db.insert(contextSources).values({
     id,
     tenantId,
     collectionId,
     name: input.name,
     type: input.type,
-    externalId: input.externalId ?? id,
-    sourceUri: input.sourceUri ?? null,
-    content: input.content,
-    contentHash: hashContent(input.content),
+    externalId,
+    sourceUri,
+    content,
+    contentHash: hashContent(input.github ? JSON.stringify(input.github) : content),
     syncStatus: "pending",
     documentCount: 0,
-    metadata: JSON.stringify(input.metadata ?? {}),
+    metadata: JSON.stringify(metadata),
     createdAt: now,
     updatedAt: now,
   }).run();
@@ -698,16 +838,219 @@ export async function ingestContextDocument(
   };
 }
 
+function githubHeaders(token?: string): HeadersInit {
+  return {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "provara-context-connector",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+}
+
+function githubApiUrl(path: string): string {
+  return `https://api.github.com${path}`;
+}
+
+function shouldIngestGithubFile(item: GitHubTreeItem, config: GitHubSourceConfig): boolean {
+  if (item.type !== "blob") return false;
+  if (typeof item.size === "number" && item.size > config.maxFileBytes) return false;
+  if (config.path && item.path !== config.path && !item.path.startsWith(`${config.path}/`)) return false;
+  const lowerPath = item.path.toLowerCase();
+  return config.extensions.some((extension) => lowerPath.endsWith(extension));
+}
+
+async function fetchGithubJson(fetchFn: typeof fetch, url: string, token?: string): Promise<unknown> {
+  const response = await fetchFn(url, { headers: githubHeaders(token) });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    const detail = text ? `: ${text.slice(0, 200)}` : "";
+    throw new Error(`GitHub request failed (${response.status})${detail}`);
+  }
+  return response.json() as Promise<unknown>;
+}
+
+async function fetchGithubCandidates(
+  fetchFn: typeof fetch,
+  config: GitHubSourceConfig,
+  token?: string,
+): Promise<GitHubFileCandidate[]> {
+  const treeUrl = githubApiUrl(`/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/trees/${encodeURIComponent(config.branch)}?recursive=1`);
+  const payload = await fetchGithubJson(fetchFn, treeUrl, token);
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("GitHub tree response is invalid");
+  const tree = (payload as { tree?: unknown }).tree;
+  if (!Array.isArray(tree)) throw new Error("GitHub tree response is missing files");
+  return tree
+    .filter((item): item is GitHubTreeItem => (
+      typeof item === "object"
+      && item !== null
+      && !Array.isArray(item)
+      && typeof (item as GitHubTreeItem).path === "string"
+      && typeof (item as GitHubTreeItem).type === "string"
+      && typeof (item as GitHubTreeItem).sha === "string"
+    ))
+    .filter((item) => shouldIngestGithubFile(item, config))
+    .sort((left, right) => left.path.localeCompare(right.path))
+    .slice(0, config.maxFiles)
+    .map((item) => ({ path: item.path, sha: item.sha, size: typeof item.size === "number" ? item.size : 0 }));
+}
+
+async function fetchGithubFile(
+  fetchFn: typeof fetch,
+  config: GitHubSourceConfig,
+  candidate: GitHubFileCandidate,
+  token?: string,
+): Promise<GitHubSyncFile> {
+  const blobUrl = githubApiUrl(`/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.repo)}/git/blobs/${encodeURIComponent(candidate.sha)}`);
+  const payload = await fetchGithubJson(fetchFn, blobUrl, token);
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error(`GitHub blob response is invalid for ${candidate.path}`);
+  const blob = payload as { content?: unknown; encoding?: unknown; size?: unknown };
+  if (blob.encoding !== "base64" || typeof blob.content !== "string") {
+    throw new Error(`GitHub blob response is unsupported for ${candidate.path}`);
+  }
+  const size = typeof blob.size === "number" ? blob.size : candidate.size;
+  if (size > config.maxFileBytes) throw new Error(`GitHub file exceeds maxFileBytes: ${candidate.path}`);
+  const content = Buffer.from(blob.content.replace(/\s/g, ""), "base64").toString("utf8");
+  if (content.trim().length === 0) throw new Error(`GitHub file is empty: ${candidate.path}`);
+  return { ...candidate, size, content };
+}
+
+function getSyncedGithubFiles(metadata: Record<string, unknown>): Record<string, string> {
+  const files = metadata.githubSyncedFiles;
+  if (typeof files !== "object" || files === null || Array.isArray(files)) return {};
+  const result: Record<string, string> = {};
+  for (const [path, sha] of Object.entries(files)) {
+    if (typeof sha === "string") result[path] = sha;
+  }
+  return result;
+}
+
+async function syncGithubContextSource(
+  db: Db,
+  tenantId: string | null,
+  sourceRow: typeof contextSources.$inferSelect,
+  collection: typeof contextCollections.$inferSelect,
+  options: ContextSourceSyncOptions,
+): Promise<{ source: ContextSource; collection: ContextCollection; document: ContextDocument | null; blocks: ContextBlock[]; synced: boolean }> {
+  const fetchFn = options.fetch ?? globalThis.fetch;
+  if (!fetchFn) throw new Error("fetch is unavailable");
+  const metadata = parseMetadata(sourceRow.metadata);
+  const config = parseGithubConfig(metadata);
+  const syncedFiles = getSyncedGithubFiles(metadata);
+  const candidates = await fetchGithubCandidates(fetchFn, config, options.githubToken);
+  const changedCandidates = candidates.filter((candidate) => syncedFiles[candidate.path] !== candidate.sha);
+  const now = new Date();
+
+  if (changedCandidates.length === 0 && sourceRow.syncStatus === "synced") {
+    await db.update(contextSources).set({
+      lastSyncedAt: now,
+      lastError: null,
+      updatedAt: now,
+      metadata: JSON.stringify({
+        ...metadata,
+        githubLastSync: {
+          checkedAt: now.toISOString(),
+          matchedFiles: candidates.length,
+          changedFiles: 0,
+        },
+      }),
+    }).where(eq(contextSources.id, sourceRow.id)).run();
+    const unchangedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceRow.id)).get();
+    return {
+      source: sourceFromRow(unchangedSource ?? sourceRow),
+      collection: collectionFromRow(collection),
+      document: null,
+      blocks: [],
+      synced: false,
+    };
+  }
+
+  const allBlocks: ContextBlock[] = [];
+  let lastDocument: ContextDocument | null = null;
+  let latestCollection: ContextCollection = collectionFromRow(collection);
+  const nextSyncedFiles = { ...syncedFiles };
+
+  for (const candidate of changedCandidates) {
+    const file = await fetchGithubFile(fetchFn, config, candidate, options.githubToken);
+    const result = await ingestContextDocument(db, tenantId, sourceRow.collectionId, {
+      title: file.path,
+      text: file.content,
+      source: `source:${sourceRow.type}`,
+      sourceUri: `https://github.com/${config.owner}/${config.repo}/blob/${encodeURIComponent(config.branch)}/${file.path.split("/").map(encodeURIComponent).join("/")}`,
+      metadata: {
+        ...metadata,
+        githubSyncedFiles: undefined,
+        contextSourceId: sourceRow.id,
+        contextSourceType: sourceRow.type,
+        externalId: sourceRow.externalId,
+        githubOwner: config.owner,
+        githubRepo: config.repo,
+        githubBranch: config.branch,
+        githubPath: file.path,
+        githubSha: file.sha,
+        githubSize: file.size,
+      },
+    });
+    nextSyncedFiles[file.path] = file.sha;
+    latestCollection = result.collection;
+    lastDocument = result.document;
+    allBlocks.push(...result.blocks);
+  }
+
+  await db.update(contextSources).set({
+    syncStatus: "synced",
+    lastSyncedAt: now,
+    lastDocumentId: lastDocument?.id ?? sourceRow.lastDocumentId,
+    documentCount: sourceRow.documentCount + changedCandidates.length,
+    lastError: null,
+    contentHash: hashContent(candidates.map((candidate) => `${candidate.path}:${candidate.sha}`).join("\n")),
+    metadata: JSON.stringify({
+      ...metadata,
+      githubSyncedFiles: nextSyncedFiles,
+      githubLastSync: {
+        checkedAt: now.toISOString(),
+        matchedFiles: candidates.length,
+        changedFiles: changedCandidates.length,
+      },
+    }),
+    updatedAt: now,
+  }).where(eq(contextSources.id, sourceRow.id)).run();
+
+  const syncedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceRow.id)).get();
+  if (!syncedSource) throw new Error("Failed to sync context source");
+  return {
+    source: sourceFromRow(syncedSource),
+    collection: latestCollection,
+    document: lastDocument,
+    blocks: allBlocks,
+    synced: changedCandidates.length > 0,
+  };
+}
+
 export async function syncContextSource(
   db: Db,
   tenantId: string | null,
   sourceId: string,
+  options: ContextSourceSyncOptions = {},
 ): Promise<{ source: ContextSource; collection: ContextCollection; document: ContextDocument | null; blocks: ContextBlock[]; synced: boolean }> {
   const sourceRow = await db.select().from(contextSources).where(eq(contextSources.id, sourceId)).get();
   if (!sourceRow) throw new Error("source not found");
   const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, sourceRow.collectionId));
   const collection = await db.select().from(contextCollections).where(collectionWhere).get();
   if (!collection) throw new Error("source not found");
+
+  if (sourceRow.type === "github_repository") {
+    const now = new Date();
+    try {
+      return await syncGithubContextSource(db, tenantId, sourceRow, collection, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sync context source";
+      await db.update(contextSources).set({
+        syncStatus: "failed",
+        lastError: message,
+        updatedAt: now,
+      }).where(eq(contextSources.id, sourceId)).run();
+      throw new Error(message);
+    }
+  }
 
   if (sourceRow.syncStatus === "synced" && sourceRow.lastDocumentId && sourceRow.documentCount > 0) {
     const document = await db.select().from(contextDocuments).where(eq(contextDocuments.id, sourceRow.lastDocumentId)).get();

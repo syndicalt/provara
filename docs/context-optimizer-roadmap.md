@@ -36,9 +36,10 @@ Implemented as of `0.2.0`:
 - Bulk canonical policy-check and review actions with dashboard row selection and per-block failures.
 - Context governance alerts for policy-check failures, stale draft queues, and approved-export delta thresholds.
 - Connector ingestion foundation with tenant-scoped manual sources, idempotent sync, failed-sync status, and dashboard source visibility.
+- GitHub repository connector v1 with bounded tree/blob ingestion, SHA-based idempotency, and dashboard source details.
 
 Next planned layer:
-- Specific external connector implementations.
+- Additional external connector implementations.
 
 ## V1: Runtime Context Optimizer
 
@@ -128,9 +129,12 @@ Foundation shipped:
 - Idempotent source sync into managed context documents and blocks.
 - Failed-sync status and error persistence.
 - Dashboard source and sync-status visibility.
+- GitHub repository source creation and listing.
+- Bounded GitHub file selection by path, extension, file size, and file count.
+- GitHub blob SHA idempotency for incremental sync.
+- GitHub repo/path/SHA provenance on stored documents and blocks.
 
 Candidate connectors:
-- GitHub repositories.
 - Confluence.
 - Google Drive.
 - SharePoint.
