@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import {
   contextBlocks,
+  contextCanonicalBlocks,
   contextCollections,
   contextDocuments,
   contextOptimizationEvents,
@@ -1703,5 +1704,151 @@ describe("managed context collections", () => {
     expect(ingestRes.status).toBe(404);
     expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
     expect(await db.select().from(contextBlocks).all()).toHaveLength(0);
+  });
+
+  it("distills duplicate stored blocks into canonical draft blocks", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Canonical KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const collectionId = collectionBody.collection.id;
+
+    for (const title of ["Refunds A", "Refunds B"]) {
+      const ingestRes = await app.request(`/v1/context/collections/${collectionId}/documents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+        body: JSON.stringify({
+          title,
+          text: "Refunds require a receipt and must be requested within 30 days.",
+          source: "help-center",
+        }),
+      });
+      expect(ingestRes.status).toBe(201);
+    }
+
+    const distillRes = await app.request(`/v1/context/collections/${collectionId}/distill`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(distillRes.status).toBe(200);
+    const distillBody = await distillRes.json() as {
+      collection: { canonicalBlockCount: number; approvedBlockCount: number };
+      canonicalBlocks: Array<{ id: string; reviewStatus: string; sourceBlockIds: string[]; sourceCount: number }>;
+      createdBlocks: number;
+      mergedSources: number;
+    };
+    expect(distillBody.createdBlocks).toBe(1);
+    expect(distillBody.mergedSources).toBe(1);
+    expect(distillBody.collection).toMatchObject({ canonicalBlockCount: 1, approvedBlockCount: 0 });
+    expect(distillBody.canonicalBlocks).toHaveLength(1);
+    expect(distillBody.canonicalBlocks[0]).toMatchObject({
+      reviewStatus: "draft",
+      sourceCount: 2,
+    });
+    expect(distillBody.canonicalBlocks[0].sourceBlockIds).toHaveLength(2);
+    expect(await db.select().from(contextCanonicalBlocks).all()).toHaveLength(1);
+  });
+
+  it("reviews canonical blocks and exports only approved knowledge", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Export KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const collectionId = collectionBody.collection.id;
+    await app.request(`/v1/context/collections/${collectionId}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        title: "Two facts",
+        text: "Refunds require a receipt.\n\nBilling admins can download invoices.",
+      }),
+    });
+    const distillRes = await app.request(`/v1/context/collections/${collectionId}/distill`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    const distillBody = await distillRes.json() as {
+      canonicalBlocks: Array<{ id: string; content: string; reviewStatus: string }>;
+    };
+    expect(distillBody.canonicalBlocks.length).toBeGreaterThan(0);
+
+    const approvedId = distillBody.canonicalBlocks[0].id;
+    const reviewRes = await app.request(`/v1/context/canonical-blocks/${approvedId}/review`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ reviewStatus: "approved" }),
+    });
+    expect(reviewRes.status).toBe(200);
+    const reviewBody = await reviewRes.json() as { canonicalBlock: { reviewStatus: string } };
+    expect(reviewBody.canonicalBlock.reviewStatus).toBe("approved");
+
+    const exportRes = await app.request(`/v1/context/collections/${collectionId}/export`, {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(exportRes.status).toBe(200);
+    const exportBody = await exportRes.json() as {
+      format: string;
+      reviewStatus: string;
+      blocks: Array<{ id: string; content: string; sourceBlockIds: string[] }>;
+    };
+    expect(exportBody).toMatchObject({ format: "jsonl", reviewStatus: "approved" });
+    expect(exportBody.blocks).toEqual([
+      expect.objectContaining({ id: approvedId, content: expect.any(String), sourceBlockIds: expect.any(Array) }),
+    ]);
+
+    const collectionsRes = await app.request("/v1/context/collections", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    const collectionsBody = await collectionsRes.json() as {
+      collections: Array<{ name: string; canonicalBlockCount: number; approvedBlockCount: number }>;
+    };
+    expect(collectionsBody.collections[0]).toMatchObject({
+      name: "Export KB",
+      canonicalBlockCount: distillBody.canonicalBlocks.length,
+      approvedBlockCount: 1,
+    });
+  });
+
+  it("does not review or export another tenant's canonical blocks", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Tenant Canonical" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const collectionId = collectionBody.collection.id;
+    await app.request(`/v1/context/collections/${collectionId}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ text: "Private approved knowledge." }),
+    });
+    const distillRes = await app.request(`/v1/context/collections/${collectionId}/distill`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    const distillBody = await distillRes.json() as { canonicalBlocks: Array<{ id: string }> };
+
+    const reviewRes = await app.request(`/v1/context/canonical-blocks/${distillBody.canonicalBlocks[0].id}/review`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({ reviewStatus: "approved" }),
+    });
+    expect(reviewRes.status).toBe(404);
+
+    const exportRes = await app.request(`/v1/context/collections/${collectionId}/export`, {
+      headers: { "x-test-tenant": "tenant-other" },
+    });
+    expect(exportRes.status).toBe(404);
   });
 });

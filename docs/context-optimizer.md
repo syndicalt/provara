@@ -21,6 +21,7 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
+- Canonical context block distillation with review status and approved-only export.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
@@ -111,9 +112,15 @@ Managed collection APIs:
 GET /v1/context/collections
 POST /v1/context/collections
 POST /v1/context/collections/{id}/documents
+POST /v1/context/collections/{id}/distill
+GET /v1/context/collections/{id}/canonical-blocks
+PATCH /v1/context/canonical-blocks/{id}/review
+GET /v1/context/collections/{id}/export
 ```
 
-Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters. This is the V2 foundation for review queues, connectors, canonical knowledge blocks, and vector export.
+Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters.
+
+Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
 Quality evaluation is available through:
 
@@ -154,7 +161,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, block count, estimated token count, status, and last update time. Creation and ingestion are available through the API in this release; richer collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. Creation, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -193,8 +200,8 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is persistent knowledge distillation:
+The next behavior layer is governance:
 
-- Canonical block generation and deduplication across documents.
-- Human review and approval states for managed blocks.
-- Approved-only export controls for retrieval systems.
+- Human review queue ergonomics.
+- Audit logs for review decisions.
+- PII and prompt-injection checks before approval.

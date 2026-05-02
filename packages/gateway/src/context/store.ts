@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@provara/db";
-import { contextBlocks, contextCollections, contextDocuments } from "@provara/db";
-import { and, desc, eq } from "drizzle-orm";
+import { contextBlocks, contextCanonicalBlocks, contextCollections, contextDocuments } from "@provara/db";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { tenantFilter, tenantScoped } from "../auth/tenant.js";
 import { estimateContextTokens } from "./optimizer.js";
@@ -25,7 +25,25 @@ export interface ContextCollection {
   status: "active" | "archived";
   documentCount: number;
   blockCount: number;
+  canonicalBlockCount: number;
+  approvedBlockCount: number;
   tokenCount: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface ContextCanonicalBlock {
+  id: string;
+  tenantId: string | null;
+  collectionId: string;
+  content: string;
+  contentHash: string;
+  tokenCount: number;
+  sourceBlockIds: string[];
+  sourceDocumentIds: string[];
+  sourceCount: number;
+  reviewStatus: "draft" | "approved" | "rejected";
+  metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -94,10 +112,66 @@ function collectionFromRow(row: typeof contextCollections.$inferSelect): Context
     status: row.status,
     documentCount: row.documentCount,
     blockCount: row.blockCount,
+    canonicalBlockCount: row.canonicalBlockCount,
+    approvedBlockCount: row.approvedBlockCount,
     tokenCount: row.tokenCount,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function parseStringArray(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function canonicalBlockFromRow(row: typeof contextCanonicalBlocks.$inferSelect): ContextCanonicalBlock {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    collectionId: row.collectionId,
+    content: row.content,
+    contentHash: row.contentHash,
+    tokenCount: row.tokenCount,
+    sourceBlockIds: parseStringArray(row.sourceBlockIds),
+    sourceDocumentIds: parseStringArray(row.sourceDocumentIds),
+    sourceCount: row.sourceCount,
+    reviewStatus: row.reviewStatus,
+    metadata: parseMetadata(row.metadata),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function normalizeCanonicalContent(content: string): string {
+  return content
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function refreshCollectionCanonicalCounts(db: Db, collectionId: string, updatedAt = new Date()): Promise<void> {
+  const row = await db
+    .select({
+      canonicalBlockCount: sql<number>`count(*)`,
+      approvedBlockCount: sql<number>`coalesce(sum(case when ${contextCanonicalBlocks.reviewStatus} = 'approved' then 1 else 0 end), 0)`,
+    })
+    .from(contextCanonicalBlocks)
+    .where(eq(contextCanonicalBlocks.collectionId, collectionId))
+    .get();
+
+  await db.update(contextCollections).set({
+    canonicalBlockCount: row?.canonicalBlockCount ?? 0,
+    approvedBlockCount: row?.approvedBlockCount ?? 0,
+    updatedAt,
+  }).where(eq(contextCollections.id, collectionId)).run();
 }
 
 function documentFromRow(row: typeof contextDocuments.$inferSelect): ContextDocument {
@@ -190,6 +264,17 @@ export function validateIngestDocumentBody(value: unknown): ValidationResult<Ing
       metadata,
     },
   };
+}
+
+export function validateReviewStatusBody(value: unknown): ValidationResult<{ reviewStatus: ContextCanonicalBlock["reviewStatus"] }> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { error: "body must be an object" };
+  }
+  const reviewStatus = (value as Record<string, unknown>).reviewStatus;
+  if (reviewStatus !== "draft" && reviewStatus !== "approved" && reviewStatus !== "rejected") {
+    return { error: "reviewStatus must be draft, approved, or rejected" };
+  }
+  return { value: { reviewStatus } };
 }
 
 export function chunkContextText(text: string): string[] {
@@ -329,4 +414,147 @@ export async function ingestContextDocument(
     document: documentFromRow(document),
     blocks: blocks.map(blockFromRow),
   };
+}
+
+export async function distillContextCollection(
+  db: Db,
+  tenantId: string | null,
+  collectionId: string,
+): Promise<{ collection: ContextCollection; canonicalBlocks: ContextCanonicalBlock[]; createdBlocks: number; mergedSources: number }> {
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, collectionId));
+  const collection = await db.select().from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("collection not found");
+
+  const storedBlocks = await db
+    .select()
+    .from(contextBlocks)
+    .where(tenantScoped(contextBlocks.tenantId, tenantId, eq(contextBlocks.collectionId, collectionId)))
+    .orderBy(asc(contextBlocks.documentId), asc(contextBlocks.ordinal))
+    .all();
+  if (storedBlocks.length === 0) throw new Error("collection has no stored blocks");
+
+  const groups = new Map<string, { content: string; blockIds: string[]; documentIds: string[]; tokenCount: number }>();
+  for (const block of storedBlocks) {
+    const content = normalizeCanonicalContent(block.content);
+    if (!content) continue;
+    const contentHash = hashContent(content.toLowerCase());
+    const group = groups.get(contentHash);
+    if (group) {
+      group.blockIds.push(block.id);
+      if (!group.documentIds.includes(block.documentId)) group.documentIds.push(block.documentId);
+      continue;
+    }
+    groups.set(contentHash, {
+      content,
+      blockIds: [block.id],
+      documentIds: [block.documentId],
+      tokenCount: estimateContextTokens(content),
+    });
+  }
+
+  const now = new Date();
+  let createdBlocks = 0;
+  let mergedSources = 0;
+  for (const [contentHash, group] of groups) {
+    const existing = await db
+      .select()
+      .from(contextCanonicalBlocks)
+      .where(and(eq(contextCanonicalBlocks.collectionId, collectionId), eq(contextCanonicalBlocks.contentHash, contentHash)))
+      .get();
+    if (existing) {
+      const sourceBlockIds = [...new Set([...parseStringArray(existing.sourceBlockIds), ...group.blockIds])];
+      const sourceDocumentIds = [...new Set([...parseStringArray(existing.sourceDocumentIds), ...group.documentIds])];
+      await db.update(contextCanonicalBlocks).set({
+        sourceBlockIds: JSON.stringify(sourceBlockIds),
+        sourceDocumentIds: JSON.stringify(sourceDocumentIds),
+        sourceCount: sourceBlockIds.length,
+        updatedAt: now,
+      }).where(eq(contextCanonicalBlocks.id, existing.id)).run();
+      mergedSources += Math.max(0, sourceBlockIds.length - existing.sourceCount);
+      continue;
+    }
+
+    await db.insert(contextCanonicalBlocks).values({
+      id: nanoid(),
+      tenantId,
+      collectionId,
+      content: group.content,
+      contentHash,
+      tokenCount: group.tokenCount,
+      sourceBlockIds: JSON.stringify(group.blockIds),
+      sourceDocumentIds: JSON.stringify(group.documentIds),
+      sourceCount: group.blockIds.length,
+      reviewStatus: "draft",
+      metadata: JSON.stringify({ distillation: "deterministic-v1" }),
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    createdBlocks += 1;
+    mergedSources += Math.max(0, group.blockIds.length - 1);
+  }
+
+  await refreshCollectionCanonicalCounts(db, collectionId, now);
+  const updatedCollection = await db.select().from(contextCollections).where(eq(contextCollections.id, collectionId)).get();
+  const canonicalBlocks = await listContextCanonicalBlocks(db, tenantId, collectionId);
+  if (!updatedCollection) throw new Error("Failed to distill context collection");
+  return {
+    collection: collectionFromRow(updatedCollection),
+    canonicalBlocks,
+    createdBlocks,
+    mergedSources,
+  };
+}
+
+export async function listContextCanonicalBlocks(
+  db: Db,
+  tenantId: string | null,
+  collectionId: string,
+  options: { reviewStatus?: ContextCanonicalBlock["reviewStatus"] } = {},
+): Promise<ContextCanonicalBlock[]> {
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, collectionId));
+  const collection = await db.select({ id: contextCollections.id }).from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("collection not found");
+  const conditions = [eq(contextCanonicalBlocks.collectionId, collectionId)];
+  if (tenantId) conditions.push(eq(contextCanonicalBlocks.tenantId, tenantId));
+  if (options.reviewStatus) conditions.push(eq(contextCanonicalBlocks.reviewStatus, options.reviewStatus));
+
+  const rows = await db
+    .select()
+    .from(contextCanonicalBlocks)
+    .where(and(...conditions))
+    .orderBy(asc(contextCanonicalBlocks.createdAt), asc(contextCanonicalBlocks.id))
+    .all();
+  return rows.map(canonicalBlockFromRow);
+}
+
+export async function updateContextCanonicalBlockReview(
+  db: Db,
+  tenantId: string | null,
+  blockId: string,
+  reviewStatus: ContextCanonicalBlock["reviewStatus"],
+): Promise<ContextCanonicalBlock> {
+  const existing = await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.id, blockId)).get();
+  if (!existing) throw new Error("canonical block not found");
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, existing.collectionId));
+  const collection = await db.select({ id: contextCollections.id }).from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("canonical block not found");
+
+  const now = new Date();
+  await db.update(contextCanonicalBlocks).set({
+    reviewStatus,
+    updatedAt: now,
+  }).where(eq(contextCanonicalBlocks.id, blockId)).run();
+  await refreshCollectionCanonicalCounts(db, existing.collectionId, now);
+
+  const row = await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.id, blockId)).get();
+  if (!row) throw new Error("Failed to update canonical block review status");
+  return canonicalBlockFromRow(row);
+}
+
+export async function exportApprovedContextBlocks(
+  db: Db,
+  tenantId: string | null,
+  collectionId: string,
+): Promise<ContextCanonicalBlock[]> {
+  return listContextCanonicalBlocks(db, tenantId, collectionId, { reviewStatus: "approved" });
 }

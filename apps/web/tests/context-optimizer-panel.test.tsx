@@ -170,6 +170,8 @@ describe("ContextOptimizerPanel", () => {
               status: "active",
               documentCount: 2,
               blockCount: 8,
+              canonicalBlockCount: 5,
+              approvedBlockCount: 3,
               tokenCount: 1400,
               createdAt: "2026-05-01T20:00:00.000Z",
               updatedAt: "2026-05-01T22:00:00.000Z",
@@ -262,6 +264,8 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Managed Collections")).toBeInTheDocument();
     expect(screen.getByText("Support KB")).toBeInTheDocument();
     expect(screen.getByText("Approved support context")).toBeInTheDocument();
+    expect(screen.getByText("Canonical")).toBeInTheDocument();
+    expect(screen.getByText("Approved")).toBeInTheDocument();
   });
 
   it("updates and persists optimizer payload controls", async () => {

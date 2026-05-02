@@ -174,6 +174,8 @@ export interface ContextCollection {
   status: "active" | "archived";
   documentCount: number;
   blockCount: number;
+  canonicalBlockCount: number;
+  approvedBlockCount: number;
   tokenCount: number;
   createdAt: string;
   updatedAt: string;
@@ -767,6 +769,8 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-left font-medium">Collection</th>
                     <th className="px-4 py-3 text-right font-medium">Documents</th>
                     <th className="px-4 py-3 text-right font-medium">Blocks</th>
+                    <th className="px-4 py-3 text-right font-medium">Canonical</th>
+                    <th className="px-4 py-3 text-right font-medium">Approved</th>
                     <th className="px-4 py-3 text-right font-medium">Tokens</th>
                     <th className="px-4 py-3 text-left font-medium">Status</th>
                     <th className="px-4 py-3 text-left font-medium">Updated</th>
@@ -786,6 +790,12 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                         {formatInteger(collection.blockCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(collection.canonicalBlockCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
+                        {formatInteger(collection.approvedBlockCount)}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
                         {formatInteger(collection.tokenCount)}

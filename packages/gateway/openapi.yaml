@@ -560,6 +560,146 @@ paths:
         "404":
           description: Collection not found.
 
+  /v1/context/collections/{id}/distill:
+    post:
+      tags: [Context Optimizer]
+      summary: Distill stored context blocks into canonical blocks
+      description: Deterministically normalizes stored collection blocks, coalesces duplicates, and preserves source block provenance.
+      operationId: distillContextCollection
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Distillation result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collection, canonicalBlocks, createdBlocks, mergedSources]
+                properties:
+                  collection:
+                    $ref: "#/components/schemas/ContextCollection"
+                  canonicalBlocks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextCanonicalBlock"
+                  createdBlocks:
+                    type: integer
+                  mergedSources:
+                    type: integer
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+
+  /v1/context/collections/{id}/canonical-blocks:
+    get:
+      tags: [Context Optimizer]
+      summary: List canonical blocks for a collection
+      operationId: listContextCanonicalBlocks
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: reviewStatus
+          schema:
+            type: string
+            enum: [draft, approved, rejected]
+      responses:
+        "200":
+          description: Canonical blocks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [canonicalBlocks]
+                properties:
+                  canonicalBlocks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextCanonicalBlock"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+
+  /v1/context/canonical-blocks/{id}/review:
+    patch:
+      tags: [Context Optimizer]
+      summary: Update canonical block review status
+      operationId: reviewContextCanonicalBlock
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewContextCanonicalBlockRequest"
+      responses:
+        "200":
+          description: Updated canonical block
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [canonicalBlock]
+                properties:
+                  canonicalBlock:
+                    $ref: "#/components/schemas/ContextCanonicalBlock"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Canonical block not found.
+
+  /v1/context/collections/{id}/export:
+    get:
+      tags: [Context Optimizer]
+      summary: Export approved canonical blocks
+      operationId: exportApprovedContextBlocks
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Approved blocks ready for JSONL/vector export
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [format, reviewStatus, blocks]
+                properties:
+                  format:
+                    type: string
+                    enum: [jsonl]
+                  reviewStatus:
+                    type: string
+                    enum: [approved]
+                  blocks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextCanonicalExportBlock"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+
   /v1/context/summary:
     get:
       tags: [Context Optimizer]
@@ -2641,7 +2781,7 @@ components:
 
     ContextCollection:
       type: object
-      required: [id, tenantId, name, description, status, documentCount, blockCount, tokenCount, createdAt, updatedAt]
+      required: [id, tenantId, name, description, status, documentCount, blockCount, canonicalBlockCount, approvedBlockCount, tokenCount, createdAt, updatedAt]
       properties:
         id:
           type: string
@@ -2659,6 +2799,10 @@ components:
         documentCount:
           type: integer
         blockCount:
+          type: integer
+        canonicalBlockCount:
+          type: integer
+        approvedBlockCount:
           type: integer
         tokenCount:
           type: integer
@@ -2760,6 +2904,91 @@ components:
         createdAt:
           type: string
           format: date-time
+
+    ReviewContextCanonicalBlockRequest:
+      type: object
+      required: [reviewStatus]
+      properties:
+        reviewStatus:
+          type: string
+          enum: [draft, approved, rejected]
+
+    ContextCanonicalBlock:
+      type: object
+      required:
+        - id
+        - tenantId
+        - collectionId
+        - content
+        - contentHash
+        - tokenCount
+        - sourceBlockIds
+        - sourceDocumentIds
+        - sourceCount
+        - reviewStatus
+        - metadata
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        collectionId:
+          type: string
+        content:
+          type: string
+        contentHash:
+          type: string
+        tokenCount:
+          type: integer
+        sourceBlockIds:
+          type: array
+          items:
+            type: string
+        sourceDocumentIds:
+          type: array
+          items:
+            type: string
+        sourceCount:
+          type: integer
+        reviewStatus:
+          type: string
+          enum: [draft, approved, rejected]
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContextCanonicalExportBlock:
+      type: object
+      required: [id, content, contentHash, tokenCount, sourceBlockIds, sourceDocumentIds, metadata]
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        contentHash:
+          type: string
+        tokenCount:
+          type: integer
+        sourceBlockIds:
+          type: array
+          items:
+            type: string
+        sourceDocumentIds:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          additionalProperties: true
 
     ContextQualityEvaluateRequest:
       type: object
