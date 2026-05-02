@@ -547,7 +547,7 @@ export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
   name: text("name").notNull(),
-  metric: text("metric", { enum: ["spend", "latency_p95", "latency_avg", "error_rate", "request_count"] }).notNull(),
+  metric: text("metric", { enum: ["spend", "latency_p95", "latency_avg", "error_rate", "request_count", "context_policy_failures", "context_stale_drafts", "context_approved_export_delta"] }).notNull(),
   condition: text("condition", { enum: ["gt", "lt", "gte", "lte"] }).notNull().default("gt"),
   threshold: real("threshold").notNull(),
   window: text("window", { enum: ["1h", "6h", "24h", "7d"] }).notNull().default("1h"),

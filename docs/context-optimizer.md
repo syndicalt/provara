@@ -131,6 +131,8 @@ Before a canonical block can be approved, `POST /v1/context/canonical-blocks/{id
 
 Bulk review endpoints accept up to 100 `blockIds` and return per-block results. `POST /v1/context/canonical-blocks/bulk-policy-check` loads active Guardrails rules once, checks each selected block, and records pass/fail evidence independently. `PATCH /v1/context/canonical-blocks/bulk-review` updates selected blocks that pass validation and returns item-level `policy_error` or `not_found` failures without aborting the whole batch.
 
+Context governance alerts use the existing Alerts workflow. Provara provisions default alert rules for `context_policy_failures`, `context_stale_drafts`, and `context_approved_export_delta`. Failed single or bulk policy checks append alert history with the canonical block ID and decision. The Alerts evaluator checks for draft canonical blocks that have stayed in review past the rule window and writes standard alert history entries.
+
 Review updates accept an optional `note`, persist `reviewedAt`, and attach `reviewedByUserId` when the caller is a dashboard session user. Each status change also writes a tenant-scoped review event with from-status, to-status, note, actor, canonical block ID, collection ID, and timestamp.
 
 Quality evaluation is available through:
@@ -172,7 +174,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. Creation, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -211,8 +213,8 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is pre-approval policy checks:
+The next behavior layer is connector ingestion:
 
-- PII and prompt-injection checks before approval.
-- Block approval when required policy checks fail.
-- Add richer governance alerts for policy failures and stale review queues.
+- GitHub, Confluence, Google Drive, SharePoint, Notion, Zendesk/Intercom, and S3/file upload connectors.
+- Source provenance and sync metadata for managed collections.
+- Connector-level review and policy defaults.
