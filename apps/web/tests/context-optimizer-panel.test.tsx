@@ -41,6 +41,8 @@ describe("ContextOptimizerPanel", () => {
             rerankedChunks: 4,
             avgFreshnessScore: 0.72,
             staleChunks: 2,
+            conflictChunks: 2,
+            conflictGroups: 1,
             flaggedChunks: 1,
             quarantinedChunks: 2,
             latestAt: "2026-05-01T21:00:00.000Z",
@@ -99,10 +101,13 @@ describe("ContextOptimizerPanel", () => {
             rerankedChunks: 4,
             avgFreshnessScore: 0.72,
             staleChunks: 2,
+            conflictChunks: 2,
+            conflictGroups: 1,
             efficiencyPct: 62,
             duplicateRatePct: 20,
             nearDuplicateRatePct: 10,
             riskyRatePct: 10,
+            conflictRatePct: 20,
             latestAt: "2026-05-01T21:45:00.000Z",
           },
         }));
@@ -128,13 +133,17 @@ describe("ContextOptimizerPanel", () => {
               rerankedChunks: 2,
               avgFreshnessScore: 0.66,
               staleChunks: 1,
+              conflictChunks: 2,
+              conflictGroups: 1,
               efficiencyPct: 60,
               duplicateRatePct: 20,
               nearDuplicateRatePct: 20,
               riskyRatePct: 20,
+              conflictRatePct: 40,
               usedSourceIds: ["chunk-a", "chunk-b", "chunk-c"],
               unusedSourceIds: ["chunk-c", "chunk-risky"],
               riskySourceIds: ["chunk-risky"],
+              conflictSourceIds: ["chunk-a", "chunk-c"],
               createdAt: "2026-05-01T21:45:00.000Z",
             },
           ],
@@ -158,6 +167,20 @@ describe("ContextOptimizerPanel", () => {
             rerankedChunks: 2,
             avgFreshnessScore: 0.66,
             staleChunks: 1,
+            conflictChunks: 2,
+            conflictGroups: 1,
+            conflictSourceIds: ["chunk-a", "chunk-c"],
+            conflictDetails: [
+              {
+                id: "conflict-1",
+                kind: "numeric",
+                chunkIds: ["chunk-a", "chunk-c"],
+                sourceIds: ["chunk-a", "chunk-c"],
+                topicTokens: ["refund", "window"],
+                leftValue: "30 days",
+                rightValue: "14 days",
+              },
+            ],
             duplicateSourceIds: ["chunk-b"],
             nearDuplicateSourceIds: ["chunk-c"],
             riskScanned: true,
@@ -195,6 +218,8 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Unused Context")).toBeInTheDocument();
     expect(screen.getAllByText("Relevance").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Freshness").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Conflicts").length).toBeGreaterThan(0);
+    expect(screen.getByText("Conflict Rate")).toBeInTheDocument();
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();
     expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
   });
@@ -218,6 +243,8 @@ describe("ContextOptimizerPanel", () => {
             rerankedChunks: 0,
             avgFreshnessScore: null,
             staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
             flaggedChunks: 0,
             quarantinedChunks: 0,
             latestAt: null,
@@ -257,10 +284,13 @@ describe("ContextOptimizerPanel", () => {
             rerankedChunks: 0,
             avgFreshnessScore: null,
             staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
             efficiencyPct: 0,
             duplicateRatePct: 0,
             nearDuplicateRatePct: 0,
             riskyRatePct: 0,
+            conflictRatePct: 0,
             latestAt: null,
           },
         }));

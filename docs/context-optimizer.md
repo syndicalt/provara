@@ -10,6 +10,7 @@ The shipped V1 implementation is intentionally narrow:
 - Optional semantic near-duplicate detection with deterministic token similarity.
 - Optional lexical relevance scoring and reranking for retained chunks.
 - Optional stale-context detection from bounded freshness metadata.
+- Optional conflicting-context detection with bounded heuristic claim checks.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
 - Optional risk scanning with active Guardrails rules for retrieved context.
@@ -40,6 +41,7 @@ The request accepts already-retrieved context chunks:
   "minRelevanceScore": 0.2,
   "freshnessMode": "metadata",
   "maxContextAgeDays": 180,
+  "conflictMode": "heuristic",
   "scanRisk": true,
   "chunks": [
     {
@@ -62,19 +64,22 @@ The request accepts already-retrieved context chunks:
 
 The response includes:
 
-- `optimization.optimized`: chunks retained for model context, optionally reranked and scored for relevance/freshness.
+- `optimization.optimized`: chunks retained for model context, optionally reranked and scored for relevance/freshness/conflicts.
 - `optimization.dropped`: exact duplicate and near-duplicate chunks removed from model context.
+- `optimization.conflicts`: lightweight conflict groups found across retained chunks.
 - `optimization.flagged`: risky chunks removed from model context but marked for operator review.
 - `optimization.quarantined`: risky chunks removed from model context before provider routing.
-- `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, reduction percentage, relevance metrics, and freshness metrics.
+- `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, reduction percentage, relevance, freshness, and conflict metrics.
 - `event`: the persisted visibility record for the optimization call.
-- `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, and risky context rate.
+- `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, risky context rate, and conflict rate.
 
 `dedupeMode` defaults to `exact` for backwards compatibility. Set `dedupeMode` to `semantic` to also remove near duplicates using deterministic token overlap scoring. `semanticThreshold` defaults to `0.72` and accepts values from `0.5` to `1`.
 
 `rankMode` defaults to `none`. Set `rankMode` to `lexical` and provide `query` to score retained chunks with deterministic token matching and stable reranking. Provara caps query tokens internally, stores aggregate relevance metrics only, and does not persist the query text. `minRelevanceScore` defaults to `0.2` and controls the low-relevance chunk count.
 
 `freshnessMode` defaults to `off`. Set `freshnessMode` to `metadata` to score retained chunks from bounded freshness metadata. Provara checks common fields such as `updatedAt`, `lastModified`, `publishedAt`, and `expiresAt`, stores aggregate freshness metrics only, and does not persist the full metadata payload. `maxContextAgeDays` defaults to `180`.
+
+`conflictMode` defaults to `off`. Set `conflictMode` to `heuristic` to detect lightweight contradictions across retained chunks. The first implementation uses bounded local signals: shared metadata keys, status disagreements, and numeric claim disagreements such as different day/hour/percent/USD values on the same topic. It caps extracted signals and pair comparisons, so this stays deterministic and local; embedding or NLI-backed contradiction checks remain future paid-layer work.
 
 `scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 

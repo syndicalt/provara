@@ -18,6 +18,8 @@ export interface ContextOptimizationSummary {
   rerankedChunks: number;
   avgFreshnessScore: number | null;
   staleChunks: number;
+  conflictChunks: number;
+  conflictGroups: number;
   flaggedChunks: number;
   quarantinedChunks: number;
   latestAt: string | null;
@@ -39,6 +41,18 @@ export interface ContextOptimizationEvent {
   rerankedChunks: number;
   avgFreshnessScore: number | null;
   staleChunks: number;
+  conflictChunks: number;
+  conflictGroups: number;
+  conflictSourceIds: string[];
+  conflictDetails: Array<{
+    id: string;
+    kind: string;
+    chunkIds: [string, string];
+    sourceIds: string[];
+    topicTokens: string[];
+    leftValue: string;
+    rightValue: string;
+  }>;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
   riskScanned: boolean;
@@ -96,10 +110,13 @@ export interface ContextRetrievalSummary {
   rerankedChunks: number;
   avgFreshnessScore: number | null;
   staleChunks: number;
+  conflictChunks: number;
+  conflictGroups: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
   riskyRatePct: number;
+  conflictRatePct: number;
   latestAt: string | null;
 }
 
@@ -121,13 +138,17 @@ export interface ContextRetrievalEvent {
   rerankedChunks: number;
   avgFreshnessScore: number | null;
   staleChunks: number;
+  conflictChunks: number;
+  conflictGroups: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
   riskyRatePct: number;
+  conflictRatePct: number;
   usedSourceIds: string[];
   unusedSourceIds: string[];
   riskySourceIds: string[];
+  conflictSourceIds: string[];
   createdAt: string;
 }
 
@@ -419,7 +440,7 @@ export function ContextOptimizerPanel() {
           <h2 className="text-lg font-semibold text-zinc-100">Retrieval Analytics</h2>
           <p className="mt-1 text-sm text-zinc-500">Context usage and retrieval health.</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <StatTile
             label="Retrieval Efficiency"
             value={formatPercent(retrievalSummary?.efficiencyPct ?? 0)}
@@ -444,8 +465,14 @@ export function ContextOptimizerPanel() {
             detail={`${formatInteger(retrievalSummary?.staleChunks ?? 0)} stale chunks`}
             tone={riskTone(retrievalSummary?.staleChunks ?? 0)}
           />
+          <StatTile
+            label="Conflicts"
+            value={formatInteger(retrievalSummary?.conflictChunks ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.conflictGroups ?? 0)} conflict groups`}
+            tone={riskTone(retrievalSummary?.conflictChunks ?? 0)}
+          />
         </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
           <StatTile
             label="Duplicate Rate"
             value={formatPercent(retrievalSummary?.duplicateRatePct ?? 0)}
@@ -463,6 +490,12 @@ export function ContextOptimizerPanel() {
             value={formatPercent(retrievalSummary?.riskyRatePct ?? 0)}
             detail={`${formatInteger(retrievalSummary?.riskyChunks ?? 0)} risky chunks`}
             tone={riskTone(retrievalSummary?.riskyChunks ?? 0)}
+          />
+          <StatTile
+            label="Conflict Rate"
+            value={formatPercent(retrievalSummary?.conflictRatePct ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.conflictChunks ?? 0)} conflicting chunks`}
+            tone={riskTone(retrievalSummary?.conflictChunks ?? 0)}
           />
         </div>
       </section>
@@ -490,6 +523,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Efficiency</th>
                     <th className="px-4 py-3 text-right font-medium">Relevance</th>
                     <th className="px-4 py-3 text-right font-medium">Freshness</th>
+                    <th className="px-4 py-3 text-right font-medium">Conflicts</th>
                     <th className="px-4 py-3 text-right font-medium">Duplicates</th>
                     <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Risky</th>
@@ -517,6 +551,10 @@ export function ContextOptimizerPanel() {
                         <span className="ml-2 text-xs text-zinc-500">
                           {formatInteger(event.staleChunks)} stale
                         </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-amber-300">
+                        {formatInteger(event.conflictChunks)}
+                        <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.conflictRatePct)}</span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                         {formatInteger(event.duplicateChunks)}
@@ -676,6 +714,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Relevance</th>
                     <th className="px-4 py-3 text-right font-medium">Freshness</th>
+                    <th className="px-4 py-3 text-right font-medium">Conflicts</th>
                     <th className="px-4 py-3 text-right font-medium">Risk</th>
                     <th className="px-4 py-3 text-right font-medium">Saved</th>
                     <th className="px-4 py-3 text-left font-medium">Duplicate IDs</th>
@@ -707,6 +746,12 @@ export function ContextOptimizerPanel() {
                           {formatRelevance(event.avgFreshnessScore)}
                           <span className="ml-2 text-xs text-zinc-500">
                             {formatInteger(event.staleChunks)}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-amber-300">
+                          {formatInteger(event.conflictChunks)}
+                          <span className="ml-2 text-xs text-zinc-500">
+                            {formatInteger(event.conflictGroups)}
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">

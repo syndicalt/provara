@@ -16,6 +16,8 @@ export interface OptimizedContextChunk {
   relevanceScore?: number;
   freshnessScore?: number;
   stale?: boolean;
+  conflict?: boolean;
+  conflictGroupIds?: string[];
 }
 
 export interface DroppedContextChunk {
@@ -42,6 +44,7 @@ export interface RiskyContextChunk {
 export interface ContextOptimizationResult {
   optimized: OptimizedContextChunk[];
   dropped: DroppedContextChunk[];
+  conflicts: ContextConflict[];
   flagged: RiskyContextChunk[];
   quarantined: RiskyContextChunk[];
   metrics: {
@@ -60,6 +63,8 @@ export interface ContextOptimizationResult {
     rerankedChunks: number;
     avgFreshnessScore: number | null;
     staleChunks: number;
+    conflictChunks: number;
+    conflictGroups: number;
   };
 }
 
@@ -72,6 +77,17 @@ export interface ContextOptimizationOptions {
   freshnessMode?: "off" | "metadata";
   maxContextAgeDays?: number;
   referenceTime?: Date;
+  conflictMode?: "off" | "heuristic";
+}
+
+export interface ContextConflict {
+  id: string;
+  kind: "status" | "numeric" | "metadata";
+  chunkIds: [string, string];
+  sourceIds: string[];
+  topicTokens: string[];
+  leftValue: string;
+  rightValue: string;
 }
 
 export function estimateContextTokens(text: string): number {
@@ -257,6 +273,229 @@ function applyFreshnessScoring(
   };
 }
 
+const STATUS_CONFLICTS: Array<[string, string]> = [
+  ["active", "inactive"],
+  ["enabled", "disabled"],
+  ["available", "unavailable"],
+  ["current", "deprecated"],
+  ["current", "legacy"],
+  ["supported", "unsupported"],
+  ["allowed", "blocked"],
+  ["public", "private"],
+];
+
+const CLAIM_STOPWORDS = new Set([
+  ...STOPWORDS,
+  "account", "accounts", "customer", "customers", "doc", "docs", "document", "policy", "policies",
+  "support", "user", "users",
+]);
+
+interface NumericClaim {
+  value: number;
+  unit: string;
+  raw: string;
+}
+
+interface ConflictSignals {
+  topicTokens: Set<string>;
+  metadataKey: string | null;
+  metadataStatus: string | null;
+  statusTerms: Set<string>;
+  numericClaims: NumericClaim[];
+}
+
+function readMetadataString(metadata: Record<string, unknown> | undefined, keys: string[]): string | null {
+  if (!metadata) return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.length > 0 && value.length <= 128) return value.toLowerCase();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "boolean") return value ? "true" : "false";
+  }
+  return null;
+}
+
+function normalizeUnit(unit: string): string {
+  const normalized = unit.toLowerCase();
+  if (normalized === "day" || normalized === "days") return "days";
+  if (normalized === "hour" || normalized === "hours") return "hours";
+  if (normalized === "%" || normalized === "percent") return "percent";
+  if (normalized === "dollar" || normalized === "dollars" || normalized === "usd" || normalized === "$") return "usd";
+  return normalized;
+}
+
+function extractNumericClaims(content: string): NumericClaim[] {
+  const claims: NumericClaim[] = [];
+  const pattern = /(\$?\d+(?:\.\d+)?)\s*(days?|hours?|%|percent|usd|dollars?)/gi;
+  for (const match of content.matchAll(pattern)) {
+    if (claims.length >= 8) break;
+    const rawValue = match[1] ?? "";
+    const value = Number(rawValue.replace("$", ""));
+    if (!Number.isFinite(value)) continue;
+    claims.push({
+      value,
+      unit: normalizeUnit(match[2] ?? ""),
+      raw: `${rawValue}${match[2] ? ` ${match[2]}` : ""}`,
+    });
+  }
+  return claims;
+}
+
+function extractConflictSignals(chunk: OptimizedContextChunk): ConflictSignals {
+  const topicTokens = new Set<string>();
+  for (const token of tokenizeForSimilarity(chunk.content)) {
+    if (topicTokens.size >= 24) break;
+    if (!CLAIM_STOPWORDS.has(token)) topicTokens.add(token);
+  }
+
+  const metadataKey = readMetadataString(chunk.metadata, [
+    "conflictKey",
+    "conflict_key",
+    "entity",
+    "topic",
+    "policyId",
+    "policy_id",
+    "canonicalId",
+    "canonical_id",
+  ]);
+  if (metadataKey) {
+    for (const token of tokenizeForSimilarity(metadataKey)) {
+      if (topicTokens.size >= 24) break;
+      topicTokens.add(token);
+    }
+  }
+
+  const contentTokens = tokenSet(chunk.content);
+  const statusTerms = new Set<string>();
+  for (const [left, right] of STATUS_CONFLICTS) {
+    if (contentTokens.has(left)) statusTerms.add(left);
+    if (contentTokens.has(right)) statusTerms.add(right);
+  }
+
+  return {
+    topicTokens,
+    metadataKey,
+    metadataStatus: readMetadataString(chunk.metadata, ["status", "state", "availability"]),
+    statusTerms,
+    numericClaims: extractNumericClaims(chunk.content),
+  };
+}
+
+function sharedTopicTokens(left: ConflictSignals, right: ConflictSignals): string[] {
+  if (left.metadataKey && right.metadataKey && left.metadataKey === right.metadataKey) {
+    return [...left.topicTokens].slice(0, 5);
+  }
+  const shared: string[] = [];
+  for (const token of left.topicTokens) {
+    if (right.topicTokens.has(token)) {
+      shared.push(token);
+      if (shared.length >= 5) break;
+    }
+  }
+  return shared;
+}
+
+function findPairConflict(
+  leftChunk: OptimizedContextChunk,
+  leftSignals: ConflictSignals,
+  rightChunk: OptimizedContextChunk,
+  rightSignals: ConflictSignals,
+): Omit<ContextConflict, "id" | "chunkIds" | "sourceIds"> | null {
+  const topicTokens = sharedTopicTokens(leftSignals, rightSignals);
+  const sameMetadataKey = Boolean(leftSignals.metadataKey && leftSignals.metadataKey === rightSignals.metadataKey);
+  if (!sameMetadataKey && topicTokens.length < 2) return null;
+
+  if (
+    sameMetadataKey &&
+    leftSignals.metadataStatus &&
+    rightSignals.metadataStatus &&
+    leftSignals.metadataStatus !== rightSignals.metadataStatus
+  ) {
+    return {
+      kind: "metadata",
+      topicTokens,
+      leftValue: `status:${leftSignals.metadataStatus}`,
+      rightValue: `status:${rightSignals.metadataStatus}`,
+    };
+  }
+
+  for (const [leftStatus, rightStatus] of STATUS_CONFLICTS) {
+    if (leftSignals.statusTerms.has(leftStatus) && rightSignals.statusTerms.has(rightStatus)) {
+      return { kind: "status", topicTokens, leftValue: leftStatus, rightValue: rightStatus };
+    }
+    if (leftSignals.statusTerms.has(rightStatus) && rightSignals.statusTerms.has(leftStatus)) {
+      return { kind: "status", topicTokens, leftValue: rightStatus, rightValue: leftStatus };
+    }
+  }
+
+  for (const leftClaim of leftSignals.numericClaims) {
+    for (const rightClaim of rightSignals.numericClaims) {
+      if (leftClaim.unit === rightClaim.unit && leftClaim.value !== rightClaim.value) {
+        return {
+          kind: "numeric",
+          topicTokens,
+          leftValue: leftClaim.raw,
+          rightValue: rightClaim.raw,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function applyConflictDetection(
+  chunks: OptimizedContextChunk[],
+  enabled: boolean,
+): { chunks: OptimizedContextChunk[]; conflicts: ContextConflict[]; conflictChunks: number; conflictGroups: number } {
+  if (!enabled || chunks.length < 2) {
+    return { chunks, conflicts: [], conflictChunks: 0, conflictGroups: 0 };
+  }
+
+  const signals = chunks.map(extractConflictSignals);
+  const conflicts: ContextConflict[] = [];
+  const conflictedIds = new Set<string>();
+  const conflictGroupIds = new Map<string, string[]>();
+  const maxPairs = Math.min(20_000, (chunks.length * (chunks.length - 1)) / 2);
+  let checkedPairs = 0;
+
+  for (let i = 0; i < chunks.length - 1 && checkedPairs < maxPairs; i += 1) {
+    for (let j = i + 1; j < chunks.length && checkedPairs < maxPairs; j += 1) {
+      checkedPairs += 1;
+      const conflict = findPairConflict(chunks[i], signals[i], chunks[j], signals[j]);
+      if (!conflict) continue;
+      const id = `conflict-${conflicts.length + 1}`;
+      conflicts.push({
+        id,
+        kind: conflict.kind,
+        chunkIds: [chunks[i].id, chunks[j].id],
+        sourceIds: [...new Set([...chunks[i].sourceIds, ...chunks[j].sourceIds])],
+        topicTokens: conflict.topicTokens,
+        leftValue: conflict.leftValue,
+        rightValue: conflict.rightValue,
+      });
+      conflictedIds.add(chunks[i].id);
+      conflictedIds.add(chunks[j].id);
+      conflictGroupIds.set(chunks[i].id, [...(conflictGroupIds.get(chunks[i].id) ?? []), id]);
+      conflictGroupIds.set(chunks[j].id, [...(conflictGroupIds.get(chunks[j].id) ?? []), id]);
+    }
+  }
+
+  if (conflicts.length === 0) {
+    return { chunks, conflicts, conflictChunks: 0, conflictGroups: 0 };
+  }
+
+  return {
+    chunks: chunks.map((chunk) => {
+      const groupIds = conflictGroupIds.get(chunk.id);
+      return groupIds ? { ...chunk, conflict: true, conflictGroupIds: groupIds } : chunk;
+    }),
+    conflicts,
+    conflictChunks: conflictedIds.size,
+    conflictGroups: conflicts.length,
+  };
+}
+
 export function optimizeContextChunks(
   chunks: ContextChunk[],
   options: ContextOptimizationOptions = {},
@@ -267,6 +506,7 @@ export function optimizeContextChunks(
   const minRelevanceScore = Math.max(0, Math.min(1, options.minRelevanceScore ?? 0.2));
   const freshnessMode = options.freshnessMode ?? "off";
   const maxContextAgeDays = Math.max(1, Math.min(3650, options.maxContextAgeDays ?? 180));
+  const conflictMode = options.conflictMode ?? "off";
   const seen = new Map<string, OptimizedContextChunk>();
   const optimized: OptimizedContextChunk[] = [];
   const dropped: DroppedContextChunk[] = [];
@@ -340,13 +580,15 @@ export function optimizeContextChunks(
     maxAgeDays: maxContextAgeDays,
     referenceTime: options.referenceTime,
   });
+  const conflict = applyConflictDetection(freshness.chunks, conflictMode === "heuristic");
   const savedTokens = Math.max(0, inputTokens - outputTokens);
   const reductionPct = inputTokens === 0 ? 0 : Number(((savedTokens / inputTokens) * 100).toFixed(2));
   const nearDuplicateChunks = dropped.filter((chunk) => chunk.reason === "near_duplicate").length;
 
   return {
-    optimized: freshness.chunks,
+    optimized: conflict.chunks,
     dropped,
+    conflicts: conflict.conflicts,
     flagged: [],
     quarantined: [],
     metrics: {
@@ -365,6 +607,8 @@ export function optimizeContextChunks(
       rerankedChunks: ranking.rerankedChunks,
       avgFreshnessScore: freshness.avgFreshnessScore,
       staleChunks: freshness.staleChunks,
+      conflictChunks: conflict.conflictChunks,
+      conflictGroups: conflict.conflictGroups,
     },
   };
 }

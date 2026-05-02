@@ -23,13 +23,17 @@ export interface ContextRetrievalEvent {
   rerankedChunks: number;
   avgFreshnessScore: number | null;
   staleChunks: number;
+  conflictChunks: number;
+  conflictGroups: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
   riskyRatePct: number;
+  conflictRatePct: number;
   usedSourceIds: string[];
   unusedSourceIds: string[];
   riskySourceIds: string[];
+  conflictSourceIds: string[];
   createdAt: Date;
 }
 
@@ -71,13 +75,17 @@ function eventFromRow(row: typeof contextRetrievalEvents.$inferSelect): ContextR
     rerankedChunks: row.rerankedChunks,
     avgFreshnessScore: row.avgFreshnessScore,
     staleChunks: row.staleChunks,
+    conflictChunks: row.conflictChunks,
+    conflictGroups: row.conflictGroups,
     efficiencyPct: row.efficiencyPct,
     duplicateRatePct: row.duplicateRatePct,
     nearDuplicateRatePct: row.nearDuplicateRatePct,
     riskyRatePct: row.riskyRatePct,
+    conflictRatePct: row.conflictRatePct,
     usedSourceIds: parseStringArray(row.usedSourceIds),
     unusedSourceIds: parseStringArray(row.unusedSourceIds),
     riskySourceIds: parseStringArray(row.riskySourceIds),
+    conflictSourceIds: parseStringArray(row.conflictSourceIds),
     createdAt: row.createdAt,
   };
 }
@@ -91,6 +99,7 @@ export async function recordContextRetrievalEvent(
   const riskyChunks = [...result.flagged, ...result.quarantined];
   const usedSourceIds = unique(result.optimized.map((chunk) => chunk.id));
   const riskySourceIds = unique(riskyChunks.flatMap((chunk) => chunk.sourceIds));
+  const conflictSourceIds = unique(result.conflicts.flatMap((conflict) => conflict.sourceIds));
   const unusedSourceIds = unique([
     ...result.dropped.map((chunk) => chunk.id),
     ...riskySourceIds,
@@ -100,6 +109,8 @@ export async function recordContextRetrievalEvent(
   const unusedChunks = Math.max(0, retrievedChunks - usedChunks);
   const duplicateChunks = result.metrics.droppedChunks;
   const nearDuplicateChunks = result.metrics.nearDuplicateChunks;
+  const conflictChunks = result.metrics.conflictChunks;
+  const conflictGroups = result.metrics.conflictGroups;
   const riskyChunkCount = result.metrics.flaggedChunks + result.metrics.quarantinedChunks;
   const retrievedTokens = result.metrics.inputTokens;
   const usedTokens = result.metrics.outputTokens;
@@ -124,13 +135,17 @@ export async function recordContextRetrievalEvent(
     rerankedChunks: result.metrics.rerankedChunks,
     avgFreshnessScore: result.metrics.avgFreshnessScore,
     staleChunks: result.metrics.staleChunks,
+    conflictChunks,
+    conflictGroups,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(duplicateChunks, retrievedChunks),
     nearDuplicateRatePct: pct(nearDuplicateChunks, retrievedChunks),
     riskyRatePct: pct(riskyChunkCount, retrievedChunks),
+    conflictRatePct: pct(conflictChunks, retrievedChunks),
     usedSourceIds: JSON.stringify(usedSourceIds),
     unusedSourceIds: JSON.stringify(unusedSourceIds),
     riskySourceIds: JSON.stringify(riskySourceIds),
+    conflictSourceIds: JSON.stringify(conflictSourceIds),
   }).run();
 
   const row = await db.select().from(contextRetrievalEvents).where(eq(contextRetrievalEvents.id, id)).get();
@@ -174,6 +189,8 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
       rerankedChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.rerankedChunks}), 0)`,
       avgFreshnessScore: sql<number | null>`avg(${contextRetrievalEvents.avgFreshnessScore})`,
       staleChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.staleChunks}), 0)`,
+      conflictChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.conflictChunks}), 0)`,
+      conflictGroups: sql<number>`coalesce(sum(${contextRetrievalEvents.conflictGroups}), 0)`,
     })
     .from(contextRetrievalEvents)
     .where(whereClause)
@@ -210,10 +227,13 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
       ? null
       : Number(row.avgFreshnessScore.toFixed(4)),
     staleChunks: row?.staleChunks ?? 0,
+    conflictChunks: row?.conflictChunks ?? 0,
+    conflictGroups: row?.conflictGroups ?? 0,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(row?.duplicateChunks ?? 0, retrievedChunks),
     nearDuplicateRatePct: pct(row?.nearDuplicateChunks ?? 0, retrievedChunks),
     riskyRatePct: pct(row?.riskyChunks ?? 0, retrievedChunks),
+    conflictRatePct: pct(row?.conflictChunks ?? 0, retrievedChunks),
     latestAt: latestRow?.createdAt ?? null,
   };
 }

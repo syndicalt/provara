@@ -22,9 +22,10 @@ Implemented as of `0.2.0`:
 - Optional semantic near-duplicate detection with separate near-duplicate event, summary, retrieval, and dashboard metrics.
 - Optional lexical relevance scoring and stable reranking with aggregate relevance metrics and dashboard visibility.
 - Optional stale-context detection from freshness metadata with aggregate freshness metrics and dashboard visibility.
+- Optional conflicting-context detection with bounded heuristic status/numeric/metadata checks and dashboard visibility.
 
 Next planned layer:
-- Retrieval quality scoring for conflicting context and embedding-backed relevance.
+- Embedding-backed relevance and contradiction scoring.
 
 ## V1: Runtime Context Optimizer
 
@@ -35,6 +36,7 @@ Core capabilities:
 - Optional semantic near-duplicate removal through deterministic token similarity.
 - Optional lexical relevance scoring and reranking.
 - Optional freshness scoring from chunk metadata.
+- Optional conflict detection across retained chunks.
 - Token savings estimation.
 - Source and citation preservation.
 - Prompt Injection Firewall risk scanning for retrieved context.
@@ -58,6 +60,7 @@ Capabilities:
 - Semantic near-duplicate reporting. Shipped in V1.2.
 - Relevance and reranking reporting. Shipped in V1.2.
 - Stale-context and freshness reporting. Shipped in V1.2.
+- Conflicting-context reporting. Shipped in V1.2.
 - Request-detail integration.
 - Dashboard cards for saved tokens, dropped chunks, reduction, and risk flags.
 

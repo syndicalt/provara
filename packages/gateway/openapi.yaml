@@ -2131,6 +2131,11 @@ components:
           type: string
           format: date-time
           description: Optional reference time for deterministic freshness scoring. Defaults to server time.
+        conflictMode:
+          type: string
+          enum: [off, heuristic]
+          default: off
+          description: Heuristic mode detects lightweight status, numeric, and metadata conflicts across retained chunks.
 
     OptimizedContextChunk:
       allOf:
@@ -2155,6 +2160,42 @@ components:
             stale:
               type: boolean
               description: Whether the chunk is stale according to metadata freshness scoring.
+            conflict:
+              type: boolean
+              description: Whether this retained chunk participates in a detected conflict.
+            conflictGroupIds:
+              type: array
+              items:
+                type: string
+              description: Conflict group ids involving this chunk.
+
+    ContextConflict:
+      type: object
+      required: [id, kind, chunkIds, sourceIds, topicTokens, leftValue, rightValue]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [status, numeric, metadata]
+        chunkIds:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items:
+            type: string
+        sourceIds:
+          type: array
+          items:
+            type: string
+        topicTokens:
+          type: array
+          items:
+            type: string
+        leftValue:
+          type: string
+        rightValue:
+          type: string
 
     DroppedContextChunk:
       type: object
@@ -2191,7 +2232,7 @@ components:
 
     ContextOptimizationResult:
       type: object
-      required: [optimized, dropped, flagged, quarantined, metrics]
+      required: [optimized, dropped, conflicts, flagged, quarantined, metrics]
       properties:
         optimized:
           type: array
@@ -2201,6 +2242,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DroppedContextChunk"
+        conflicts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextConflict"
         flagged:
           type: array
           items:
@@ -2211,7 +2256,7 @@ components:
             $ref: "#/components/schemas/RiskyContextChunk"
         metrics:
           type: object
-          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks, avgFreshnessScore, staleChunks]
+          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks, avgFreshnessScore, staleChunks, conflictChunks, conflictGroups]
           properties:
             inputChunks: { type: integer }
             outputChunks: { type: integer }
@@ -2233,6 +2278,8 @@ components:
               type: number
               nullable: true
             staleChunks: { type: integer }
+            conflictChunks: { type: integer }
+            conflictGroups: { type: integer }
 
     ContextOptimizationEvent:
       type: object
@@ -2252,6 +2299,10 @@ components:
         - rerankedChunks
         - avgFreshnessScore
         - staleChunks
+        - conflictChunks
+        - conflictGroups
+        - conflictSourceIds
+        - conflictDetails
         - duplicateSourceIds
         - nearDuplicateSourceIds
         - riskScanned
@@ -2294,6 +2345,18 @@ components:
           nullable: true
         staleChunks:
           type: integer
+        conflictChunks:
+          type: integer
+        conflictGroups:
+          type: integer
+        conflictSourceIds:
+          type: array
+          items:
+            type: string
+        conflictDetails:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextConflict"
         duplicateSourceIds:
           type: array
           items:
@@ -2350,6 +2413,8 @@ components:
         - rerankedChunks
         - avgFreshnessScore
         - staleChunks
+        - conflictChunks
+        - conflictGroups
         - flaggedChunks
         - quarantinedChunks
         - latestAt
@@ -2383,6 +2448,10 @@ components:
           type: number
           nullable: true
         staleChunks:
+          type: integer
+        conflictChunks:
+          type: integer
+        conflictGroups:
           type: integer
         flaggedChunks:
           type: integer
@@ -2540,13 +2609,17 @@ components:
         - rerankedChunks
         - avgFreshnessScore
         - staleChunks
+        - conflictChunks
+        - conflictGroups
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
         - riskyRatePct
+        - conflictRatePct
         - usedSourceIds
         - unusedSourceIds
         - riskySourceIds
+        - conflictSourceIds
         - createdAt
       properties:
         id:
@@ -2587,6 +2660,10 @@ components:
           nullable: true
         staleChunks:
           type: integer
+        conflictChunks:
+          type: integer
+        conflictGroups:
+          type: integer
         efficiencyPct:
           type: number
         duplicateRatePct:
@@ -2594,6 +2671,8 @@ components:
         nearDuplicateRatePct:
           type: number
         riskyRatePct:
+          type: number
+        conflictRatePct:
           type: number
         usedSourceIds:
           type: array
@@ -2604,6 +2683,10 @@ components:
           items:
             type: string
         riskySourceIds:
+          type: array
+          items:
+            type: string
+        conflictSourceIds:
           type: array
           items:
             type: string
@@ -2629,10 +2712,13 @@ components:
         - rerankedChunks
         - avgFreshnessScore
         - staleChunks
+        - conflictChunks
+        - conflictGroups
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
         - riskyRatePct
+        - conflictRatePct
         - latestAt
       properties:
         eventCount:
@@ -2667,6 +2753,10 @@ components:
           nullable: true
         staleChunks:
           type: integer
+        conflictChunks:
+          type: integer
+        conflictGroups:
+          type: integer
         efficiencyPct:
           type: number
         duplicateRatePct:
@@ -2674,6 +2764,8 @@ components:
         nearDuplicateRatePct:
           type: number
         riskyRatePct:
+          type: number
+        conflictRatePct:
           type: number
         latestAt:
           type: string
