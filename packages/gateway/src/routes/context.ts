@@ -30,6 +30,7 @@ import {
 } from "../context/retrieval.js";
 import {
   createContextCollection,
+  createContextSource,
   distillContextCollection,
   exportApprovedContextBlocks,
   getContextCanonicalBlock,
@@ -37,11 +38,14 @@ import {
   listContextCanonicalBlocks,
   listContextCanonicalReviewEvents,
   listContextCollections,
+  listContextSources,
   recordContextCanonicalPolicyCheck,
+  syncContextSource,
   updateContextCanonicalBlockReview,
   validateBulkPolicyCheckBody,
   validateBulkReviewBody,
   validateCreateCollectionBody,
+  validateCreateContextSourceBody,
   validateIngestDocumentBody,
   validateReviewStatusBody,
 } from "../context/store.js";
@@ -696,6 +700,82 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
       const notFound = message.includes("not found");
       return c.json(
         { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.get("/collections/:id/sources", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+
+    try {
+      const sources = await listContextSources(db, tenantId, collectionId);
+      return c.json({ sources });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to list context sources";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.post("/collections/:id/sources", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateCreateContextSourceBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid source body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    try {
+      const source = await createContextSource(db, tenantId, collectionId, parsed.value);
+      return c.json({ source }, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create context source";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.post("/sources/:id/sync", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const sourceId = c.req.param("id");
+
+    try {
+      const result = await syncContextSource(db, tenantId, sourceId);
+      return c.json({
+        source: result.source,
+        collection: result.collection,
+        document: result.document,
+        blocks: result.blocks.map((block) => ({
+          id: block.id,
+          tenantId: block.tenantId,
+          collectionId: block.collectionId,
+          documentId: block.documentId,
+          ordinal: block.ordinal,
+          contentHash: block.contentHash,
+          tokenCount: block.tokenCount,
+          source: block.source,
+          metadata: block.metadata,
+          createdAt: block.createdAt,
+        })),
+        synced: result.synced,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sync context source";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "sync_error" } },
         notFound ? 404 : 500,
       );
     }

@@ -21,13 +21,14 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
+- Connector ingestion foundation with tenant-scoped manual sources and sync status.
 - Canonical context block distillation with review status and approved-only export.
 - Canonical review audit events with reviewer notes and actor attribution when available.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
 
-It does not yet perform automated pre-approval policy checks or connector-backed ingestion. Those belong to later roadmap phases.
+It does not yet perform specific external connector pulls from systems such as GitHub, Confluence, Drive, or S3. Those belong to later roadmap phases.
 
 ## API
 
@@ -113,6 +114,9 @@ Managed collection APIs:
 GET /v1/context/collections
 POST /v1/context/collections
 POST /v1/context/collections/{id}/documents
+GET /v1/context/collections/{id}/sources
+POST /v1/context/collections/{id}/sources
+POST /v1/context/sources/{id}/sync
 POST /v1/context/collections/{id}/distill
 GET /v1/context/collections/{id}/canonical-blocks
 POST /v1/context/canonical-blocks/{id}/policy-check
@@ -124,6 +128,8 @@ GET /v1/context/collections/{id}/export
 ```
 
 Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters.
+
+Manual sources are the connector foundation. `POST /v1/context/collections/{id}/sources` creates a tenant-scoped source with content, source URI, external ID, and metadata. `POST /v1/context/sources/{id}/sync` ingests that source into the existing `context_documents` and `context_blocks` pipeline, records `synced` or `failed` status on the source, persists the last error for failed syncs, and skips unchanged already-synced sources without duplicating documents.
 
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
@@ -174,7 +180,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Collection Sources section shows manual sources for the first managed collection, including source URI, sync status, document count, last synced time, update time, and last sync error. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, source sync, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -213,7 +219,7 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is connector ingestion:
+The next behavior layer is specific external connector ingestion:
 
 - GitHub, Confluence, Google Drive, SharePoint, Notion, Zendesk/Intercom, and S3/file upload connectors.
 - Source provenance and sync metadata for managed collections.

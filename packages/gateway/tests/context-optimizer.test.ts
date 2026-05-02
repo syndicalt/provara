@@ -12,6 +12,7 @@ import {
   contextOptimizationEvents,
   contextQualityEvents,
   contextRetrievalEvents,
+  contextSources,
   guardrailRules,
 } from "@provara/db";
 import type { ProviderRegistry } from "../src/providers/index.js";
@@ -1708,6 +1709,144 @@ describe("managed context collections", () => {
     expect(ingestRes.status).toBe(404);
     expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
     expect(await db.select().from(contextBlocks).all()).toHaveLength(0);
+  });
+
+  it("creates, lists, and idempotently syncs manual context sources", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Connector KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const collectionId = collectionBody.collection.id;
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionId}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Refund source",
+        type: "manual",
+        externalId: "refunds.md",
+        sourceUri: "file://refunds.md",
+        content: "Refunds require a receipt within 30 days.",
+        metadata: { owner: "support" },
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as {
+      source: { id: string; syncStatus: string; documentCount: number; contentHash: string; metadata: Record<string, unknown> };
+    };
+    expect(sourceBody.source).toMatchObject({
+      syncStatus: "pending",
+      documentCount: 0,
+      metadata: { owner: "support" },
+    });
+    expect(sourceBody.source.contentHash).toEqual(expect.any(String));
+
+    const listRes = await app.request(`/v1/context/collections/${collectionId}/sources`, {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json() as { sources: Array<{ id: string; name: string }> };
+    expect(listBody.sources).toEqual([
+      expect.objectContaining({ id: sourceBody.source.id, name: "Refund source" }),
+    ]);
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+    const syncBody = await syncRes.json() as {
+      synced: boolean;
+      source: { syncStatus: string; documentCount: number; lastDocumentId: string | null; lastSyncedAt: string | null };
+      collection: { documentCount: number; blockCount: number };
+      document: { id: string; source: string; sourceUri: string; metadata: Record<string, unknown> };
+      blocks: Array<{ metadata: Record<string, unknown>; source: string }>;
+    };
+    expect(syncBody.synced).toBe(true);
+    expect(syncBody.source).toMatchObject({ syncStatus: "synced", documentCount: 1, lastDocumentId: syncBody.document.id });
+    expect(syncBody.source.lastSyncedAt).toEqual(expect.any(String));
+    expect(syncBody.collection).toMatchObject({ documentCount: 1, blockCount: 1 });
+    expect(syncBody.document).toMatchObject({
+      source: "source:manual",
+      sourceUri: "file://refunds.md",
+      metadata: expect.objectContaining({ contextSourceId: sourceBody.source.id, externalId: "refunds.md" }),
+    });
+    expect(syncBody.blocks[0]).toMatchObject({
+      source: "source:manual",
+      metadata: expect.objectContaining({ contextSourceId: sourceBody.source.id, contextSourceType: "manual" }),
+    });
+
+    const syncAgainRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncAgainRes.status).toBe(200);
+    const syncAgainBody = await syncAgainRes.json() as { synced: boolean; source: { documentCount: number } };
+    expect(syncAgainBody).toMatchObject({ synced: false, source: { documentCount: 1 } });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(1);
+    expect(await db.select().from(contextBlocks).all()).toHaveLength(1);
+  });
+
+  it("persists failed source sync status without writing documents", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Failed Source KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Empty source", type: "manual", content: "   " }),
+    });
+    const sourceBody = await sourceRes.json() as { source: { id: string } };
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(500);
+    const rows = await db.select().from(contextSources).all();
+    expect(rows).toEqual([
+      expect.objectContaining({ syncStatus: "failed", lastError: "text is required", documentCount: 0 }),
+    ]);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
+  });
+
+  it("does not list or sync another tenant's context sources", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Tenant Sources" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Private source", content: "Private source knowledge." }),
+    });
+    const sourceBody = await sourceRes.json() as { source: { id: string } };
+
+    const listRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      headers: { "x-test-tenant": "tenant-other" },
+    });
+    expect(listRes.status).toBe(404);
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-other" },
+    });
+    expect(syncRes.status).toBe(404);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
   });
 
   it("distills duplicate stored blocks into canonical draft blocks", async () => {

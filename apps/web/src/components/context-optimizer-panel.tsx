@@ -203,6 +203,21 @@ export interface ContextCanonicalBlock {
   updatedAt: string;
 }
 
+export interface ContextSource {
+  id: string;
+  collectionId: string;
+  name: string;
+  type: "manual";
+  externalId: string | null;
+  sourceUri: string | null;
+  syncStatus: "pending" | "synced" | "failed";
+  lastSyncedAt: string | null;
+  lastDocumentId: string | null;
+  documentCount: number;
+  lastError: string | null;
+  updatedAt: string;
+}
+
 interface BulkCanonicalResult {
   id: string;
   ok: boolean;
@@ -226,6 +241,7 @@ interface LoadState {
   retrievalSummary: ContextRetrievalSummary | null;
   retrievalEvents: ContextRetrievalEvent[];
   collections: ContextCollection[];
+  sources: ContextSource[];
   canonicalBlocks: ContextCanonicalBlock[];
   loading: boolean;
   error: string | null;
@@ -597,6 +613,7 @@ export function ContextOptimizerPanel() {
     retrievalSummary: null,
     retrievalEvents: [],
     collections: [],
+    sources: [],
     canonicalBlocks: [],
     loading: true,
     error: null,
@@ -652,6 +669,7 @@ export function ContextOptimizerPanel() {
               retrievalSummary: null,
               retrievalEvents: [],
               collections: [],
+              sources: [],
               canonicalBlocks: [],
               loading: false,
               error: null,
@@ -676,10 +694,20 @@ export function ContextOptimizerPanel() {
         const retrievalEventsBody = await retrievalEventsRes.json() as { events: ContextRetrievalEvent[] };
         const collectionsBody = await collectionsRes.json() as { collections: ContextCollection[] };
         let canonicalBlocks: ContextCanonicalBlock[] = [];
+        let sources: ContextSource[] = [];
         const firstCollection = collectionsBody.collections[0];
-        if (firstCollection && firstCollection.canonicalBlockCount > 0) {
-          const canonicalRes = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/canonical-blocks?reviewStatus=draft`);
-          if (canonicalRes.ok) {
+        if (firstCollection) {
+          const [sourcesRes, canonicalRes] = await Promise.all([
+            gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`),
+            firstCollection.canonicalBlockCount > 0
+              ? gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/canonical-blocks?reviewStatus=draft`)
+              : Promise.resolve(null),
+          ]);
+          if (sourcesRes.ok) {
+            const sourcesBody = await sourcesRes.json() as { sources: ContextSource[] };
+            sources = sourcesBody.sources;
+          }
+          if (canonicalRes?.ok) {
             const canonicalBody = await canonicalRes.json() as { canonicalBlocks: ContextCanonicalBlock[] };
             canonicalBlocks = canonicalBody.canonicalBlocks;
           }
@@ -694,6 +722,7 @@ export function ContextOptimizerPanel() {
             retrievalSummary: retrievalSummaryBody.summary,
             retrievalEvents: retrievalEventsBody.events,
             collections: collectionsBody.collections,
+            sources,
             canonicalBlocks,
             loading: false,
             error: null,
@@ -710,6 +739,7 @@ export function ContextOptimizerPanel() {
             retrievalSummary: null,
             retrievalEvents: [],
             collections: [],
+            sources: [],
             canonicalBlocks: [],
             loading: false,
             error: err instanceof Error ? err.message : "Failed to load Context Optimizer data",
@@ -732,6 +762,7 @@ export function ContextOptimizerPanel() {
   const retrievalSummary = state.retrievalSummary;
   const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
   const collectionRows = useMemo(() => state.collections, [state.collections]);
+  const sourceRows = useMemo(() => state.sources, [state.sources]);
   const canonicalRows = useMemo(() => state.canonicalBlocks, [state.canonicalBlocks]);
   const visibleCanonicalRows = useMemo(() => canonicalRows.slice(0, 10), [canonicalRows]);
   const selectedCanonicalSet = useMemo(() => new Set(selectedCanonicalIds), [selectedCanonicalIds]);
@@ -946,6 +977,72 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
                         {formatTimestamp(collection.updatedAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Collection Sources</h2>
+          <p className="mt-1 text-sm text-zinc-500">Manual connector sources and sync status for the first managed collection.</p>
+        </div>
+
+        {state.loading ? (
+          <LoadingRows />
+        ) : sourceRows.length === 0 ? (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-8 text-center text-sm text-zinc-400">
+            No context sources in the first managed collection.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Source</th>
+                    <th className="px-4 py-3 text-left font-medium">Type</th>
+                    <th className="px-4 py-3 text-left font-medium">Sync</th>
+                    <th className="px-4 py-3 text-right font-medium">Documents</th>
+                    <th className="px-4 py-3 text-left font-medium">Last Synced</th>
+                    <th className="px-4 py-3 text-left font-medium">Updated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {sourceRows.map((source) => (
+                    <tr key={source.id}>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-zinc-200">{source.name}</div>
+                        <div className="mt-1 max-w-xl truncate text-xs text-zinc-500">
+                          {source.sourceUri || source.externalId || source.id}
+                        </div>
+                        {source.lastError && <div className="mt-1 text-xs text-red-300">{source.lastError}</div>}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{source.type}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span className={`rounded border px-2 py-0.5 text-xs capitalize ${
+                          source.syncStatus === "synced"
+                            ? "border-emerald-900/70 bg-emerald-950/20 text-emerald-200"
+                            : source.syncStatus === "failed"
+                              ? "border-red-900/70 bg-red-950/20 text-red-200"
+                              : "border-amber-900/70 bg-amber-950/20 text-amber-200"
+                        }`}>
+                          {source.syncStatus}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(source.documentCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
+                        {formatTimestamp(source.lastSyncedAt)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
+                        {formatTimestamp(source.updatedAt)}
                       </td>
                     </tr>
                   ))}

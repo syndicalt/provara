@@ -208,6 +208,26 @@ describe("ContextOptimizerPanel", () => {
           ],
         }));
       }
+      if (path === "/v1/context/collections/collection-1/sources") {
+        return Promise.resolve(jsonResponse({
+          sources: [
+            {
+              id: "source-1",
+              collectionId: "collection-1",
+              name: "Refund source",
+              type: "manual",
+              externalId: "refunds.md",
+              sourceUri: "file://refunds.md",
+              syncStatus: "synced",
+              lastSyncedAt: "2026-05-01T22:03:00.000Z",
+              lastDocumentId: "doc-1",
+              documentCount: 1,
+              lastError: null,
+              updatedAt: "2026-05-01T22:03:00.000Z",
+            },
+          ],
+        }));
+      }
       if (path === "/v1/context/canonical-blocks/bulk-policy-check") {
         return Promise.resolve(jsonResponse({
           results: [
@@ -330,6 +350,9 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Managed Collections")).toBeInTheDocument();
     expect(screen.getByText("Support KB")).toBeInTheDocument();
     expect(screen.getByText("Approved support context")).toBeInTheDocument();
+    expect(screen.getByText("Collection Sources")).toBeInTheDocument();
+    expect(screen.getByText("Refund source")).toBeInTheDocument();
+    expect(screen.getByText("file://refunds.md")).toBeInTheDocument();
     expect(screen.getByText("Canonical")).toBeInTheDocument();
     expect(screen.getByText("Approved")).toBeInTheDocument();
     expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();

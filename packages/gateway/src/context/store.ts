@@ -6,6 +6,7 @@ import {
   contextCanonicalReviewEvents,
   contextCollections,
   contextDocuments,
+  contextSources,
 } from "@provara/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -96,6 +97,25 @@ export interface ContextDocument {
   createdAt: Date;
 }
 
+export interface ContextSource {
+  id: string;
+  tenantId: string | null;
+  collectionId: string;
+  name: string;
+  type: "manual";
+  externalId: string | null;
+  sourceUri: string | null;
+  contentHash: string;
+  syncStatus: "pending" | "synced" | "failed";
+  lastSyncedAt: Date | null;
+  lastDocumentId: string | null;
+  documentCount: number;
+  lastError: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ContextBlock {
   id: string;
   tenantId: string | null;
@@ -115,6 +135,15 @@ export interface IngestContextDocumentInput {
   text: string;
   source?: string;
   sourceUri?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateContextSourceInput {
+  name: string;
+  type: "manual";
+  externalId?: string;
+  sourceUri?: string;
+  content: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -275,6 +304,27 @@ function documentFromRow(row: typeof contextDocuments.$inferSelect): ContextDocu
   };
 }
 
+function sourceFromRow(row: typeof contextSources.$inferSelect): ContextSource {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    collectionId: row.collectionId,
+    name: row.name,
+    type: row.type,
+    externalId: row.externalId,
+    sourceUri: row.sourceUri,
+    contentHash: row.contentHash,
+    syncStatus: row.syncStatus,
+    lastSyncedAt: row.lastSyncedAt,
+    lastDocumentId: row.lastDocumentId,
+    documentCount: row.documentCount,
+    lastError: row.lastError,
+    metadata: parseMetadata(row.metadata),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
 function blockFromRow(row: typeof contextBlocks.$inferSelect): ContextBlock {
   return {
     id: row.id,
@@ -346,6 +396,44 @@ export function validateIngestDocumentBody(value: unknown): ValidationResult<Ing
       text,
       source: source.value,
       sourceUri: sourceUri.value,
+      metadata,
+    },
+  };
+}
+
+export function validateCreateContextSourceBody(value: unknown): ValidationResult<CreateContextSourceInput> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { error: "body must be an object" };
+  }
+  const body = value as Record<string, unknown>;
+  const name = trimOptional(body.name, "name", MAX_DOCUMENT_TITLE_CHARS);
+  if (name.error) return { error: name.error };
+  if (!name.value) return { error: "name is required" };
+  if (body.type !== undefined && body.type !== "manual") return { error: "type must be manual" };
+  const externalId = trimOptional(body.externalId, "externalId", MAX_SOURCE_URI_CHARS);
+  if (externalId.error) return { error: externalId.error };
+  const sourceUri = trimOptional(body.sourceUri, "sourceUri", MAX_SOURCE_URI_CHARS);
+  if (sourceUri.error) return { error: sourceUri.error };
+  if (typeof body.content !== "string") return { error: "content is required" };
+  if (body.content.length > MAX_INGEST_TEXT_CHARS) return { error: `content must be at most ${MAX_INGEST_TEXT_CHARS} characters` };
+
+  let metadata: Record<string, unknown> | undefined;
+  if (body.metadata !== undefined) {
+    if (typeof body.metadata !== "object" || body.metadata === null || Array.isArray(body.metadata)) {
+      return { error: "metadata must be an object" };
+    }
+    const encoded = JSON.stringify(body.metadata);
+    if (encoded.length > MAX_METADATA_CHARS) return { error: `metadata must encode to at most ${MAX_METADATA_CHARS} characters` };
+    metadata = body.metadata as Record<string, unknown>;
+  }
+
+  return {
+    value: {
+      name: name.value,
+      type: "manual",
+      externalId: externalId.value,
+      sourceUri: sourceUri.value,
+      content: body.content,
       metadata,
     },
   };
@@ -473,6 +561,65 @@ export async function listContextCollections(db: Db, tenantId: string | null): P
   return rows.map(collectionFromRow);
 }
 
+export async function createContextSource(
+  db: Db,
+  tenantId: string | null,
+  collectionId: string,
+  input: CreateContextSourceInput,
+): Promise<ContextSource> {
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, collectionId));
+  const collection = await db.select().from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("collection not found");
+  if (collection.status !== "active") throw new Error("collection is archived");
+
+  const now = new Date();
+  const id = nanoid();
+  await db.insert(contextSources).values({
+    id,
+    tenantId,
+    collectionId,
+    name: input.name,
+    type: input.type,
+    externalId: input.externalId ?? id,
+    sourceUri: input.sourceUri ?? null,
+    content: input.content,
+    contentHash: hashContent(input.content),
+    syncStatus: "pending",
+    documentCount: 0,
+    metadata: JSON.stringify(input.metadata ?? {}),
+    createdAt: now,
+    updatedAt: now,
+  }).run();
+
+  await db.update(contextCollections).set({ updatedAt: now }).where(eq(contextCollections.id, collectionId)).run();
+
+  const row = await db.select().from(contextSources).where(eq(contextSources.id, id)).get();
+  if (!row) throw new Error("Failed to create context source");
+  return sourceFromRow(row);
+}
+
+export async function listContextSources(
+  db: Db,
+  tenantId: string | null,
+  collectionId: string,
+): Promise<ContextSource[]> {
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, collectionId));
+  const collection = await db.select({ id: contextCollections.id }).from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("collection not found");
+
+  const conditions = [eq(contextSources.collectionId, collectionId)];
+  const tenantClause = tenantFilter(contextSources.tenantId, tenantId);
+  if (tenantClause) conditions.push(tenantClause);
+
+  const rows = await db
+    .select()
+    .from(contextSources)
+    .where(and(...conditions))
+    .orderBy(desc(contextSources.updatedAt), asc(contextSources.id))
+    .all();
+  return rows.map(sourceFromRow);
+}
+
 export async function ingestContextDocument(
   db: Db,
   tenantId: string | null,
@@ -549,6 +696,75 @@ export async function ingestContextDocument(
     document: documentFromRow(document),
     blocks: blocks.map(blockFromRow),
   };
+}
+
+export async function syncContextSource(
+  db: Db,
+  tenantId: string | null,
+  sourceId: string,
+): Promise<{ source: ContextSource; collection: ContextCollection; document: ContextDocument | null; blocks: ContextBlock[]; synced: boolean }> {
+  const sourceRow = await db.select().from(contextSources).where(eq(contextSources.id, sourceId)).get();
+  if (!sourceRow) throw new Error("source not found");
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, sourceRow.collectionId));
+  const collection = await db.select().from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("source not found");
+
+  if (sourceRow.syncStatus === "synced" && sourceRow.lastDocumentId && sourceRow.documentCount > 0) {
+    const document = await db.select().from(contextDocuments).where(eq(contextDocuments.id, sourceRow.lastDocumentId)).get();
+    const blocks = document
+      ? await db.select().from(contextBlocks).where(eq(contextBlocks.documentId, document.id)).orderBy(contextBlocks.ordinal).all()
+      : [];
+    return {
+      source: sourceFromRow(sourceRow),
+      collection: collectionFromRow(collection),
+      document: document ? documentFromRow(document) : null,
+      blocks: blocks.map(blockFromRow),
+      synced: false,
+    };
+  }
+
+  const now = new Date();
+  try {
+    const result = await ingestContextDocument(db, tenantId, sourceRow.collectionId, {
+      title: sourceRow.name,
+      text: sourceRow.content,
+      source: `source:${sourceRow.type}`,
+      sourceUri: sourceRow.sourceUri ?? undefined,
+      metadata: {
+        ...parseMetadata(sourceRow.metadata),
+        contextSourceId: sourceRow.id,
+        contextSourceType: sourceRow.type,
+        externalId: sourceRow.externalId,
+      },
+    });
+
+    await db.update(contextSources).set({
+      syncStatus: "synced",
+      lastSyncedAt: now,
+      lastDocumentId: result.document.id,
+      documentCount: sourceRow.documentCount + 1,
+      lastError: null,
+      updatedAt: now,
+    }).where(eq(contextSources.id, sourceId)).run();
+
+    const syncedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceId)).get();
+    if (!syncedSource) throw new Error("Failed to sync context source");
+    return {
+      source: sourceFromRow(syncedSource),
+      collection: result.collection,
+      document: result.document,
+      blocks: result.blocks,
+      synced: true,
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to sync context source";
+    await db.update(contextSources).set({
+      syncStatus: "failed",
+      lastError: message,
+      updatedAt: now,
+    }).where(eq(contextSources.id, sourceId)).run();
+    throw new Error(message);
+  }
 }
 
 export async function distillContextCollection(
