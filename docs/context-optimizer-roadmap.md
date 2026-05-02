@@ -35,9 +35,10 @@ Implemented as of `0.2.0`:
 - Canonical pre-approval policy checks with active Guardrails scans, persisted evidence, approval blocking, and dashboard status visibility.
 - Bulk canonical policy-check and review actions with dashboard row selection and per-block failures.
 - Context governance alerts for policy-check failures, stale draft queues, and approved-export delta thresholds.
+- Connector ingestion foundation with tenant-scoped manual sources, idempotent sync, failed-sync status, and dashboard source visibility.
 
 Next planned layer:
-- Connector ingestion.
+- Specific external connector implementations.
 
 ## V1: Runtime Context Optimizer
 
@@ -120,6 +121,13 @@ Capabilities:
 ## V2.2: Connectors
 
 Automatically ingest enterprise knowledge.
+
+Foundation shipped:
+- Tenant-scoped context source records.
+- Manual source creation and listing.
+- Idempotent source sync into managed context documents and blocks.
+- Failed-sync status and error persistence.
+- Dashboard source and sync-status visibility.
 
 Candidate connectors:
 - GitHub repositories.

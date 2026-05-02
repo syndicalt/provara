@@ -560,6 +560,109 @@ paths:
         "404":
           description: Collection not found.
 
+  /v1/context/collections/{id}/sources:
+    get:
+      tags: [Context Optimizer]
+      summary: List connector sources for a managed context collection
+      operationId: listContextSources
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Context sources
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sources]
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextSource"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+    post:
+      tags: [Context Optimizer]
+      summary: Create a manual connector source for a managed context collection
+      operationId: createContextSource
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContextSourceRequest"
+      responses:
+        "201":
+          description: Created source
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source]
+                properties:
+                  source:
+                    $ref: "#/components/schemas/ContextSource"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+
+  /v1/context/sources/{id}/sync:
+    post:
+      tags: [Context Optimizer]
+      summary: Sync a connector source into stored context documents and blocks
+      operationId: syncContextSource
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Source sync result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [source, collection, document, blocks, synced]
+                properties:
+                  source:
+                    $ref: "#/components/schemas/ContextSource"
+                  collection:
+                    $ref: "#/components/schemas/ContextCollection"
+                  document:
+                    nullable: true
+                    allOf:
+                      - $ref: "#/components/schemas/ContextDocument"
+                  blocks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextBlockMetadata"
+                  synced:
+                    type: boolean
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Source not found.
+        "500":
+          description: Source sync failed.
+
   /v1/context/collections/{id}/distill:
     post:
       tags: [Context Optimizer]
@@ -2912,6 +3015,30 @@ components:
           type: object
           additionalProperties: true
 
+    CreateContextSourceRequest:
+      type: object
+      required: [name, content]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        type:
+          type: string
+          enum: [manual]
+        externalId:
+          type: string
+          maxLength: 2000
+        sourceUri:
+          type: string
+          maxLength: 2000
+        content:
+          type: string
+          maxLength: 500000
+        metadata:
+          type: object
+          additionalProperties: true
+
     ContextCollection:
       type: object
       required: [id, tenantId, name, description, status, documentCount, blockCount, canonicalBlockCount, approvedBlockCount, tokenCount, createdAt, updatedAt]
@@ -2975,6 +3102,55 @@ components:
         tokenCount:
           type: integer
         createdAt:
+          type: string
+          format: date-time
+
+    ContextSource:
+      type: object
+      required: [id, tenantId, collectionId, name, type, externalId, sourceUri, contentHash, syncStatus, lastSyncedAt, lastDocumentId, documentCount, lastError, metadata, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        collectionId:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [manual]
+        externalId:
+          type: string
+          nullable: true
+        sourceUri:
+          type: string
+          nullable: true
+        contentHash:
+          type: string
+        syncStatus:
+          type: string
+          enum: [pending, synced, failed]
+        lastSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastDocumentId:
+          type: string
+          nullable: true
+        documentCount:
+          type: integer
+        lastError:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
           type: string
           format: date-time
 

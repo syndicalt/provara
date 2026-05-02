@@ -465,6 +465,36 @@ export const contextDocuments = sqliteTable("context_documents", {
   index("context_documents_hash_idx").on(table.contentHash),
 ]);
 
+export const contextSources = sqliteTable("context_sources", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  collectionId: text("collection_id")
+    .notNull()
+    .references(() => contextCollections.id),
+  name: text("name").notNull(),
+  type: text("type", { enum: ["manual"] }).notNull().default("manual"),
+  externalId: text("external_id"),
+  sourceUri: text("source_uri"),
+  content: text("content").notNull().default(""),
+  contentHash: text("content_hash").notNull(),
+  syncStatus: text("sync_status", { enum: ["pending", "synced", "failed"] }).notNull().default("pending"),
+  lastSyncedAt: integer("last_synced_at", { mode: "timestamp" }),
+  lastDocumentId: text("last_document_id").references(() => contextDocuments.id),
+  documentCount: integer("document_count").notNull().default(0),
+  lastError: text("last_error"),
+  metadata: text("metadata").notNull().default("{}"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_sources_tenant_collection_idx").on(table.tenantId, table.collectionId),
+  index("context_sources_sync_idx").on(table.tenantId, table.syncStatus, table.updatedAt),
+  uniqueIndex("context_sources_collection_external_idx").on(table.collectionId, table.externalId),
+]);
+
 export const contextBlocks = sqliteTable("context_blocks", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
