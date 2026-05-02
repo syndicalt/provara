@@ -4,6 +4,7 @@ import type { Db } from "@provara/db";
 import {
   contextBlocks,
   contextCanonicalBlocks,
+  contextCanonicalReviewEvents,
   contextCollections,
   contextDocuments,
   contextOptimizationEvents,
@@ -22,6 +23,7 @@ import { grantIntelligenceAccess, resetTierEnv } from "./_setup/tier.js";
 vi.mock("../src/auth/tenant.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../src/auth/tenant.js")>(),
   getTenantId: (req: Request) => req.headers.get("x-test-tenant"),
+  getSessionUserId: (req: Request) => req.headers.get("x-test-user"),
 }));
 
 import { requireIntelligenceTier } from "../src/auth/tier.js";
@@ -1783,12 +1785,48 @@ describe("managed context collections", () => {
     const approvedId = distillBody.canonicalBlocks[0].id;
     const reviewRes = await app.request(`/v1/context/canonical-blocks/${approvedId}/review`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
-      body: JSON.stringify({ reviewStatus: "approved" }),
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro", "x-test-user": "user-reviewer" },
+      body: JSON.stringify({ reviewStatus: "approved", note: "Ready for retrieval." }),
     });
     expect(reviewRes.status).toBe(200);
-    const reviewBody = await reviewRes.json() as { canonicalBlock: { reviewStatus: string } };
-    expect(reviewBody.canonicalBlock.reviewStatus).toBe("approved");
+    const reviewBody = await reviewRes.json() as {
+      canonicalBlock: { reviewStatus: string; reviewNote: string; reviewedByUserId: string; reviewedAt: string };
+    };
+    expect(reviewBody.canonicalBlock).toMatchObject({
+      reviewStatus: "approved",
+      reviewNote: "Ready for retrieval.",
+      reviewedByUserId: "user-reviewer",
+    });
+    expect(reviewBody.canonicalBlock.reviewedAt).toEqual(expect.any(String));
+
+    const auditRows = await db.select().from(contextCanonicalReviewEvents).all();
+    expect(auditRows).toEqual([
+      expect.objectContaining({
+        tenantId: "tenant-pro",
+        canonicalBlockId: approvedId,
+        fromStatus: "draft",
+        toStatus: "approved",
+        note: "Ready for retrieval.",
+        actorUserId: "user-reviewer",
+      }),
+    ]);
+
+    const auditRes = await app.request("/v1/context/canonical-review-events", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(auditRes.status).toBe(200);
+    const auditBody = await auditRes.json() as {
+      events: Array<{ canonicalBlockId: string; fromStatus: string; toStatus: string; note: string; actorUserId: string }>;
+    };
+    expect(auditBody.events).toEqual([
+      expect.objectContaining({
+        canonicalBlockId: approvedId,
+        fromStatus: "draft",
+        toStatus: "approved",
+        note: "Ready for retrieval.",
+        actorUserId: "user-reviewer",
+      }),
+    ]);
 
     const exportRes = await app.request(`/v1/context/collections/${collectionId}/export`, {
       headers: { "x-test-tenant": "tenant-pro" },

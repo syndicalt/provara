@@ -31,9 +31,10 @@ Implemented as of `0.2.0`:
 - Dashboard configuration controls for drafting optimizer payloads.
 - Managed context collections with plain-text ingestion into stored documents and reusable blocks.
 - Canonical context blocks with deterministic distillation, source coalescing, review status, and approved-only export.
+- Canonical review audit events with reviewer notes, actor attribution, and dashboard draft queue visibility.
 
 Next planned layer:
-- Governance review queues, audit logs, and pre-approval policy checks.
+- Pre-approval policy checks for PII and prompt injection risk.
 
 ## V1: Runtime Context Optimizer
 
@@ -104,9 +105,9 @@ Capabilities:
 Make optimized knowledge trustworthy for regulated teams.
 
 Capabilities:
-- Human review queue.
+- Human review queue. Foundation shipped as dashboard draft queue visibility.
 - Approval states. Foundation shipped as draft/approved/rejected canonical block status.
-- Audit logs.
+- Audit logs. Shipped as canonical review events.
 - Conflict detection.
 - PII and prompt-injection policy checks.
 - Approved-only export controls.

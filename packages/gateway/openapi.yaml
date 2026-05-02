@@ -665,6 +665,38 @@ paths:
         "404":
           description: Canonical block not found.
 
+  /v1/context/canonical-review-events:
+    get:
+      tags: [Context Optimizer]
+      summary: List canonical block review audit events
+      operationId: listContextCanonicalReviewEvents
+      parameters:
+        - in: query
+          name: collectionId
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Recent canonical review events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextCanonicalReviewEvent"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
   /v1/context/collections/{id}/export:
     get:
       tags: [Context Optimizer]
@@ -2912,6 +2944,9 @@ components:
         reviewStatus:
           type: string
           enum: [draft, approved, rejected]
+        note:
+          type: string
+          maxLength: 2000
 
     ContextCanonicalBlock:
       type: object
@@ -2926,6 +2961,9 @@ components:
         - sourceDocumentIds
         - sourceCount
         - reviewStatus
+        - reviewNote
+        - reviewedByUserId
+        - reviewedAt
         - metadata
         - createdAt
         - updatedAt
@@ -2956,6 +2994,16 @@ components:
         reviewStatus:
           type: string
           enum: [draft, approved, rejected]
+        reviewNote:
+          type: string
+          nullable: true
+        reviewedByUserId:
+          type: string
+          nullable: true
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
         metadata:
           type: object
           additionalProperties: true
@@ -2963,6 +3011,35 @@ components:
           type: string
           format: date-time
         updatedAt:
+          type: string
+          format: date-time
+
+    ContextCanonicalReviewEvent:
+      type: object
+      required: [id, tenantId, collectionId, canonicalBlockId, fromStatus, toStatus, note, actorUserId, createdAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        collectionId:
+          type: string
+        canonicalBlockId:
+          type: string
+        fromStatus:
+          type: string
+          enum: [draft, approved, rejected]
+        toStatus:
+          type: string
+          enum: [draft, approved, rejected]
+        note:
+          type: string
+          nullable: true
+        actorUserId:
+          type: string
+          nullable: true
+        createdAt:
           type: string
           format: date-time
 

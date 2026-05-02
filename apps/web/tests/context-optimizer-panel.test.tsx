@@ -179,6 +179,24 @@ describe("ContextOptimizerPanel", () => {
           ],
         }));
       }
+      if (path === "/v1/context/collections/collection-1/canonical-blocks?reviewStatus=draft") {
+        return Promise.resolve(jsonResponse({
+          canonicalBlocks: [
+            {
+              id: "canonical-1",
+              collectionId: "collection-1",
+              content: "Refunds require a receipt within 30 days.",
+              tokenCount: 8,
+              sourceCount: 2,
+              reviewStatus: "draft",
+              reviewNote: null,
+              reviewedByUserId: null,
+              reviewedAt: null,
+              updatedAt: "2026-05-01T22:05:00.000Z",
+            },
+          ],
+        }));
+      }
       return Promise.resolve(jsonResponse({
         events: [
           {
@@ -266,6 +284,8 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Approved support context")).toBeInTheDocument();
     expect(screen.getByText("Canonical")).toBeInTheDocument();
     expect(screen.getByText("Approved")).toBeInTheDocument();
+    expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();
+    expect(screen.getByText("Refunds require a receipt within 30 days.")).toBeInTheDocument();
   });
 
   it("updates and persists optimizer payload controls", async () => {
