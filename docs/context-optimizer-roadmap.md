@@ -29,9 +29,10 @@ Implemented as of `0.2.0`:
 - Optional extractive compression with bounded sentence selection, compression savings metrics, and dashboard visibility.
 - Optional abstractive compression with provider summaries, provenance preservation, and mechanical fallback.
 - Dashboard configuration controls for drafting optimizer payloads.
+- Managed context collections with plain-text ingestion into stored documents and reusable blocks.
 
 Next planned layer:
-- Persistent knowledge distillation and managed content stores.
+- Canonical knowledge distillation, review states, and approved-only export.
 
 ## V1: Runtime Context Optimizer
 
@@ -91,7 +92,7 @@ Capabilities:
 Move from per-request optimization to reusable canonical knowledge.
 
 Capabilities:
-- Batch document ingestion.
+- Batch document ingestion. Foundation shipped with managed collections and plain-text ingestion.
 - Canonical knowledge blocks.
 - Source references and provenance.
 - Versioning and diffs.

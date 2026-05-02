@@ -28,6 +28,13 @@ import {
   recordContextRetrievalEvent,
   summarizeContextRetrievalEvents,
 } from "../context/retrieval.js";
+import {
+  createContextCollection,
+  ingestContextDocument,
+  listContextCollections,
+  validateCreateCollectionBody,
+  validateIngestDocumentBody,
+} from "../context/store.js";
 import { getTenantId } from "../auth/tenant.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 import type { ProviderRegistry } from "../providers/index.js";
@@ -610,6 +617,75 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     });
 
     return c.json({ optimization, event, retrieval });
+  });
+
+  app.get("/collections", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collections = await listContextCollections(db, tenantId);
+    return c.json({ collections });
+  });
+
+  app.post("/collections", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateCreateCollectionBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid collection body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    try {
+      const collection = await createContextCollection(db, tenantId, parsed.value);
+      return c.json({ collection }, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create context collection";
+      return c.json(
+        { error: { message, type: message.includes("already exists") ? "conflict_error" : "store_error" } },
+        message.includes("already exists") ? 409 : 500,
+      );
+    }
+  });
+
+  app.post("/collections/:id/documents", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateIngestDocumentBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid document body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    try {
+      const result = await ingestContextDocument(db, tenantId, collectionId, parsed.value);
+      return c.json({
+        collection: result.collection,
+        document: result.document,
+        blocks: result.blocks.map((block) => ({
+          id: block.id,
+          tenantId: block.tenantId,
+          collectionId: block.collectionId,
+          documentId: block.documentId,
+          ordinal: block.ordinal,
+          contentHash: block.contentHash,
+          tokenCount: block.tokenCount,
+          source: block.source,
+          metadata: block.metadata,
+          createdAt: block.createdAt,
+        })),
+      }, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to ingest context document";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
   });
 
   app.get("/events", async (c) => {

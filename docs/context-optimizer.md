@@ -20,11 +20,12 @@ The shipped V1 implementation is intentionally narrow:
 - Flagged and quarantined context buckets with rule evidence and source IDs.
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
+- Managed context collections with plain-text ingestion into reusable blocks.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
 
-It does not yet perform embedding-backed semantic deduplication or persistent review workflows. Those belong to later roadmap phases.
+It does not yet perform persistent review workflows or connector-backed ingestion. Those belong to later roadmap phases.
 
 ## API
 
@@ -104,6 +105,16 @@ GET /v1/context/retrieval/events
 
 These endpoints are tenant-scoped and require Intelligence access.
 
+Managed collection APIs:
+
+```text
+GET /v1/context/collections
+POST /v1/context/collections
+POST /v1/context/collections/{id}/documents
+```
+
+Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters. This is the V2 foundation for review queues, connectors, canonical knowledge blocks, and vector export.
+
 Quality evaluation is available through:
 
 ```text
@@ -143,6 +154,8 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
+The Managed Collections section lists persisted context collections, including document count, block count, estimated token count, status, and last update time. Creation and ingestion are available through the API in this release; richer collection management remains a follow-up.
+
 The Recent Events table shows:
 
 - Event time.
@@ -180,7 +193,8 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is retrieval quality:
+The next behavior layer is persistent knowledge distillation:
 
-- Stronger contradiction scoring beyond bounded heuristic checks.
-- Abstractive compression with strict provenance and fallback behavior.
+- Canonical block generation and deduplication across documents.
+- Human review and approval states for managed blocks.
+- Approved-only export controls for retrieval systems.

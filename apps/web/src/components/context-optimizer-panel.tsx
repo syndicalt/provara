@@ -166,6 +166,19 @@ export interface ContextRetrievalEvent {
   createdAt: string;
 }
 
+export interface ContextCollection {
+  id: string;
+  tenantId: string | null;
+  name: string;
+  description: string | null;
+  status: "active" | "archived";
+  documentCount: number;
+  blockCount: number;
+  tokenCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface GateState {
   message: string;
   upgradeUrl?: string;
@@ -178,6 +191,7 @@ interface LoadState {
   qualityEvents: ContextQualityEvent[];
   retrievalSummary: ContextRetrievalSummary | null;
   retrievalEvents: ContextRetrievalEvent[];
+  collections: ContextCollection[];
   loading: boolean;
   error: string | null;
   gate: GateState | null;
@@ -544,6 +558,7 @@ export function ContextOptimizerPanel() {
     qualityEvents: [],
     retrievalSummary: null,
     retrievalEvents: [],
+    collections: [],
     loading: true,
     error: null,
     gate: null,
@@ -563,6 +578,7 @@ export function ContextOptimizerPanel() {
           qualityEventsRes,
           retrievalSummaryRes,
           retrievalEventsRes,
+          collectionsRes,
         ] = await Promise.all([
           gatewayFetchRaw("/v1/context/summary"),
           gatewayFetchRaw("/v1/context/events?limit=25"),
@@ -570,6 +586,7 @@ export function ContextOptimizerPanel() {
           gatewayFetchRaw("/v1/context/quality/events?limit=10"),
           gatewayFetchRaw("/v1/context/retrieval/summary"),
           gatewayFetchRaw("/v1/context/retrieval/events?limit=10"),
+          gatewayFetchRaw("/v1/context/collections"),
         ]);
 
         const responses = [
@@ -579,6 +596,7 @@ export function ContextOptimizerPanel() {
           qualityEventsRes,
           retrievalSummaryRes,
           retrievalEventsRes,
+          collectionsRes,
         ];
         if (
           responses.some((res) => res.status === 402)
@@ -594,6 +612,7 @@ export function ContextOptimizerPanel() {
               qualityEvents: [],
               retrievalSummary: null,
               retrievalEvents: [],
+              collections: [],
               loading: false,
               error: null,
               gate: {
@@ -615,6 +634,7 @@ export function ContextOptimizerPanel() {
         const qualityEventsBody = await qualityEventsRes.json() as { events: ContextQualityEvent[] };
         const retrievalSummaryBody = await retrievalSummaryRes.json() as { summary: ContextRetrievalSummary };
         const retrievalEventsBody = await retrievalEventsRes.json() as { events: ContextRetrievalEvent[] };
+        const collectionsBody = await collectionsRes.json() as { collections: ContextCollection[] };
 
         if (!cancelled) {
           setState({
@@ -624,6 +644,7 @@ export function ContextOptimizerPanel() {
             qualityEvents: qualityEventsBody.events,
             retrievalSummary: retrievalSummaryBody.summary,
             retrievalEvents: retrievalEventsBody.events,
+            collections: collectionsBody.collections,
             loading: false,
             error: null,
             gate: null,
@@ -638,6 +659,7 @@ export function ContextOptimizerPanel() {
             qualityEvents: [],
             retrievalSummary: null,
             retrievalEvents: [],
+            collections: [],
             loading: false,
             error: err instanceof Error ? err.message : "Failed to load Context Optimizer data",
             gate: null,
@@ -658,6 +680,7 @@ export function ContextOptimizerPanel() {
   const qualityRows = useMemo(() => state.qualityEvents, [state.qualityEvents]);
   const retrievalSummary = state.retrievalSummary;
   const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
+  const collectionRows = useMemo(() => state.collections, [state.collections]);
 
   return (
     <div className="space-y-6">
@@ -722,6 +745,67 @@ export function ContextOptimizerPanel() {
       </div>
 
       <OptimizerConfigPanel />
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Managed Collections</h2>
+          <p className="mt-1 text-sm text-zinc-500">Persisted context collections for reusable knowledge blocks.</p>
+        </div>
+
+        {state.loading ? (
+          <LoadingRows />
+        ) : collectionRows.length === 0 ? (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-8 text-center text-sm text-zinc-400">
+            No managed context collections yet.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Collection</th>
+                    <th className="px-4 py-3 text-right font-medium">Documents</th>
+                    <th className="px-4 py-3 text-right font-medium">Blocks</th>
+                    <th className="px-4 py-3 text-right font-medium">Tokens</th>
+                    <th className="px-4 py-3 text-left font-medium">Status</th>
+                    <th className="px-4 py-3 text-left font-medium">Updated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {collectionRows.map((collection) => (
+                    <tr key={collection.id}>
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-zinc-200">{collection.name}</div>
+                        <div className="mt-1 max-w-xl truncate text-xs text-zinc-500">
+                          {collection.description || collection.id}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(collection.documentCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(collection.blockCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
+                        {formatInteger(collection.tokenCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span className="rounded border border-emerald-900/70 bg-emerald-950/20 px-2 py-0.5 text-xs capitalize text-emerald-200">
+                          {collection.status}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
+                        {formatTimestamp(collection.updatedAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section>
         <div className="mb-3">
