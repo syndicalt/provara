@@ -32,9 +32,10 @@ Implemented as of `0.2.0`:
 - Managed context collections with plain-text ingestion into stored documents and reusable blocks.
 - Canonical context blocks with deterministic distillation, source coalescing, review status, and approved-only export.
 - Canonical review audit events with reviewer notes, actor attribution, and dashboard draft queue visibility.
+- Canonical pre-approval policy checks with active Guardrails scans, persisted evidence, approval blocking, and dashboard status visibility.
 
 Next planned layer:
-- Pre-approval policy checks for PII and prompt injection risk.
+- Bulk review operations and richer governance alerts.
 
 ## V1: Runtime Context Optimizer
 
@@ -109,7 +110,7 @@ Capabilities:
 - Approval states. Foundation shipped as draft/approved/rejected canonical block status.
 - Audit logs. Shipped as canonical review events.
 - Conflict detection.
-- PII and prompt-injection policy checks.
+- PII and prompt-injection policy checks. Shipped as canonical pre-approval checks using active Guardrails rules.
 - Approved-only export controls.
 
 ## V2.2: Connectors

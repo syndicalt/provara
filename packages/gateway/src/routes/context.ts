@@ -32,10 +32,12 @@ import {
   createContextCollection,
   distillContextCollection,
   exportApprovedContextBlocks,
+  getContextCanonicalBlock,
   ingestContextDocument,
   listContextCanonicalBlocks,
   listContextCanonicalReviewEvents,
   listContextCollections,
+  recordContextCanonicalPolicyCheck,
   updateContextCanonicalBlockReview,
   validateCreateCollectionBody,
   validateIngestDocumentBody,
@@ -738,6 +740,34 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     }
   });
 
+  app.post("/canonical-blocks/:id/policy-check", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const blockId = c.req.param("id");
+
+    try {
+      const block = await getContextCanonicalBlock(db, tenantId, blockId);
+      await ensureBuiltInRules(db, tenantId);
+      const rules = await loadRules(db, tenantId);
+      const scan = scanContent(block.content, rules, "retrieved_context");
+      const canonicalBlock = await recordContextCanonicalPolicyCheck(db, tenantId, blockId, scan);
+      return c.json({
+        canonicalBlock,
+        policy: {
+          status: canonicalBlock.policyStatus,
+          decision: scan.decision,
+          violations: scan.violations,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to check canonical block policy";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
   app.patch("/canonical-blocks/:id/review", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const blockId = c.req.param("id");
@@ -759,9 +789,10 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update canonical block";
       const notFound = message.includes("not found");
+      const policyError = message.includes("policy check");
       return c.json(
-        { error: { message, type: notFound ? "not_found" : "store_error" } },
-        notFound ? 404 : 500,
+        { error: { message, type: notFound ? "not_found" : policyError ? "policy_error" : "store_error" } },
+        notFound ? 404 : policyError ? 409 : 500,
       );
     }
   });

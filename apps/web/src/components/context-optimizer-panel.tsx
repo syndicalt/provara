@@ -191,6 +191,15 @@ export interface ContextCanonicalBlock {
   reviewNote: string | null;
   reviewedByUserId: string | null;
   reviewedAt: string | null;
+  policyStatus: "unchecked" | "passed" | "failed";
+  policyCheckedAt: string | null;
+  policyDetails: Array<{
+    decision: string;
+    ruleId: string | null;
+    ruleName: string | null;
+    action: string | null;
+    matchedSnippet: string | null;
+  }>;
   updatedAt: string;
 }
 
@@ -866,6 +875,8 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-left font-medium">Content</th>
                     <th className="px-4 py-3 text-right font-medium">Sources</th>
                     <th className="px-4 py-3 text-right font-medium">Tokens</th>
+                    <th className="px-4 py-3 text-left font-medium">Policy</th>
+                    <th className="px-4 py-3 text-left font-medium">Evidence</th>
                     <th className="px-4 py-3 text-left font-medium">Status</th>
                     <th className="px-4 py-3 text-left font-medium">Updated</th>
                   </tr>
@@ -882,6 +893,27 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                         {formatInteger(block.tokenCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span className={`rounded border px-2 py-0.5 text-xs capitalize ${
+                          block.policyStatus === "passed"
+                            ? "border-emerald-900/70 bg-emerald-950/20 text-emerald-200"
+                            : block.policyStatus === "failed"
+                              ? "border-red-900/70 bg-red-950/20 text-red-200"
+                              : "border-zinc-700 bg-zinc-950/40 text-zinc-400"
+                        }`}>
+                          {block.policyStatus}
+                        </span>
+                      </td>
+                      <td className="max-w-sm px-4 py-3 text-xs text-zinc-400">
+                        {block.policyDetails.length > 0 ? (
+                          <div className="line-clamp-2">
+                            {block.policyDetails[0].ruleName ?? block.policyDetails[0].decision}
+                            {block.policyDetails[0].matchedSnippet ? `: ${block.policyDetails[0].matchedSnippet}` : ""}
+                          </div>
+                        ) : (
+                          <span className="text-zinc-600">No evidence</span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span className="rounded border border-amber-900/70 bg-amber-950/20 px-2 py-0.5 text-xs capitalize text-amber-200">

@@ -115,6 +115,7 @@ POST /v1/context/collections
 POST /v1/context/collections/{id}/documents
 POST /v1/context/collections/{id}/distill
 GET /v1/context/collections/{id}/canonical-blocks
+POST /v1/context/canonical-blocks/{id}/policy-check
 PATCH /v1/context/canonical-blocks/{id}/review
 GET /v1/context/canonical-review-events
 GET /v1/context/collections/{id}/export
@@ -123,6 +124,8 @@ GET /v1/context/collections/{id}/export
 Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters.
 
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
+
+Before a canonical block can be approved, `POST /v1/context/canonical-blocks/{id}/policy-check` runs active Guardrails rules against the block as `retrieved_context`. The result persists `policyStatus`, `policyCheckedAt`, and per-rule evidence. `block` and retrieved-context `quarantine` decisions set `policyStatus: "failed"` and approval returns `409 policy_error`; `draft` and `rejected` transitions remain available without a passing check.
 
 Review updates accept an optional `note`, persist `reviewedAt`, and attach `reviewedByUserId` when the caller is a dashboard session user. Each status change also writes a tenant-scoped review event with from-status, to-status, note, actor, canonical block ID, collection ID, and timestamp.
 
