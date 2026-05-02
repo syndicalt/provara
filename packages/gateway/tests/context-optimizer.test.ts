@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { contextOptimizationEvents, contextQualityEvents, guardrailRules } from "@provara/db";
+import { contextOptimizationEvents, contextQualityEvents, contextRetrievalEvents, guardrailRules } from "@provara/db";
 import type { ProviderRegistry } from "../src/providers/index.js";
 import type { CompletionRequest, CompletionResponse, Provider, StreamChunk } from "../src/providers/types.js";
 import { optimizeContextChunks } from "../src/context/optimizer.js";
@@ -24,7 +24,7 @@ function fakeRegistry(content = '{"rawScore": 4, "optimizedScore": 3, "rationale
       return {
         id: "judge-response",
         provider: "test-judge",
-      model: request.model,
+        model: request.model,
         content,
         finish_reason: "stop",
         usage: { inputTokens: 10, outputTokens: 8 },
@@ -160,6 +160,15 @@ describe("POST /v1/context/optimize", () => {
         savedTokens: number;
         duplicateSourceIds: string[];
       };
+      retrieval: {
+        retrievedChunks: number;
+        usedChunks: number;
+        unusedChunks: number;
+        duplicateChunks: number;
+        riskyChunks: number;
+        usedSourceIds: string[];
+        unusedSourceIds: string[];
+      };
     };
     expect(body.optimization.optimized).toHaveLength(2);
     expect(body.optimization.optimized[0]).toMatchObject({
@@ -178,6 +187,15 @@ describe("POST /v1/context/optimize", () => {
       droppedChunks: 1,
       duplicateSourceIds: ["b"],
     });
+    expect(body.retrieval).toMatchObject({
+      retrievedChunks: 3,
+      usedChunks: 2,
+      unusedChunks: 1,
+      duplicateChunks: 1,
+      riskyChunks: 0,
+      usedSourceIds: ["a", "c"],
+      unusedSourceIds: ["b"],
+    });
 
     const rows = await db.select().from(contextOptimizationEvents).all();
     expect(rows).toHaveLength(1);
@@ -186,6 +204,16 @@ describe("POST /v1/context/optimize", () => {
       inputChunks: 3,
       outputChunks: 2,
       droppedChunks: 1,
+    });
+    const retrievalRows = await db.select().from(contextRetrievalEvents).all();
+    expect(retrievalRows).toHaveLength(1);
+    expect(retrievalRows[0]).toMatchObject({
+      tenantId: "tenant-pro",
+      retrievedChunks: 3,
+      usedChunks: 2,
+      unusedChunks: 1,
+      duplicateChunks: 1,
+      riskyChunks: 0,
     });
   });
 
@@ -243,6 +271,14 @@ describe("POST /v1/context/optimize", () => {
         riskySourceIds: string[];
         riskDetails: Array<{ id: string; decision: string; ruleName: string }>;
       };
+      retrieval: {
+        retrievedChunks: number;
+        usedChunks: number;
+        unusedChunks: number;
+        duplicateChunks: number;
+        riskyChunks: number;
+        riskySourceIds: string[];
+      };
     };
 
     expect(body.optimization.optimized).toEqual([expect.objectContaining({ id: "safe" })]);
@@ -277,6 +313,14 @@ describe("POST /v1/context/optimize", () => {
         ruleName: "Context injection",
       }),
     ]);
+    expect(body.retrieval).toMatchObject({
+      retrievedChunks: 3,
+      usedChunks: 1,
+      unusedChunks: 2,
+      duplicateChunks: 1,
+      riskyChunks: 1,
+      riskySourceIds: ["risky"],
+    });
 
     const rows = await db.select().from(contextOptimizationEvents).all();
     expect(rows[0]).toMatchObject({
@@ -358,6 +402,50 @@ describe("POST /v1/context/optimize", () => {
     expect(summaryBody.summary.savedTokens).toBeGreaterThan(0);
     expect(summaryBody.summary.reductionPct).toBeGreaterThan(0);
     expect(summaryBody.summary.latestAt).toEqual(expect.any(String));
+
+    const retrievalEventsRes = await app.request("/v1/context/retrieval/events", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(retrievalEventsRes.status).toBe(200);
+    const retrievalEventsBody = await retrievalEventsRes.json() as {
+      events: Array<{ tenantId: string; retrievedChunks: number; usedChunks: number; duplicateChunks: number }>;
+    };
+    expect(retrievalEventsBody.events).toHaveLength(1);
+    expect(retrievalEventsBody.events[0]).toMatchObject({
+      tenantId: "tenant-pro",
+      retrievedChunks: 3,
+      usedChunks: 2,
+      duplicateChunks: 1,
+    });
+
+    const retrievalSummaryRes = await app.request("/v1/context/retrieval/summary", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(retrievalSummaryRes.status).toBe(200);
+    const retrievalSummaryBody = await retrievalSummaryRes.json() as {
+      summary: {
+        eventCount: number;
+        retrievedChunks: number;
+        usedChunks: number;
+        unusedChunks: number;
+        duplicateChunks: number;
+        riskyChunks: number;
+        efficiencyPct: number;
+        duplicateRatePct: number;
+        riskyRatePct: number;
+      };
+    };
+    expect(retrievalSummaryBody.summary).toMatchObject({
+      eventCount: 1,
+      retrievedChunks: 3,
+      usedChunks: 2,
+      unusedChunks: 1,
+      duplicateChunks: 1,
+      riskyChunks: 0,
+    });
+    expect(retrievalSummaryBody.summary.efficiencyPct).toBeGreaterThan(0);
+    expect(retrievalSummaryBody.summary.duplicateRatePct).toBeGreaterThan(0);
+    expect(retrievalSummaryBody.summary.riskyRatePct).toBe(0);
   });
 
   it("validates chunks", async () => {

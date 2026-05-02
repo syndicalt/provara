@@ -17,6 +17,11 @@ import {
   listContextQualityEvents,
   summarizeContextQualityEvents,
 } from "../context/quality.js";
+import {
+  listContextRetrievalEvents,
+  recordContextRetrievalEvent,
+  summarizeContextRetrievalEvents,
+} from "../context/retrieval.js";
 import { getTenantId } from "../auth/tenant.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 import type { ProviderRegistry } from "../providers/index.js";
@@ -226,8 +231,11 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
     const event = await recordContextOptimizationEvent(db, tenantId, optimization, {
       riskScanned: scanRisk.scanRisk ?? false,
     });
+    const retrieval = await recordContextRetrievalEvent(db, tenantId, optimization, {
+      optimizationEventId: event.id,
+    });
 
-    return c.json({ optimization, event });
+    return c.json({ optimization, event, retrieval });
   });
 
   app.get("/events", async (c) => {
@@ -292,6 +300,22 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
   app.get("/quality/summary", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const summary = await summarizeContextQualityEvents(db, tenantId);
+
+    return c.json({ summary });
+  });
+
+  app.get("/retrieval/events", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const rawLimit = Number(c.req.query("limit") ?? 25);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 25;
+    const events = await listContextRetrievalEvents(db, tenantId, { limit });
+
+    return c.json({ events });
+  });
+
+  app.get("/retrieval/summary", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const summary = await summarizeContextRetrievalEvents(db, tenantId);
 
     return c.json({ summary });
   });

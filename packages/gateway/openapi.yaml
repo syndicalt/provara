@@ -426,12 +426,14 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [optimization, event]
+                required: [optimization, event, retrieval]
                 properties:
                   optimization:
                     $ref: "#/components/schemas/ContextOptimizationResult"
                   event:
                     $ref: "#/components/schemas/ContextOptimizationEvent"
+                  retrieval:
+                    $ref: "#/components/schemas/ContextRetrievalEvent"
         "400":
           $ref: "#/components/responses/ValidationError"
         "402":
@@ -569,6 +571,53 @@ paths:
                 properties:
                   summary:
                     $ref: "#/components/schemas/ContextQualitySummary"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
+  /v1/context/retrieval/events:
+    get:
+      tags: [Context Optimizer]
+      summary: List recent context retrieval analytics events
+      operationId: listContextRetrievalEvents
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Recent retrieval events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextRetrievalEvent"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
+  /v1/context/retrieval/summary:
+    get:
+      tags: [Context Optimizer]
+      summary: Summarize context retrieval analytics
+      operationId: summarizeContextRetrieval
+      responses:
+        "200":
+          description: Aggregate retrieval summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary]
+                properties:
+                  summary:
+                    $ref: "#/components/schemas/ContextRetrievalSummary"
         "402":
           $ref: "#/components/responses/InsufficientTier"
 
@@ -2356,6 +2405,120 @@ components:
         avgDelta:
           type: number
           nullable: true
+        latestAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ContextRetrievalEvent:
+      type: object
+      required:
+        - id
+        - tenantId
+        - optimizationEventId
+        - retrievedChunks
+        - usedChunks
+        - unusedChunks
+        - duplicateChunks
+        - riskyChunks
+        - retrievedTokens
+        - usedTokens
+        - unusedTokens
+        - efficiencyPct
+        - duplicateRatePct
+        - riskyRatePct
+        - usedSourceIds
+        - unusedSourceIds
+        - riskySourceIds
+        - createdAt
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        optimizationEventId:
+          type: string
+          nullable: true
+        retrievedChunks:
+          type: integer
+        usedChunks:
+          type: integer
+        unusedChunks:
+          type: integer
+        duplicateChunks:
+          type: integer
+        riskyChunks:
+          type: integer
+        retrievedTokens:
+          type: integer
+        usedTokens:
+          type: integer
+        unusedTokens:
+          type: integer
+        efficiencyPct:
+          type: number
+        duplicateRatePct:
+          type: number
+        riskyRatePct:
+          type: number
+        usedSourceIds:
+          type: array
+          items:
+            type: string
+        unusedSourceIds:
+          type: array
+          items:
+            type: string
+        riskySourceIds:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ContextRetrievalSummary:
+      type: object
+      required:
+        - eventCount
+        - retrievedChunks
+        - usedChunks
+        - unusedChunks
+        - duplicateChunks
+        - riskyChunks
+        - retrievedTokens
+        - usedTokens
+        - unusedTokens
+        - efficiencyPct
+        - duplicateRatePct
+        - riskyRatePct
+        - latestAt
+      properties:
+        eventCount:
+          type: integer
+        retrievedChunks:
+          type: integer
+        usedChunks:
+          type: integer
+        unusedChunks:
+          type: integer
+        duplicateChunks:
+          type: integer
+        riskyChunks:
+          type: integer
+        retrievedTokens:
+          type: integer
+        usedTokens:
+          type: integer
+        unusedTokens:
+          type: integer
+        efficiencyPct:
+          type: number
+        duplicateRatePct:
+          type: number
+        riskyRatePct:
+          type: number
         latestAt:
           type: string
           format: date-time
