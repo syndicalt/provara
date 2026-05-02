@@ -36,6 +36,7 @@ All notable Provara changes are tracked here.
   - Connector credential auth foundation with encrypted tenant-scoped GitHub tokens, credential-bound source sync, no secret echo in API responses, and dashboard auth status.
   - Context dashboard connector management for creating GitHub credentials, creating GitHub repository sources, and manually syncing source rows without rendering secrets.
   - File upload connector v1 with bounded text upload validation, sanitized filename metadata, idempotent source sync, OpenAPI coverage, and dashboard creation controls.
+  - S3 connector v1 with encrypted AWS access-key credentials, SigV4 ListObjectsV2/GetObject sync, prefix/extension/file-size/file-count bounds, ETag idempotency, OpenAPI coverage, and dashboard creation controls.
   - Context Optimizer dashboard configuration controls for optimizer modes, thresholds, risk scanning, local draft persistence, and copyable API payloads.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
@@ -50,7 +51,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, context governance alerts, connector ingestion foundation, GitHub repository connector v1, connector credential auth foundation, dashboard connector management, and file upload connector v1 as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, context governance alerts, connector ingestion foundation, GitHub repository connector v1, connector credential auth foundation, dashboard connector management, file upload connector v1, and S3 connector v1 as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.

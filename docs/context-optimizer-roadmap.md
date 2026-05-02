@@ -40,6 +40,7 @@ Implemented as of `0.2.0`:
 - Connector credential auth foundation with encrypted GitHub token storage and source binding.
 - Dashboard connector management for GitHub credential creation, GitHub source creation, and manual source sync.
 - File upload connector v1 with bounded text upload validation, sanitized file metadata, idempotent source sync, and dashboard creation controls.
+- S3 connector v1 with encrypted AWS access-key credentials, bounded object selection, ETag idempotency, and dashboard creation controls.
 
 Next planned layer:
 - Additional external connector implementations.
@@ -140,6 +141,7 @@ Foundation shipped:
 - Source-level credential binding without exposing secret values in API or dashboard responses.
 - Dashboard controls for creating GitHub credentials and repository sources, plus manual sync from source rows.
 - Bounded file upload source creation for local text/markdown knowledge without external OAuth.
+- S3 bucket source creation and listing with AWS SigV4 sync, prefix/extension/file-size/file-count bounds, and ETag-based idempotency.
 
 Candidate connectors:
 - Confluence.
@@ -147,7 +149,6 @@ Candidate connectors:
 - SharePoint.
 - Notion.
 - Zendesk or Intercom help centers.
-- S3.
 
 ## V3: Retrieval Quality Layer
 

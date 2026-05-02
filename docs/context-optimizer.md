@@ -21,15 +21,15 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
-- Connector ingestion with tenant-scoped manual, file upload, and GitHub repository sources plus encrypted connector credentials.
+- Connector ingestion with tenant-scoped manual, file upload, GitHub repository, and S3 bucket sources plus encrypted connector credentials.
 - Canonical context block distillation with review status and approved-only export.
 - Canonical review audit events with reviewer notes and actor attribution when available.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
-- Dashboard connector management for GitHub credentials, file upload source creation, GitHub repository source creation, and manual source sync.
+- Dashboard connector management for GitHub credentials, AWS credentials, file upload source creation, S3 bucket source creation, GitHub repository source creation, and manual source sync.
 
-It does not yet perform connector pulls from systems such as Confluence, Drive, or S3. Those belong to later roadmap phases.
+It does not yet perform connector pulls from systems such as Confluence or Drive. Those belong to later roadmap phases.
 
 ## API
 
@@ -171,7 +171,27 @@ GitHub repository sources use `type: "github_repository"` with a `github` config
 
 GitHub sync fetches the repository tree and selected blobs through GitHub's JSON API, bounds files by extension/count/size, stores repo/path/SHA metadata on ingested documents and blocks, and skips files whose blob SHA has already synced.
 
-Connector credentials are tenant-scoped encrypted secrets. `POST /v1/context/credentials` accepts `type: "github_token"` and a token `value`, stores it with the same AES-GCM master-key encryption used for provider API keys, and returns only metadata plus `hasSecret: true`. `GET /v1/context/credentials` never returns raw token values. GitHub sources can set `github.credentialId`; sync decrypts that credential server-side, sends it as the GitHub bearer token, and records missing or undecryptable credentials as failed source syncs.
+S3 bucket sources use `type: "s3_bucket"` with an `s3` config object:
+
+```json
+{
+  "name": "Docs bucket",
+  "type": "s3_bucket",
+  "s3": {
+    "bucket": "acme-docs",
+    "region": "us-east-1",
+    "prefix": "docs",
+    "credentialId": "credential-id",
+    "extensions": [".md", ".txt"],
+    "maxFiles": 100,
+    "maxFileBytes": 250000
+  }
+}
+```
+
+S3 sync uses AWS Signature Version 4 against S3 ListObjectsV2 and GetObject, bounds objects by extension/count/size, stores bucket/key/ETag metadata on ingested documents and blocks, and skips objects whose ETag has already synced.
+
+Connector credentials are tenant-scoped encrypted secrets. `POST /v1/context/credentials` accepts `type: "github_token"` and a token `value`, or `type: "aws_access_key"` with a JSON string containing `accessKeyId`, `secretAccessKey`, and optional `sessionToken`. Values are stored with the same AES-GCM master-key encryption used for provider API keys, and responses return only metadata plus `hasSecret: true`. `GET /v1/context/credentials` never returns raw secret values. GitHub sources can set `github.credentialId`; S3 sources must set `s3.credentialId`; sync decrypts the credential server-side and records missing or undecryptable credentials as failed source syncs.
 
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
@@ -222,7 +242,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, list credential metadata without secret values, create text file upload sources, create GitHub repository sources for the first managed collection, and bind a GitHub source to a stored credential. The Collection Sources section shows manual, file upload, and GitHub sources for the first managed collection, including source URI, filename metadata, or repo/branch/path, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, create AWS access-key credentials, list credential metadata without secret values, create text file upload sources, create S3 bucket sources, create GitHub repository sources for the first managed collection, and bind external sources to stored credentials. The Collection Sources section shows manual, file upload, GitHub, and S3 sources for the first managed collection, including source URI, filename metadata, repo/branch/path, or bucket/prefix/region, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -263,6 +283,6 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 The next behavior layer is additional external connector ingestion:
 
-- Confluence, Google Drive, SharePoint, Notion, Zendesk/Intercom, and S3/file upload connectors.
+- Confluence, Google Drive, SharePoint, Notion, and Zendesk/Intercom connectors.
 - Source provenance and sync metadata for managed collections.
 - Connector-level review and policy defaults.
