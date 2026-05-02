@@ -15,6 +15,7 @@ All notable Provara changes are tracked here.
   - Dashboard page at `/dashboard/context` with summary cards and recent optimization events.
   - Demo tenant seed data for screenshot-ready Context Optimizer examples.
   - Optional retrieved-context risk scanning with active Guardrails rules, flagged/quarantined result buckets, persisted source IDs, and dashboard risk metrics.
+  - Context Optimizer quality loop with `POST /v1/context/evaluate`, persisted `context_quality_events`, demo quality rows, and dashboard quality delta/regression visibility.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
 - Optional semantic and hybrid prompt-injection scan modes using the configured judge model.
@@ -28,7 +29,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, and risk-aware optimization as shipped checkpoints, with quality scoring as the next planned layer.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, and V1.2 quality scoring as shipped checkpoints, with retrieval analytics as the next planned layer.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
@@ -43,11 +44,12 @@ All notable Provara changes are tracked here.
 ### Upgrade Notes
 
 - Run database migrations through `0044_firewall_settings`.
-- For Context Optimizer visibility and risk reporting, run database migrations through `0046_context_optimization_risk`.
+- For Context Optimizer visibility, risk reporting, and quality scoring, run database migrations through `0047_context_quality_events`.
 - New tables:
   - `firewall_events`
   - `firewall_settings`
   - `context_optimization_events`
+  - `context_quality_events`
 - Existing tenants keep the safe default firewall settings:
   - `defaultScanMode: "signature"`
   - `toolCallAlignment: "block"`

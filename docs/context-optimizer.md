@@ -11,6 +11,7 @@ The shipped V1 implementation is intentionally narrow:
 - Estimated token savings based on input and output context size.
 - Optional risk scanning with active Guardrails rules for retrieved context.
 - Flagged and quarantined context buckets with rule evidence and source IDs.
+- Raw-context vs optimized-context quality scoring with the configured judge model.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 
@@ -61,9 +62,32 @@ Visibility APIs:
 ```text
 GET /v1/context/summary
 GET /v1/context/events
+GET /v1/context/quality/summary
+GET /v1/context/quality/events
 ```
 
 These endpoints are tenant-scoped and require Intelligence access.
+
+Quality evaluation is available through:
+
+```text
+POST /v1/context/evaluate
+```
+
+The request accepts the same user prompt plus two already-produced answers:
+
+```json
+{
+  "prompt": "What is the refund window?",
+  "rawAnswer": "Refunds are available within 30 days and require a receipt.",
+  "optimizedAnswer": "Refunds are available within 30 days.",
+  "rawSourceIds": ["refunds.md#4", "policy.md#2"],
+  "optimizedSourceIds": ["refunds.md#4"],
+  "regressionThreshold": -0.5
+}
+```
+
+The response includes the judge scores, optimized-minus-raw delta, regression flag, judge target, and persisted event. Provara stores a prompt hash, scores, source IDs, judge metadata, and rationale. It does not persist the full prompt, answers, or context content.
 
 ## Dashboard
 
@@ -91,14 +115,21 @@ The Recent Events table shows:
 - Duplicate source IDs that were removed.
 - Risky source IDs that were flagged or quarantined.
 
+The Quality Loop section shows:
+
+- Average optimized-minus-raw quality delta.
+- Number of raw-vs-optimized quality checks.
+- Number of checks below the configured regression threshold.
+- Recent quality events with raw score, optimized score, delta, status, source IDs, and judge target.
+
 ## Demo Mode
 
 The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This keeps `/dashboard/context` useful for demos, screenshots, and product walkthroughs without requiring a live RAG integration.
 
 ## Next Roadmap Step
 
-The next behavior layer is the quality loop:
+The next behavior layer is retrieval analytics:
 
-- Compare optimized context against raw context with judge scoring.
-- Alert when optimization appears to reduce answer quality.
-- Feed risky-context evidence into future review workflows.
+- Measure unused, duplicate, stale, and conflicting context rates.
+- Recommend source cleanup and retrieval tuning.
+- Feed quality deltas into alerting and evaluation workflows.

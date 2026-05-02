@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { auditLogs, contextOptimizationEvents, costLogs, requests, sessions, subscriptions, users } from "@provara/db";
+import { auditLogs, contextOptimizationEvents, contextQualityEvents, costLogs, requests, sessions, subscriptions, users } from "@provara/db";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "./_setup/db.js";
 import { reseedDemoTenant, DEMO_TENANT_ID } from "../src/demo/seed.js";
@@ -62,6 +62,14 @@ describe("#229 — demo tenant seed", () => {
     expect(contextEvents.reduce((sum, row) => sum + row.quarantinedChunks, 0)).toBe(1);
     expect(JSON.parse(contextEvents[0].duplicateSourceIds)).toEqual(expect.any(Array));
     expect(JSON.parse(contextEvents[0].riskySourceIds)).toEqual(expect.any(Array));
+
+    const qualityEvents = await db
+      .select()
+      .from(contextQualityEvents)
+      .where(eq(contextQualityEvents.tenantId, DEMO_TENANT_ID))
+      .all();
+    expect(qualityEvents).toHaveLength(3);
+    expect(qualityEvents.some((row) => row.regressed)).toBe(true);
   });
 
   it("populates attribution fields on every seeded request", async () => {

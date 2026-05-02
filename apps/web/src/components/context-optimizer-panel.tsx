@@ -41,6 +41,32 @@ export interface ContextOptimizationEvent {
   createdAt: string;
 }
 
+export interface ContextQualitySummary {
+  eventCount: number;
+  regressedCount: number;
+  avgRawScore: number | null;
+  avgOptimizedScore: number | null;
+  avgDelta: number | null;
+  latestAt: string | null;
+}
+
+export interface ContextQualityEvent {
+  id: string;
+  tenantId: string | null;
+  rawScore: number;
+  optimizedScore: number;
+  delta: number;
+  regressed: boolean;
+  regressionThreshold: number;
+  judgeProvider: string;
+  judgeModel: string;
+  promptHash: string;
+  rawSourceIds: string[];
+  optimizedSourceIds: string[];
+  rationale: string | null;
+  createdAt: string;
+}
+
 interface GateState {
   message: string;
   upgradeUrl?: string;
@@ -49,6 +75,8 @@ interface GateState {
 interface LoadState {
   summary: ContextOptimizationSummary | null;
   events: ContextOptimizationEvent[];
+  qualitySummary: ContextQualitySummary | null;
+  qualityEvents: ContextQualityEvent[];
   loading: boolean;
   error: string | null;
   gate: GateState | null;
@@ -60,6 +88,11 @@ function formatInteger(value: number): string {
 
 function formatPercent(value: number): string {
   return `${value.toFixed(value % 1 === 0 ? 0 : 2)}%`;
+}
+
+function formatScore(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "n/a";
+  return value.toFixed(value % 1 === 0 ? 0 : 2);
 }
 
 function formatTimestamp(value: string | null): string {
@@ -76,6 +109,13 @@ function metricTone(value: number): string {
 
 function riskTone(value: number): string {
   if (value > 0) return "text-amber-300";
+  return "text-zinc-200";
+}
+
+function deltaTone(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "text-zinc-200";
+  if (value < 0) return "text-red-300";
+  if (value > 0) return "text-emerald-300";
   return "text-zinc-200";
 }
 
@@ -122,6 +162,8 @@ export function ContextOptimizerPanel() {
   const [state, setState] = useState<LoadState>({
     summary: null,
     events: [],
+    qualitySummary: null,
+    qualityEvents: [],
     loading: true,
     error: null,
     gate: null,
@@ -134,19 +176,28 @@ export function ContextOptimizerPanel() {
       setState((prev) => ({ ...prev, loading: true, error: null, gate: null }));
 
       try {
-        const [summaryRes, eventsRes] = await Promise.all([
+        const [summaryRes, eventsRes, qualitySummaryRes, qualityEventsRes] = await Promise.all([
           gatewayFetchRaw("/v1/context/summary"),
           gatewayFetchRaw("/v1/context/events?limit=25"),
+          gatewayFetchRaw("/v1/context/quality/summary"),
+          gatewayFetchRaw("/v1/context/quality/events?limit=10"),
         ]);
 
-        if (summaryRes.status === 402 || eventsRes.status === 402) {
+        if (
+          summaryRes.status === 402 ||
+          eventsRes.status === 402 ||
+          qualitySummaryRes.status === 402 ||
+          qualityEventsRes.status === 402
+        ) {
           const body = await readJson<{ error?: { message?: string }; gate?: { upgradeUrl?: string } }>(
-            summaryRes.status === 402 ? summaryRes : eventsRes,
+            [summaryRes, eventsRes, qualitySummaryRes, qualityEventsRes].find((res) => res.status === 402) ?? summaryRes,
           );
           if (!cancelled) {
             setState({
               summary: null,
               events: [],
+              qualitySummary: null,
+              qualityEvents: [],
               loading: false,
               error: null,
               gate: {
@@ -158,17 +209,21 @@ export function ContextOptimizerPanel() {
           return;
         }
 
-        if (!summaryRes.ok || !eventsRes.ok) {
+        if (!summaryRes.ok || !eventsRes.ok || !qualitySummaryRes.ok || !qualityEventsRes.ok) {
           throw new Error("Failed to load Context Optimizer data");
         }
 
         const summaryBody = await summaryRes.json() as { summary: ContextOptimizationSummary };
         const eventsBody = await eventsRes.json() as { events: ContextOptimizationEvent[] };
+        const qualitySummaryBody = await qualitySummaryRes.json() as { summary: ContextQualitySummary };
+        const qualityEventsBody = await qualityEventsRes.json() as { events: ContextQualityEvent[] };
 
         if (!cancelled) {
           setState({
             summary: summaryBody.summary,
             events: eventsBody.events,
+            qualitySummary: qualitySummaryBody.summary,
+            qualityEvents: qualityEventsBody.events,
             loading: false,
             error: null,
             gate: null,
@@ -179,6 +234,8 @@ export function ContextOptimizerPanel() {
           setState({
             summary: null,
             events: [],
+            qualitySummary: null,
+            qualityEvents: [],
             loading: false,
             error: err instanceof Error ? err.message : "Failed to load Context Optimizer data",
             gate: null,
@@ -195,6 +252,8 @@ export function ContextOptimizerPanel() {
 
   const summary = state.summary;
   const eventRows = useMemo(() => state.events, [state.events]);
+  const qualitySummary = state.qualitySummary;
+  const qualityRows = useMemo(() => state.qualityEvents, [state.qualityEvents]);
 
   return (
     <div className="space-y-6">
@@ -257,6 +316,99 @@ export function ContextOptimizerPanel() {
           tone={metricTone(summary?.reductionPct ?? 0)}
         />
       </div>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Quality Loop</h2>
+          <p className="mt-1 text-sm text-zinc-500">Raw-context vs optimized-context answer scoring.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-3">
+          <StatTile
+            label="Quality Delta"
+            value={formatScore(qualitySummary?.avgDelta)}
+            detail={`${formatScore(qualitySummary?.avgOptimizedScore)} optimized vs ${formatScore(qualitySummary?.avgRawScore)} raw`}
+            tone={deltaTone(qualitySummary?.avgDelta)}
+          />
+          <StatTile
+            label="Quality Checks"
+            value={formatInteger(qualitySummary?.eventCount ?? 0)}
+            detail="Raw vs optimized comparisons"
+          />
+          <StatTile
+            label="Regressions"
+            value={formatInteger(qualitySummary?.regressedCount ?? 0)}
+            detail="Below configured delta threshold"
+            tone={riskTone(qualitySummary?.regressedCount ?? 0)}
+          />
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Quality Events</h2>
+          <p className="mt-1 text-sm text-zinc-500">Recent judge comparisons for optimized context.</p>
+        </div>
+
+        {state.loading ? (
+          <LoadingRows />
+        ) : qualityRows.length === 0 ? (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-8 text-center text-sm text-zinc-400">
+            No context quality checks yet.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Time</th>
+                    <th className="px-4 py-3 text-right font-medium">Raw</th>
+                    <th className="px-4 py-3 text-right font-medium">Optimized</th>
+                    <th className="px-4 py-3 text-right font-medium">Delta</th>
+                    <th className="px-4 py-3 text-left font-medium">Status</th>
+                    <th className="px-4 py-3 text-left font-medium">Sources</th>
+                    <th className="px-4 py-3 text-left font-medium">Judge</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {qualityRows.map((event) => (
+                    <tr key={event.id}>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatTimestamp(event.createdAt)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">{formatScore(event.rawScore)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">{formatScore(event.optimizedScore)}</td>
+                      <td className={`whitespace-nowrap px-4 py-3 text-right tabular-nums ${deltaTone(event.delta)}`}>
+                        {formatScore(event.delta)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        {event.regressed ? (
+                          <span className="rounded border border-red-900/70 bg-red-950/30 px-2 py-0.5 text-xs text-red-200">Regression</span>
+                        ) : (
+                          <span className="rounded border border-emerald-900/70 bg-emerald-950/20 px-2 py-0.5 text-xs text-emerald-200">Stable</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex max-w-xl flex-wrap gap-1">
+                          {[...new Set([...event.rawSourceIds, ...event.optimizedSourceIds])].slice(0, 6).map((id) => (
+                            <span key={id} className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-zinc-300">
+                              {id}
+                            </span>
+                          ))}
+                          {event.rawSourceIds.length + event.optimizedSourceIds.length === 0 && (
+                            <span className="text-zinc-600">None</span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-zinc-500">
+                        {event.judgeProvider}/{event.judgeModel}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section>
         <div className="mb-3 flex items-center justify-between">

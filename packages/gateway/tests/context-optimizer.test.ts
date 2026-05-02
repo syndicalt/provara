@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
-import { contextOptimizationEvents, guardrailRules } from "@provara/db";
+import { contextOptimizationEvents, contextQualityEvents, guardrailRules } from "@provara/db";
+import type { ProviderRegistry } from "../src/providers/index.js";
+import type { CompletionRequest, CompletionResponse, Provider, StreamChunk } from "../src/providers/types.js";
 import { optimizeContextChunks } from "../src/context/optimizer.js";
 import { createContextRoutes } from "../src/routes/context.js";
 import { makeTestDb } from "./_setup/db.js";
@@ -14,10 +16,40 @@ vi.mock("../src/auth/tenant.js", async (importOriginal) => ({
 
 import { requireIntelligenceTier } from "../src/auth/tier.js";
 
-function buildApp(db: Db) {
+function fakeRegistry(content = '{"rawScore": 4, "optimizedScore": 3, "rationale": "Optimized answer omitted one detail."}'): ProviderRegistry {
+  const provider: Provider = {
+    name: "test-judge",
+    models: ["gpt-4o-mini"],
+    async complete(request: CompletionRequest): Promise<CompletionResponse> {
+      return {
+        id: "judge-response",
+        provider: "test-judge",
+      model: request.model,
+        content,
+        finish_reason: "stop",
+        usage: { inputTokens: 10, outputTokens: 8 },
+        latencyMs: 1,
+      };
+    },
+    async *stream(): AsyncIterable<StreamChunk> {
+      yield { content: "", done: true };
+    },
+  };
+  return {
+    get: (name) => (name === provider.name ? provider : undefined),
+    getForModel: (model) => (provider.models.includes(model) ? provider : undefined),
+    list: () => [provider],
+    reload: () => undefined,
+    refreshModels: async () => [{ provider: provider.name, models: provider.models, discovered: false }],
+    addCustom: () => undefined,
+    removeCustom: () => undefined,
+  };
+}
+
+function buildApp(db: Db, registry?: ProviderRegistry) {
   const app = new Hono();
   app.use("/v1/context/*", requireIntelligenceTier(db));
-  app.route("/v1/context", createContextRoutes(db));
+  app.route("/v1/context", createContextRoutes(db, registry));
   return app;
 }
 
@@ -368,5 +400,142 @@ describe("POST /v1/context/optimize", () => {
       type: "validation_error",
       message: "Invalid JSON body",
     });
+  });
+
+  it("evaluates raw-vs-optimized answer quality and records regressions", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db, fakeRegistry());
+
+    const res = await app.request("/v1/context/evaluate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        prompt: "What is the refund window?",
+        rawAnswer: "Refunds are available within 30 days and require a receipt.",
+        optimizedAnswer: "Refunds are available within 30 days.",
+        rawSourceIds: ["refunds#1", "policy#2"],
+        optimizedSourceIds: ["refunds#1"],
+        regressionThreshold: -0.5,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      evaluation: {
+        rawScore: number;
+        optimizedScore: number;
+        delta: number;
+        regressed: boolean;
+        judge: { provider: string; model: string };
+      };
+      event: {
+        tenantId: string;
+        rawScore: number;
+        optimizedScore: number;
+        delta: number;
+        regressed: boolean;
+        promptHash: string;
+        rawSourceIds: string[];
+        optimizedSourceIds: string[];
+      };
+    };
+
+    expect(body.evaluation).toMatchObject({
+      rawScore: 4,
+      optimizedScore: 3,
+      delta: -1,
+      regressed: true,
+      judge: { provider: "test-judge", model: "gpt-4o-mini" },
+    });
+    expect(body.event).toMatchObject({
+      tenantId: "tenant-pro",
+      rawScore: 4,
+      optimizedScore: 3,
+      delta: -1,
+      regressed: true,
+      rawSourceIds: ["refunds#1", "policy#2"],
+      optimizedSourceIds: ["refunds#1"],
+    });
+    expect(body.event.promptHash).toHaveLength(64);
+
+    const rows = await db.select().from(contextQualityEvents).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      tenantId: "tenant-pro",
+      rawScore: 4,
+      optimizedScore: 3,
+      delta: -1,
+      regressed: true,
+      judgeProvider: "test-judge",
+      judgeModel: "gpt-4o-mini",
+    });
+  });
+
+  it("lists and summarizes context quality events by tenant", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db, fakeRegistry('{"rawScore": 4, "optimizedScore": 4.5, "rationale": "No loss."}'));
+
+    await app.request("/v1/context/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        prompt: "Summarize support hours",
+        rawAnswer: "Support is open 9 to 5.",
+        optimizedAnswer: "Support is open 9 to 5.",
+      }),
+    });
+    await app.request("/v1/context/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({
+        prompt: "Other tenant",
+        rawAnswer: "Raw",
+        optimizedAnswer: "Optimized",
+      }),
+    });
+
+    const eventsRes = await app.request("/v1/context/quality/events", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(eventsRes.status).toBe(200);
+    const eventsBody = await eventsRes.json() as {
+      events: Array<{ tenantId: string; rawScore: number; optimizedScore: number; delta: number }>;
+    };
+    expect(eventsBody.events).toHaveLength(1);
+    expect(eventsBody.events[0]).toMatchObject({
+      tenantId: "tenant-pro",
+      rawScore: 4,
+      optimizedScore: 4.5,
+      delta: 0.5,
+    });
+
+    const summaryRes = await app.request("/v1/context/quality/summary", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(summaryRes.status).toBe(200);
+    const summaryBody = await summaryRes.json() as {
+      summary: {
+        eventCount: number;
+        regressedCount: number;
+        avgRawScore: number;
+        avgOptimizedScore: number;
+        avgDelta: number;
+        latestAt: string | null;
+      };
+    };
+    expect(summaryBody.summary).toMatchObject({
+      eventCount: 1,
+      regressedCount: 0,
+      avgRawScore: 4,
+      avgOptimizedScore: 4.5,
+      avgDelta: 0.5,
+    });
+    expect(summaryBody.summary.latestAt).toEqual(expect.any(String));
   });
 });

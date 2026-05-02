@@ -12,8 +12,14 @@ import {
   recordContextOptimizationEvent,
   summarizeContextOptimizationEvents,
 } from "../context/events.js";
+import {
+  evaluateContextQuality,
+  listContextQualityEvents,
+  summarizeContextQualityEvents,
+} from "../context/quality.js";
 import { getTenantId } from "../auth/tenant.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
+import type { ProviderRegistry } from "../providers/index.js";
 
 const MAX_CHUNKS = 200;
 const MAX_CHUNK_CHARS = 100_000;
@@ -61,6 +67,66 @@ function validateScanRisk(value: unknown): { scanRisk?: boolean; error?: string 
   if (value === undefined) return { scanRisk: false };
   if (typeof value !== "boolean") return { error: "scanRisk must be a boolean" };
   return { scanRisk: value };
+}
+
+function validateStringArray(value: unknown, field: string): { values?: string[]; error?: string } {
+  if (value === undefined) return { values: [] };
+  if (!Array.isArray(value)) return { error: `${field} must be an array` };
+  const values: string[] = [];
+  for (const [index, item] of value.entries()) {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      return { error: `${field}[${index}] must be a non-empty string` };
+    }
+    values.push(item);
+  }
+  return { values };
+}
+
+function validateQualityBody(value: unknown): {
+  input?: {
+    prompt: string;
+    rawAnswer: string;
+    optimizedAnswer: string;
+    rawSourceIds: string[];
+    optimizedSourceIds: string[];
+    regressionThreshold?: number;
+  };
+  error?: string;
+} {
+  if (!isRecord(value)) return { error: "body must be an object" };
+  const prompt = value.prompt;
+  const rawAnswer = value.rawAnswer;
+  const optimizedAnswer = value.optimizedAnswer;
+  if (typeof prompt !== "string" || prompt.trim().length === 0) {
+    return { error: "prompt is required" };
+  }
+  if (typeof rawAnswer !== "string" || rawAnswer.trim().length === 0) {
+    return { error: "rawAnswer is required" };
+  }
+  if (typeof optimizedAnswer !== "string" || optimizedAnswer.trim().length === 0) {
+    return { error: "optimizedAnswer is required" };
+  }
+  const rawSourceIds = validateStringArray(value.rawSourceIds, "rawSourceIds");
+  if (!rawSourceIds.values) return { error: rawSourceIds.error };
+  const optimizedSourceIds = validateStringArray(value.optimizedSourceIds, "optimizedSourceIds");
+  if (!optimizedSourceIds.values) return { error: optimizedSourceIds.error };
+  if (
+    value.regressionThreshold !== undefined &&
+    (typeof value.regressionThreshold !== "number" || !Number.isFinite(value.regressionThreshold))
+  ) {
+    return { error: "regressionThreshold must be a number" };
+  }
+
+  return {
+    input: {
+      prompt,
+      rawAnswer,
+      optimizedAnswer,
+      rawSourceIds: rawSourceIds.values,
+      optimizedSourceIds: optimizedSourceIds.values,
+      regressionThreshold: typeof value.regressionThreshold === "number" ? value.regressionThreshold : undefined,
+    },
+  };
 }
 
 function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizationResult {
@@ -124,7 +190,7 @@ async function applyRiskScan(
   });
 }
 
-export function createContextRoutes(db: Db) {
+export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
   const app = new Hono();
 
   app.post("/optimize", async (c) => {
@@ -176,6 +242,56 @@ export function createContextRoutes(db: Db) {
   app.get("/summary", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const summary = await summarizeContextOptimizationEvents(db, tenantId);
+
+    return c.json({ summary });
+  });
+
+  app.post("/evaluate", async (c) => {
+    if (!registry) {
+      return c.json(
+        { error: { message: "Judge registry is not configured", type: "configuration_error" } },
+        503,
+      );
+    }
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateQualityBody(body);
+    if (!parsed.input) {
+      return c.json(
+        { error: { message: parsed.error || "invalid evaluation body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    try {
+      const result = await evaluateContextQuality(db, registry, tenantId, parsed.input);
+      return c.json(result);
+    } catch (err) {
+      return c.json(
+        {
+          error: {
+            message: err instanceof Error ? err.message : "Context quality evaluation failed",
+            type: "judge_error",
+          },
+        },
+        502,
+      );
+    }
+  });
+
+  app.get("/quality/events", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const rawLimit = Number(c.req.query("limit") ?? 25);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 25;
+    const regressedOnly = c.req.query("regressedOnly") === "true";
+    const events = await listContextQualityEvents(db, tenantId, { limit, regressedOnly });
+
+    return c.json({ events });
+  });
+
+  app.get("/quality/summary", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const summary = await summarizeContextQualityEvents(db, tenantId);
 
     return c.json({ summary });
   });

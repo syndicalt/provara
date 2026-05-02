@@ -346,6 +346,28 @@ export const contextOptimizationEvents = sqliteTable("context_optimization_event
   index("context_optimization_events_tenant_created_idx").on(table.tenantId, table.createdAt),
 ]);
 
+export const contextQualityEvents = sqliteTable("context_quality_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  rawScore: real("raw_score").notNull(),
+  optimizedScore: real("optimized_score").notNull(),
+  delta: real("delta").notNull(),
+  regressed: integer("regressed", { mode: "boolean" }).notNull().default(false),
+  regressionThreshold: real("regression_threshold").notNull(),
+  judgeProvider: text("judge_provider").notNull(),
+  judgeModel: text("judge_model").notNull(),
+  promptHash: text("prompt_hash").notNull(),
+  rawSourceIds: text("raw_source_ids").notNull().default("[]"),
+  optimizedSourceIds: text("optimized_source_ids").notNull().default("[]"),
+  rationale: text("rationale"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_quality_events_tenant_created_idx").on(table.tenantId, table.createdAt),
+  index("context_quality_events_tenant_regressed_idx").on(table.tenantId, table.regressed, table.createdAt),
+]);
+
 export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),

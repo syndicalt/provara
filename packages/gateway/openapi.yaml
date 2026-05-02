@@ -485,6 +485,93 @@ paths:
         "402":
           $ref: "#/components/responses/InsufficientTier"
 
+  /v1/context/evaluate:
+    post:
+      tags: [Context Optimizer]
+      summary: Evaluate raw-context vs optimized-context answer quality
+      description: |
+        Intelligence-tier endpoint that uses the configured judge model to compare
+        an answer produced with raw retrieved context against an answer produced
+        with optimized context. The event stores scores, source IDs, judge
+        metadata, a prompt hash, and rationale without persisting full content.
+      operationId: evaluateContextQuality
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextQualityEvaluateRequest"
+      responses:
+        "200":
+          description: Quality evaluation result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [evaluation, event]
+                properties:
+                  evaluation:
+                    $ref: "#/components/schemas/ContextQualityEvaluation"
+                  event:
+                    $ref: "#/components/schemas/ContextQualityEvent"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "502":
+          description: Judge model failed or returned invalid scores.
+
+  /v1/context/quality/events:
+    get:
+      tags: [Context Optimizer]
+      summary: List recent context quality events
+      operationId: listContextQualityEvents
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+        - in: query
+          name: regressedOnly
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: Recent quality events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextQualityEvent"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
+  /v1/context/quality/summary:
+    get:
+      tags: [Context Optimizer]
+      summary: Summarize context quality events
+      operationId: summarizeContextQuality
+      responses:
+        "200":
+          description: Aggregate quality summary
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary]
+                properties:
+                  summary:
+                    $ref: "#/components/schemas/ContextQualitySummary"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
   /v1/api-keys/status:
     get:
       tags: [API Keys]
@@ -2142,6 +2229,133 @@ components:
           type: integer
         quarantinedChunks:
           type: integer
+        latestAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    ContextQualityEvaluateRequest:
+      type: object
+      required: [prompt, rawAnswer, optimizedAnswer]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+        rawAnswer:
+          type: string
+          minLength: 1
+        optimizedAnswer:
+          type: string
+          minLength: 1
+        rawSourceIds:
+          type: array
+          items:
+            type: string
+        optimizedSourceIds:
+          type: array
+          items:
+            type: string
+        regressionThreshold:
+          type: number
+          default: -0.5
+
+    ContextQualityEvaluation:
+      type: object
+      required: [rawScore, optimizedScore, delta, regressed, regressionThreshold, judge, rationale]
+      properties:
+        rawScore:
+          type: number
+        optimizedScore:
+          type: number
+        delta:
+          type: number
+        regressed:
+          type: boolean
+        regressionThreshold:
+          type: number
+        judge:
+          type: object
+          required: [provider, model]
+          properties:
+            provider:
+              type: string
+            model:
+              type: string
+        rationale:
+          type: string
+          nullable: true
+
+    ContextQualityEvent:
+      type: object
+      required:
+        - id
+        - tenantId
+        - rawScore
+        - optimizedScore
+        - delta
+        - regressed
+        - regressionThreshold
+        - judgeProvider
+        - judgeModel
+        - promptHash
+        - rawSourceIds
+        - optimizedSourceIds
+        - rationale
+        - createdAt
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        rawScore:
+          type: number
+        optimizedScore:
+          type: number
+        delta:
+          type: number
+        regressed:
+          type: boolean
+        regressionThreshold:
+          type: number
+        judgeProvider:
+          type: string
+        judgeModel:
+          type: string
+        promptHash:
+          type: string
+        rawSourceIds:
+          type: array
+          items:
+            type: string
+        optimizedSourceIds:
+          type: array
+          items:
+            type: string
+        rationale:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    ContextQualitySummary:
+      type: object
+      required: [eventCount, regressedCount, avgRawScore, avgOptimizedScore, avgDelta, latestAt]
+      properties:
+        eventCount:
+          type: integer
+        regressedCount:
+          type: integer
+        avgRawScore:
+          type: number
+          nullable: true
+        avgOptimizedScore:
+          type: number
+          nullable: true
+        avgDelta:
+          type: number
+          nullable: true
         latestAt:
           type: string
           format: date-time

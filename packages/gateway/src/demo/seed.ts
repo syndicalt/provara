@@ -10,6 +10,7 @@ import {
   costLogs,
   costMigrations,
   contextOptimizationEvents,
+  contextQualityEvents,
   customProviders,
   feedback,
   guardrailLogs,
@@ -721,6 +722,72 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
       createdAt: event.createdAt,
     }).run();
   }
+
+  const contextQualityRows = [
+    {
+      id: "cqe_demo_refunds_stable",
+      rawScore: 4.4,
+      optimizedScore: 4.3,
+      delta: -0.1,
+      regressed: false,
+      regressionThreshold: -0.5,
+      judgeProvider: "openai",
+      judgeModel: "gpt-4o-mini",
+      promptHash: "demo_refunds_hash",
+      rawSourceIds: ["refunds.md#4", "refunds-copy.md#1", "billing-faq#9"],
+      optimizedSourceIds: ["refunds.md#4", "billing-faq#9"],
+      rationale: "Optimized answer preserved the refund window and removed repeated policy text.",
+      createdAt: new Date(now.getTime() - 90 * 60 * 1000),
+    },
+    {
+      id: "cqe_demo_policy_regression",
+      rawScore: 4.1,
+      optimizedScore: 3.3,
+      delta: -0.8,
+      regressed: true,
+      regressionThreshold: -0.5,
+      judgeProvider: "openai",
+      judgeModel: "gpt-4o-mini",
+      promptHash: "demo_policy_hash",
+      rawSourceIds: ["security-policy#2", "sso-runbook#5", "partner-note#3"],
+      optimizedSourceIds: ["security-policy#2", "sso-runbook#5"],
+      rationale: "Optimized answer lost one exception from the raw context.",
+      createdAt: new Date(now.getTime() - 7 * 60 * 60 * 1000),
+    },
+    {
+      id: "cqe_demo_runbook_improved",
+      rawScore: 3.8,
+      optimizedScore: 4.2,
+      delta: 0.4,
+      regressed: false,
+      regressionThreshold: -0.5,
+      judgeProvider: "openai",
+      judgeModel: "gpt-4o-mini",
+      promptHash: "demo_runbook_hash",
+      rawSourceIds: ["agent-runbook#11", "tool-calls#4", "handoff#2"],
+      optimizedSourceIds: ["agent-runbook#11", "tool-calls#4"],
+      rationale: "Optimized answer was more concise while retaining the required handoff steps.",
+      createdAt: new Date(now.getTime() - 1 * DAY_MS),
+    },
+  ];
+  for (const event of contextQualityRows) {
+    await db.insert(contextQualityEvents).values({
+      id: event.id,
+      tenantId,
+      rawScore: event.rawScore,
+      optimizedScore: event.optimizedScore,
+      delta: event.delta,
+      regressed: event.regressed,
+      regressionThreshold: event.regressionThreshold,
+      judgeProvider: event.judgeProvider,
+      judgeModel: event.judgeModel,
+      promptHash: event.promptHash,
+      rawSourceIds: JSON.stringify(event.rawSourceIds),
+      optimizedSourceIds: JSON.stringify(event.optimizedSourceIds),
+      rationale: event.rationale,
+      createdAt: event.createdAt,
+    }).run();
+  }
 }
 
 /** Wipe every row scoped to the demo tenant. Order matters where FKs apply. */
@@ -744,6 +811,7 @@ async function wipe(db: Db, tenantId: string): Promise<void> {
   await db.delete(routingWeightSnapshots).where(eq(routingWeightSnapshots.tenantId, tenantId)).run();
   await db.delete(spendBudgets).where(eq(spendBudgets.tenantId, tenantId)).run();
   await db.delete(costMigrations).where(eq(costMigrations.tenantId, tenantId)).run();
+  await db.delete(contextQualityEvents).where(eq(contextQualityEvents.tenantId, tenantId)).run();
   await db.delete(contextOptimizationEvents).where(eq(contextOptimizationEvents.tenantId, tenantId)).run();
   await db.delete(customProviders).where(eq(customProviders.tenantId, tenantId)).run();
   await db.delete(teamInvites).where(eq(teamInvites.tenantId, tenantId)).run();
