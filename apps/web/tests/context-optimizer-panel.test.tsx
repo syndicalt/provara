@@ -39,6 +39,8 @@ describe("ContextOptimizerPanel", () => {
             avgRelevanceScore: 0.61,
             lowRelevanceChunks: 2,
             rerankedChunks: 4,
+            avgFreshnessScore: 0.72,
+            staleChunks: 2,
             flaggedChunks: 1,
             quarantinedChunks: 2,
             latestAt: "2026-05-01T21:00:00.000Z",
@@ -95,6 +97,8 @@ describe("ContextOptimizerPanel", () => {
             avgRelevanceScore: 0.61,
             lowRelevanceChunks: 2,
             rerankedChunks: 4,
+            avgFreshnessScore: 0.72,
+            staleChunks: 2,
             efficiencyPct: 62,
             duplicateRatePct: 20,
             nearDuplicateRatePct: 10,
@@ -122,6 +126,8 @@ describe("ContextOptimizerPanel", () => {
               avgRelevanceScore: 0.58,
               lowRelevanceChunks: 1,
               rerankedChunks: 2,
+              avgFreshnessScore: 0.66,
+              staleChunks: 1,
               efficiencyPct: 60,
               duplicateRatePct: 20,
               nearDuplicateRatePct: 20,
@@ -150,6 +156,8 @@ describe("ContextOptimizerPanel", () => {
             avgRelevanceScore: 0.58,
             lowRelevanceChunks: 1,
             rerankedChunks: 2,
+            avgFreshnessScore: 0.66,
+            staleChunks: 1,
             duplicateSourceIds: ["chunk-b"],
             nearDuplicateSourceIds: ["chunk-c"],
             riskScanned: true,
@@ -186,6 +194,7 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Retrieval Efficiency")).toBeInTheDocument();
     expect(screen.getByText("Unused Context")).toBeInTheDocument();
     expect(screen.getAllByText("Relevance").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Freshness").length).toBeGreaterThan(0);
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();
     expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
   });
@@ -207,6 +216,8 @@ describe("ContextOptimizerPanel", () => {
             avgRelevanceScore: null,
             lowRelevanceChunks: 0,
             rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
             flaggedChunks: 0,
             quarantinedChunks: 0,
             latestAt: null,
@@ -244,6 +255,8 @@ describe("ContextOptimizerPanel", () => {
             avgRelevanceScore: null,
             lowRelevanceChunks: 0,
             rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
             efficiencyPct: 0,
             duplicateRatePct: 0,
             nearDuplicateRatePct: 0,

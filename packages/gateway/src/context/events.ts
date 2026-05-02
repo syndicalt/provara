@@ -19,6 +19,8 @@ export interface ContextOptimizationEvent {
   avgRelevanceScore: number | null;
   lowRelevanceChunks: number;
   rerankedChunks: number;
+  avgFreshnessScore: number | null;
+  staleChunks: number;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
   riskScanned: boolean;
@@ -59,6 +61,8 @@ function eventFromRow(row: typeof contextOptimizationEvents.$inferSelect): Conte
     avgRelevanceScore: row.avgRelevanceScore,
     lowRelevanceChunks: row.lowRelevanceChunks,
     rerankedChunks: row.rerankedChunks,
+    avgFreshnessScore: row.avgFreshnessScore,
+    staleChunks: row.staleChunks,
     duplicateSourceIds: parseDuplicateSourceIds(row.duplicateSourceIds),
     nearDuplicateSourceIds: parseDuplicateSourceIds(row.nearDuplicateSourceIds),
     riskScanned: row.riskScanned,
@@ -124,6 +128,8 @@ export async function recordContextOptimizationEvent(
     avgRelevanceScore: result.metrics.avgRelevanceScore,
     lowRelevanceChunks: result.metrics.lowRelevanceChunks,
     rerankedChunks: result.metrics.rerankedChunks,
+    avgFreshnessScore: result.metrics.avgFreshnessScore,
+    staleChunks: result.metrics.staleChunks,
     duplicateSourceIds: JSON.stringify(duplicateSourceIds),
     nearDuplicateSourceIds: JSON.stringify(nearDuplicateSourceIds),
     riskScanned: options.riskScanned ?? false,
@@ -175,6 +181,8 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       avgRelevanceScore: sql<number | null>`avg(${contextOptimizationEvents.avgRelevanceScore})`,
       lowRelevanceChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.lowRelevanceChunks}), 0)`,
       rerankedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.rerankedChunks}), 0)`,
+      avgFreshnessScore: sql<number | null>`avg(${contextOptimizationEvents.avgFreshnessScore})`,
+      staleChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.staleChunks}), 0)`,
       flaggedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.flaggedChunks}), 0)`,
       quarantinedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.quarantinedChunks}), 0)`,
     })
@@ -211,6 +219,10 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       : Number(row.avgRelevanceScore.toFixed(4)),
     lowRelevanceChunks: row?.lowRelevanceChunks ?? 0,
     rerankedChunks: row?.rerankedChunks ?? 0,
+    avgFreshnessScore: row?.avgFreshnessScore === null || row?.avgFreshnessScore === undefined
+      ? null
+      : Number(row.avgFreshnessScore.toFixed(4)),
+    staleChunks: row?.staleChunks ?? 0,
     latestAt: latestRow?.createdAt ?? null,
   };
 }

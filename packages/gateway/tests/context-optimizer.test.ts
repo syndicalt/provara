@@ -154,6 +154,50 @@ describe("context optimizer core", () => {
     expect(result.metrics.lowRelevanceChunks).toBeGreaterThan(0);
     expect(result.metrics.rerankedChunks).toBe(2);
   });
+
+  it("scores stale context from bounded metadata dates", () => {
+    const result = optimizeContextChunks([
+      {
+        id: "fresh",
+        content: "Refund policy for current paid accounts.",
+        metadata: { updatedAt: "2026-04-20T00:00:00.000Z" },
+      },
+      {
+        id: "stale",
+        content: "Old refund policy for legacy paid accounts.",
+        metadata: { updatedAt: "2025-01-01T00:00:00.000Z" },
+      },
+      {
+        id: "expired",
+        content: "Expired campaign refund exception.",
+        metadata: { expiresAt: "2026-04-30T00:00:00.000Z" },
+      },
+      {
+        id: "unknown",
+        content: "Context without freshness metadata.",
+      },
+    ], {
+      freshnessMode: "metadata",
+      maxContextAgeDays: 90,
+      referenceTime: new Date("2026-05-01T00:00:00.000Z"),
+    });
+
+    expect(result.optimized.find((chunk) => chunk.id === "fresh")).toMatchObject({
+      stale: false,
+      freshnessScore: expect.any(Number),
+    });
+    expect(result.optimized.find((chunk) => chunk.id === "stale")).toMatchObject({
+      stale: true,
+      freshnessScore: 0,
+    });
+    expect(result.optimized.find((chunk) => chunk.id === "expired")).toMatchObject({
+      stale: true,
+      freshnessScore: 0,
+    });
+    expect(result.optimized.find((chunk) => chunk.id === "unknown")?.freshnessScore).toBeUndefined();
+    expect(result.metrics.avgFreshnessScore).toEqual(expect.any(Number));
+    expect(result.metrics.staleChunks).toBe(2);
+  });
 });
 
 describe("POST /v1/context/optimize", () => {
@@ -220,6 +264,8 @@ describe("POST /v1/context/optimize", () => {
           avgRelevanceScore: number | null;
           lowRelevanceChunks: number;
           rerankedChunks: number;
+          avgFreshnessScore: number | null;
+          staleChunks: number;
         };
       };
       event: {
@@ -230,6 +276,8 @@ describe("POST /v1/context/optimize", () => {
         avgRelevanceScore: number | null;
         lowRelevanceChunks: number;
         rerankedChunks: number;
+        avgFreshnessScore: number | null;
+        staleChunks: number;
         duplicateSourceIds: string[];
         nearDuplicateSourceIds: string[];
       };
@@ -242,6 +290,8 @@ describe("POST /v1/context/optimize", () => {
         avgRelevanceScore: number | null;
         lowRelevanceChunks: number;
         rerankedChunks: number;
+        avgFreshnessScore: number | null;
+        staleChunks: number;
         usedSourceIds: string[];
         unusedSourceIds: string[];
       };
@@ -260,6 +310,8 @@ describe("POST /v1/context/optimize", () => {
       avgRelevanceScore: null,
       lowRelevanceChunks: 0,
       rerankedChunks: 0,
+      avgFreshnessScore: null,
+      staleChunks: 0,
     });
     expect(body.event).toMatchObject({
       tenantId: "tenant-pro",
@@ -268,6 +320,8 @@ describe("POST /v1/context/optimize", () => {
       avgRelevanceScore: null,
       lowRelevanceChunks: 0,
       rerankedChunks: 0,
+      avgFreshnessScore: null,
+      staleChunks: 0,
       duplicateSourceIds: ["b"],
       nearDuplicateSourceIds: [],
     });
@@ -280,6 +334,8 @@ describe("POST /v1/context/optimize", () => {
       avgRelevanceScore: null,
       lowRelevanceChunks: 0,
       rerankedChunks: 0,
+      avgFreshnessScore: null,
+      staleChunks: 0,
       usedSourceIds: ["a", "c"],
       unusedSourceIds: ["b"],
     });
@@ -301,6 +357,73 @@ describe("POST /v1/context/optimize", () => {
       unusedChunks: 1,
       duplicateChunks: 1,
       riskyChunks: 0,
+    });
+  });
+
+  it("records stale context analytics from metadata mode", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        freshnessMode: "metadata",
+        maxContextAgeDays: 90,
+        referenceTime: "2026-05-01T00:00:00.000Z",
+        chunks: [
+          {
+            id: "fresh",
+            content: "Current refund policy.",
+            metadata: { updatedAt: "2026-04-20T00:00:00.000Z" },
+          },
+          {
+            id: "stale",
+            content: "Old refund policy.",
+            metadata: { updatedAt: "2025-01-01T00:00:00.000Z" },
+          },
+          {
+            id: "unknown",
+            content: "No freshness metadata.",
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ id: string; stale?: boolean; freshnessScore?: number }>;
+        metrics: { avgFreshnessScore: number | null; staleChunks: number };
+      };
+      event: { avgFreshnessScore: number | null; staleChunks: number };
+      retrieval: { avgFreshnessScore: number | null; staleChunks: number };
+    };
+
+    expect(body.optimization.optimized.find((chunk) => chunk.id === "fresh")).toMatchObject({
+      stale: false,
+      freshnessScore: expect.any(Number),
+    });
+    expect(body.optimization.optimized.find((chunk) => chunk.id === "stale")).toMatchObject({
+      stale: true,
+      freshnessScore: 0,
+    });
+    expect(body.optimization.optimized.find((chunk) => chunk.id === "unknown")?.freshnessScore).toBeUndefined();
+    expect(body.optimization.metrics).toMatchObject({
+      avgFreshnessScore: expect.any(Number),
+      staleChunks: 1,
+    });
+    expect(body.event).toMatchObject({
+      avgFreshnessScore: body.optimization.metrics.avgFreshnessScore,
+      staleChunks: body.optimization.metrics.staleChunks,
+    });
+    expect(body.retrieval).toMatchObject({
+      avgFreshnessScore: body.optimization.metrics.avgFreshnessScore,
+      staleChunks: body.optimization.metrics.staleChunks,
     });
   });
 

@@ -2116,6 +2116,21 @@ components:
           maximum: 1
           default: 0.2
           description: Chunks below this score are counted as low relevance when rankMode is lexical.
+        freshnessMode:
+          type: string
+          enum: [off, metadata]
+          default: off
+          description: Metadata mode scores retained chunks from freshness metadata such as updatedAt and expiresAt.
+        maxContextAgeDays:
+          type: number
+          minimum: 1
+          maximum: 3650
+          default: 180
+          description: Age threshold used to count stale chunks when freshnessMode is metadata.
+        referenceTime:
+          type: string
+          format: date-time
+          description: Optional reference time for deterministic freshness scoring. Defaults to server time.
 
     OptimizedContextChunk:
       allOf:
@@ -2134,6 +2149,12 @@ components:
             relevanceScore:
               type: number
               description: Lexical relevance score when rankMode is lexical.
+            freshnessScore:
+              type: number
+              description: Metadata freshness score when freshnessMode is metadata.
+            stale:
+              type: boolean
+              description: Whether the chunk is stale according to metadata freshness scoring.
 
     DroppedContextChunk:
       type: object
@@ -2190,7 +2211,7 @@ components:
             $ref: "#/components/schemas/RiskyContextChunk"
         metrics:
           type: object
-          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks]
+          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks, avgFreshnessScore, staleChunks]
           properties:
             inputChunks: { type: integer }
             outputChunks: { type: integer }
@@ -2208,6 +2229,10 @@ components:
               nullable: true
             lowRelevanceChunks: { type: integer }
             rerankedChunks: { type: integer }
+            avgFreshnessScore:
+              type: number
+              nullable: true
+            staleChunks: { type: integer }
 
     ContextOptimizationEvent:
       type: object
@@ -2225,6 +2250,8 @@ components:
         - avgRelevanceScore
         - lowRelevanceChunks
         - rerankedChunks
+        - avgFreshnessScore
+        - staleChunks
         - duplicateSourceIds
         - nearDuplicateSourceIds
         - riskScanned
@@ -2261,6 +2288,11 @@ components:
         lowRelevanceChunks:
           type: integer
         rerankedChunks:
+          type: integer
+        avgFreshnessScore:
+          type: number
+          nullable: true
+        staleChunks:
           type: integer
         duplicateSourceIds:
           type: array
@@ -2316,6 +2348,8 @@ components:
         - avgRelevanceScore
         - lowRelevanceChunks
         - rerankedChunks
+        - avgFreshnessScore
+        - staleChunks
         - flaggedChunks
         - quarantinedChunks
         - latestAt
@@ -2344,6 +2378,11 @@ components:
         lowRelevanceChunks:
           type: integer
         rerankedChunks:
+          type: integer
+        avgFreshnessScore:
+          type: number
+          nullable: true
+        staleChunks:
           type: integer
         flaggedChunks:
           type: integer
@@ -2499,6 +2538,8 @@ components:
         - avgRelevanceScore
         - lowRelevanceChunks
         - rerankedChunks
+        - avgFreshnessScore
+        - staleChunks
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
@@ -2541,6 +2582,11 @@ components:
           type: integer
         rerankedChunks:
           type: integer
+        avgFreshnessScore:
+          type: number
+          nullable: true
+        staleChunks:
+          type: integer
         efficiencyPct:
           type: number
         duplicateRatePct:
@@ -2581,6 +2627,8 @@ components:
         - avgRelevanceScore
         - lowRelevanceChunks
         - rerankedChunks
+        - avgFreshnessScore
+        - staleChunks
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
@@ -2613,6 +2661,11 @@ components:
         lowRelevanceChunks:
           type: integer
         rerankedChunks:
+          type: integer
+        avgFreshnessScore:
+          type: number
+          nullable: true
+        staleChunks:
           type: integer
         efficiencyPct:
           type: number
