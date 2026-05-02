@@ -16,9 +16,11 @@ Implemented as of `0.2.0`:
 - Demo tenant seed data for screenshot-ready examples.
 - Optional retrieved-context risk scanning with active Guardrails rules.
 - Flagged and quarantined context reporting in API events and the dashboard.
+- Raw-context vs optimized-context judge scoring through `POST /v1/context/evaluate`.
+- `context_quality_events` with quality deltas, regression flags, source IDs, judge metadata, and dashboard visibility.
 
 Next planned layer:
-- Quality scoring for raw context vs optimized context.
+- Retrieval analytics for unused, duplicate, stale, and conflicting context.
 
 ## V1: Runtime Context Optimizer
 
@@ -53,10 +55,10 @@ Capabilities:
 Prove that smaller context still answers correctly.
 
 Capabilities:
-- Before/after judge scoring.
+- Before/after judge scoring. Shipped in V1.2 as raw-context vs optimized-context answer comparison.
 - Eval dataset support for raw context vs optimized context.
-- Quality delta reports.
-- Regression alerts when optimization reduces answer quality.
+- Quality delta reports. Shipped in V1.2 for recent events and aggregates.
+- Regression alerts when optimization reduces answer quality. V1.2 records regression flags; alert wiring remains future work.
 
 ## V2: Persistent Knowledge Distillation
 

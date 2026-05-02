@@ -41,6 +41,40 @@ describe("ContextOptimizerPanel", () => {
           },
         }));
       }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 3,
+            regressedCount: 1,
+            avgRawScore: 4.2,
+            avgOptimizedScore: 4,
+            avgDelta: -0.2,
+            latestAt: "2026-05-01T21:30:00.000Z",
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/events?limit=10") {
+        return Promise.resolve(jsonResponse({
+          events: [
+            {
+              id: "quality-1",
+              tenantId: "tenant-pro",
+              rawScore: 4,
+              optimizedScore: 3,
+              delta: -1,
+              regressed: true,
+              regressionThreshold: -0.5,
+              judgeProvider: "openai",
+              judgeModel: "gpt-4o-mini",
+              promptHash: "abc123",
+              rawSourceIds: ["refunds#1", "policy#2"],
+              optimizedSourceIds: ["refunds#1"],
+              rationale: "Optimized answer omitted one detail.",
+              createdAt: "2026-05-01T21:30:00.000Z",
+            },
+          ],
+        }));
+      }
       return Promise.resolve(jsonResponse({
         events: [
           {
@@ -82,6 +116,9 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("chunk-c")).toBeInTheDocument();
     expect(screen.getByText("Risky Chunks")).toBeInTheDocument();
     expect(screen.getByText("chunk-risky")).toBeInTheDocument();
+    expect(screen.getByText("Quality Delta")).toBeInTheDocument();
+    expect(screen.getByText("Regression")).toBeInTheDocument();
+    expect(screen.getByText("refunds#1")).toBeInTheDocument();
   });
 
   it("shows the empty state", async () => {
@@ -103,12 +140,28 @@ describe("ContextOptimizerPanel", () => {
           },
         }));
       }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            regressedCount: 0,
+            avgRawScore: null,
+            avgOptimizedScore: null,
+            avgDelta: null,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/events?limit=10") {
+        return Promise.resolve(jsonResponse({ events: [] }));
+      }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
 
     render(<ContextOptimizerPanel />);
 
     expect(await screen.findByText("No context optimization events yet.")).toBeInTheDocument();
+    expect(screen.getByText("No context quality checks yet.")).toBeInTheDocument();
   });
 
   it("shows upgrade messaging for gated tenants", async () => {
