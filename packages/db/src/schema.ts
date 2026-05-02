@@ -430,6 +430,8 @@ export const contextCollections = sqliteTable("context_collections", {
   status: text("status", { enum: ["active", "archived"] }).notNull().default("active"),
   documentCount: integer("document_count").notNull().default(0),
   blockCount: integer("block_count").notNull().default(0),
+  canonicalBlockCount: integer("canonical_block_count").notNull().default(0),
+  approvedBlockCount: integer("approved_block_count").notNull().default(0),
   tokenCount: integer("token_count").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -485,6 +487,32 @@ export const contextBlocks = sqliteTable("context_blocks", {
   index("context_blocks_tenant_collection_idx").on(table.tenantId, table.collectionId),
   index("context_blocks_document_ordinal_idx").on(table.documentId, table.ordinal),
   uniqueIndex("context_blocks_document_ordinal_unique_idx").on(table.documentId, table.ordinal),
+]);
+
+export const contextCanonicalBlocks = sqliteTable("context_canonical_blocks", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  collectionId: text("collection_id")
+    .notNull()
+    .references(() => contextCollections.id),
+  content: text("content").notNull(),
+  contentHash: text("content_hash").notNull(),
+  tokenCount: integer("token_count").notNull(),
+  sourceBlockIds: text("source_block_ids").notNull().default("[]"),
+  sourceDocumentIds: text("source_document_ids").notNull().default("[]"),
+  sourceCount: integer("source_count").notNull().default(0),
+  reviewStatus: text("review_status", { enum: ["draft", "approved", "rejected"] }).notNull().default("draft"),
+  metadata: text("metadata").notNull().default("{}"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_canonical_blocks_tenant_collection_idx").on(table.tenantId, table.collectionId),
+  index("context_canonical_blocks_review_idx").on(table.tenantId, table.collectionId, table.reviewStatus),
+  uniqueIndex("context_canonical_blocks_collection_hash_idx").on(table.collectionId, table.contentHash),
 ]);
 
 export const alertRules = sqliteTable("alert_rules", {

@@ -30,15 +30,22 @@ import {
 } from "../context/retrieval.js";
 import {
   createContextCollection,
+  distillContextCollection,
+  exportApprovedContextBlocks,
   ingestContextDocument,
+  listContextCanonicalBlocks,
   listContextCollections,
+  updateContextCanonicalBlockReview,
   validateCreateCollectionBody,
   validateIngestDocumentBody,
+  validateReviewStatusBody,
 } from "../context/store.js";
 import { getTenantId } from "../auth/tenant.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Provider } from "../providers/types.js";
+
+type CanonicalReviewStatus = "draft" | "approved" | "rejected";
 
 const MAX_CHUNKS = 200;
 const MAX_CHUNK_CHARS = 100_000;
@@ -680,6 +687,102 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
       }, 201);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to ingest context document";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.post("/collections/:id/distill", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+
+    try {
+      const result = await distillContextCollection(db, tenantId, collectionId);
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to distill context collection";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.get("/collections/:id/canonical-blocks", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+    const reviewStatus = c.req.query("reviewStatus");
+    const parsedReviewStatus: CanonicalReviewStatus | undefined =
+      reviewStatus === "draft" || reviewStatus === "approved" || reviewStatus === "rejected"
+      ? reviewStatus
+      : undefined;
+    const options = parsedReviewStatus
+      ? { reviewStatus: parsedReviewStatus }
+      : {};
+
+    try {
+      const canonicalBlocks = await listContextCanonicalBlocks(db, tenantId, collectionId, options);
+      return c.json({ canonicalBlocks });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to list canonical blocks";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.patch("/canonical-blocks/:id/review", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const blockId = c.req.param("id");
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateReviewStatusBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid review body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    try {
+      const canonicalBlock = await updateContextCanonicalBlockReview(db, tenantId, blockId, parsed.value.reviewStatus);
+      return c.json({ canonicalBlock });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update canonical block";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.get("/collections/:id/export", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+
+    try {
+      const blocks = await exportApprovedContextBlocks(db, tenantId, collectionId);
+      return c.json({
+        format: "jsonl",
+        reviewStatus: "approved",
+        blocks: blocks.map((block) => ({
+          id: block.id,
+          content: block.content,
+          contentHash: block.contentHash,
+          tokenCount: block.tokenCount,
+          sourceBlockIds: block.sourceBlockIds,
+          sourceDocumentIds: block.sourceDocumentIds,
+          metadata: block.metadata,
+        })),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to export canonical blocks";
       const notFound = message.includes("not found");
       return c.json(
         { error: { message, type: notFound ? "not_found" : "store_error" } },

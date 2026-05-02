@@ -30,9 +30,10 @@ Implemented as of `0.2.0`:
 - Optional abstractive compression with provider summaries, provenance preservation, and mechanical fallback.
 - Dashboard configuration controls for drafting optimizer payloads.
 - Managed context collections with plain-text ingestion into stored documents and reusable blocks.
+- Canonical context blocks with deterministic distillation, source coalescing, review status, and approved-only export.
 
 Next planned layer:
-- Canonical knowledge distillation, review states, and approved-only export.
+- Governance review queues, audit logs, and pre-approval policy checks.
 
 ## V1: Runtime Context Optimizer
 
@@ -93,10 +94,10 @@ Move from per-request optimization to reusable canonical knowledge.
 
 Capabilities:
 - Batch document ingestion. Foundation shipped with managed collections and plain-text ingestion.
-- Canonical knowledge blocks.
-- Source references and provenance.
+- Canonical knowledge blocks. Shipped as deterministic canonical context blocks.
+- Source references and provenance. Shipped as source block/document IDs on canonical blocks.
 - Versioning and diffs.
-- JSONL/vector-ready export.
+- JSONL/vector-ready export. Shipped as approved-only JSON response for canonical blocks.
 
 ## V2.1: Governance
 
@@ -104,7 +105,7 @@ Make optimized knowledge trustworthy for regulated teams.
 
 Capabilities:
 - Human review queue.
-- Approval states.
+- Approval states. Foundation shipped as draft/approved/rejected canonical block status.
 - Audit logs.
 - Conflict detection.
 - PII and prompt-injection policy checks.
