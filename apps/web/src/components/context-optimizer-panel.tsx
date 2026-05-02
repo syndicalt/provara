@@ -67,6 +67,43 @@ export interface ContextQualityEvent {
   createdAt: string;
 }
 
+export interface ContextRetrievalSummary {
+  eventCount: number;
+  retrievedChunks: number;
+  usedChunks: number;
+  unusedChunks: number;
+  duplicateChunks: number;
+  riskyChunks: number;
+  retrievedTokens: number;
+  usedTokens: number;
+  unusedTokens: number;
+  efficiencyPct: number;
+  duplicateRatePct: number;
+  riskyRatePct: number;
+  latestAt: string | null;
+}
+
+export interface ContextRetrievalEvent {
+  id: string;
+  tenantId: string | null;
+  optimizationEventId: string | null;
+  retrievedChunks: number;
+  usedChunks: number;
+  unusedChunks: number;
+  duplicateChunks: number;
+  riskyChunks: number;
+  retrievedTokens: number;
+  usedTokens: number;
+  unusedTokens: number;
+  efficiencyPct: number;
+  duplicateRatePct: number;
+  riskyRatePct: number;
+  usedSourceIds: string[];
+  unusedSourceIds: string[];
+  riskySourceIds: string[];
+  createdAt: string;
+}
+
 interface GateState {
   message: string;
   upgradeUrl?: string;
@@ -77,6 +114,8 @@ interface LoadState {
   events: ContextOptimizationEvent[];
   qualitySummary: ContextQualitySummary | null;
   qualityEvents: ContextQualityEvent[];
+  retrievalSummary: ContextRetrievalSummary | null;
+  retrievalEvents: ContextRetrievalEvent[];
   loading: boolean;
   error: string | null;
   gate: GateState | null;
@@ -164,6 +203,8 @@ export function ContextOptimizerPanel() {
     events: [],
     qualitySummary: null,
     qualityEvents: [],
+    retrievalSummary: null,
+    retrievalEvents: [],
     loading: true,
     error: null,
     gate: null,
@@ -176,21 +217,35 @@ export function ContextOptimizerPanel() {
       setState((prev) => ({ ...prev, loading: true, error: null, gate: null }));
 
       try {
-        const [summaryRes, eventsRes, qualitySummaryRes, qualityEventsRes] = await Promise.all([
+        const [
+          summaryRes,
+          eventsRes,
+          qualitySummaryRes,
+          qualityEventsRes,
+          retrievalSummaryRes,
+          retrievalEventsRes,
+        ] = await Promise.all([
           gatewayFetchRaw("/v1/context/summary"),
           gatewayFetchRaw("/v1/context/events?limit=25"),
           gatewayFetchRaw("/v1/context/quality/summary"),
           gatewayFetchRaw("/v1/context/quality/events?limit=10"),
+          gatewayFetchRaw("/v1/context/retrieval/summary"),
+          gatewayFetchRaw("/v1/context/retrieval/events?limit=10"),
         ]);
 
+        const responses = [
+          summaryRes,
+          eventsRes,
+          qualitySummaryRes,
+          qualityEventsRes,
+          retrievalSummaryRes,
+          retrievalEventsRes,
+        ];
         if (
-          summaryRes.status === 402 ||
-          eventsRes.status === 402 ||
-          qualitySummaryRes.status === 402 ||
-          qualityEventsRes.status === 402
+          responses.some((res) => res.status === 402)
         ) {
           const body = await readJson<{ error?: { message?: string }; gate?: { upgradeUrl?: string } }>(
-            [summaryRes, eventsRes, qualitySummaryRes, qualityEventsRes].find((res) => res.status === 402) ?? summaryRes,
+            responses.find((res) => res.status === 402) ?? summaryRes,
           );
           if (!cancelled) {
             setState({
@@ -198,6 +253,8 @@ export function ContextOptimizerPanel() {
               events: [],
               qualitySummary: null,
               qualityEvents: [],
+              retrievalSummary: null,
+              retrievalEvents: [],
               loading: false,
               error: null,
               gate: {
@@ -209,7 +266,7 @@ export function ContextOptimizerPanel() {
           return;
         }
 
-        if (!summaryRes.ok || !eventsRes.ok || !qualitySummaryRes.ok || !qualityEventsRes.ok) {
+        if (responses.some((res) => !res.ok)) {
           throw new Error("Failed to load Context Optimizer data");
         }
 
@@ -217,6 +274,8 @@ export function ContextOptimizerPanel() {
         const eventsBody = await eventsRes.json() as { events: ContextOptimizationEvent[] };
         const qualitySummaryBody = await qualitySummaryRes.json() as { summary: ContextQualitySummary };
         const qualityEventsBody = await qualityEventsRes.json() as { events: ContextQualityEvent[] };
+        const retrievalSummaryBody = await retrievalSummaryRes.json() as { summary: ContextRetrievalSummary };
+        const retrievalEventsBody = await retrievalEventsRes.json() as { events: ContextRetrievalEvent[] };
 
         if (!cancelled) {
           setState({
@@ -224,6 +283,8 @@ export function ContextOptimizerPanel() {
             events: eventsBody.events,
             qualitySummary: qualitySummaryBody.summary,
             qualityEvents: qualityEventsBody.events,
+            retrievalSummary: retrievalSummaryBody.summary,
+            retrievalEvents: retrievalEventsBody.events,
             loading: false,
             error: null,
             gate: null,
@@ -236,6 +297,8 @@ export function ContextOptimizerPanel() {
             events: [],
             qualitySummary: null,
             qualityEvents: [],
+            retrievalSummary: null,
+            retrievalEvents: [],
             loading: false,
             error: err instanceof Error ? err.message : "Failed to load Context Optimizer data",
             gate: null,
@@ -254,6 +317,8 @@ export function ContextOptimizerPanel() {
   const eventRows = useMemo(() => state.events, [state.events]);
   const qualitySummary = state.qualitySummary;
   const qualityRows = useMemo(() => state.qualityEvents, [state.qualityEvents]);
+  const retrievalSummary = state.retrievalSummary;
+  const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
 
   return (
     <div className="space-y-6">
@@ -316,6 +381,110 @@ export function ContextOptimizerPanel() {
           tone={metricTone(summary?.reductionPct ?? 0)}
         />
       </div>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Retrieval Analytics</h2>
+          <p className="mt-1 text-sm text-zinc-500">Context usage and retrieval health.</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <StatTile
+            label="Retrieval Efficiency"
+            value={formatPercent(retrievalSummary?.efficiencyPct ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.usedChunks ?? 0)} used of ${formatInteger(retrievalSummary?.retrievedChunks ?? 0)} chunks`}
+            tone={metricTone(retrievalSummary?.efficiencyPct ?? 0)}
+          />
+          <StatTile
+            label="Unused Context"
+            value={formatInteger(retrievalSummary?.unusedChunks ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.unusedTokens ?? 0)} unused token estimate`}
+            tone={riskTone(retrievalSummary?.unusedChunks ?? 0)}
+          />
+          <StatTile
+            label="Duplicate Rate"
+            value={formatPercent(retrievalSummary?.duplicateRatePct ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.duplicateChunks ?? 0)} duplicate chunks`}
+            tone={riskTone(retrievalSummary?.duplicateChunks ?? 0)}
+          />
+          <StatTile
+            label="Risky Context Rate"
+            value={formatPercent(retrievalSummary?.riskyRatePct ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.riskyChunks ?? 0)} risky chunks`}
+            tone={riskTone(retrievalSummary?.riskyChunks ?? 0)}
+          />
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Retrieval Events</h2>
+          <p className="mt-1 text-sm text-zinc-500">Recent retrieved-context efficiency records.</p>
+        </div>
+
+        {state.loading ? (
+          <LoadingRows />
+        ) : retrievalRows.length === 0 ? (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-8 text-center text-sm text-zinc-400">
+            No context retrieval events yet.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Time</th>
+                    <th className="px-4 py-3 text-right font-medium">Chunks</th>
+                    <th className="px-4 py-3 text-right font-medium">Efficiency</th>
+                    <th className="px-4 py-3 text-right font-medium">Duplicates</th>
+                    <th className="px-4 py-3 text-right font-medium">Risky</th>
+                    <th className="px-4 py-3 text-left font-medium">Unused IDs</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {retrievalRows.map((event) => (
+                    <tr key={event.id}>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatTimestamp(event.createdAt)}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(event.usedChunks)} / {formatInteger(event.retrievedChunks)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
+                        {formatPercent(event.efficiencyPct)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(event.duplicateChunks)}
+                        <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.duplicateRatePct)}</span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-amber-300">
+                        {formatInteger(event.riskyChunks)}
+                        <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.riskyRatePct)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {event.unusedSourceIds.length === 0 ? (
+                          <span className="text-zinc-600">None</span>
+                        ) : (
+                          <div className="flex max-w-xl flex-wrap gap-1">
+                            {event.unusedSourceIds.slice(0, 6).map((id) => (
+                              <span key={id} className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 font-mono text-xs text-zinc-300">
+                                {id}
+                              </span>
+                            ))}
+                            {event.unusedSourceIds.length > 6 && (
+                              <span className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs text-zinc-500">
+                                +{event.unusedSourceIds.length - 6}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       <section>
         <div className="mb-3">

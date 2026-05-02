@@ -18,9 +18,10 @@ Implemented as of `0.2.0`:
 - Flagged and quarantined context reporting in API events and the dashboard.
 - Raw-context vs optimized-context judge scoring through `POST /v1/context/evaluate`.
 - `context_quality_events` with quality deltas, regression flags, source IDs, judge metadata, and dashboard visibility.
+- `context_retrieval_events` with retrieval efficiency, unused context, duplicate rate, risky context rate, source IDs, and dashboard visibility.
 
 Next planned layer:
-- Retrieval analytics for unused, duplicate, stale, and conflicting context.
+- Semantic optimization for near duplicates, relevance scoring, reranking, stale context, and conflicting context.
 
 ## V1: Runtime Context Optimizer
 
@@ -47,6 +48,7 @@ Capabilities:
 - Context savings analytics.
 - Duplicate-rate reporting.
 - Quarantined context reporting.
+- Retrieval efficiency and unused-context reporting. Shipped in V1.2.
 - Request-detail integration.
 - Dashboard cards for saved tokens, dropped chunks, reduction, and risk flags.
 

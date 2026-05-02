@@ -12,6 +12,7 @@ The shipped V1 implementation is intentionally narrow:
 - Optional risk scanning with active Guardrails rules for retrieved context.
 - Flagged and quarantined context buckets with rule evidence and source IDs.
 - Raw-context vs optimized-context quality scoring with the configured judge model.
+- Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 
@@ -54,6 +55,7 @@ The response includes:
 - `optimization.quarantined`: risky chunks removed from model context before provider routing.
 - `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, and reduction percentage.
 - `event`: the persisted visibility record for the optimization call.
+- `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, and risky context rate.
 
 `scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 
@@ -64,6 +66,8 @@ GET /v1/context/summary
 GET /v1/context/events
 GET /v1/context/quality/summary
 GET /v1/context/quality/events
+GET /v1/context/retrieval/summary
+GET /v1/context/retrieval/events
 ```
 
 These endpoints are tenant-scoped and require Intelligence access.
@@ -122,14 +126,22 @@ The Quality Loop section shows:
 - Number of checks below the configured regression threshold.
 - Recent quality events with raw score, optimized score, delta, status, source IDs, and judge target.
 
+The Retrieval Analytics section shows:
+
+- Retrieval efficiency: used context divided by retrieved context.
+- Unused context count and token estimate.
+- Duplicate rate.
+- Risky context rate.
+- Recent retrieval events with used/retrieved chunks, duplicate/risky counts, and unused source IDs.
+
 ## Demo Mode
 
 The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This keeps `/dashboard/context` useful for demos, screenshots, and product walkthroughs without requiring a live RAG integration.
 
 ## Next Roadmap Step
 
-The next behavior layer is retrieval analytics:
+The next behavior layer is semantic optimization:
 
-- Measure unused, duplicate, stale, and conflicting context rates.
-- Recommend source cleanup and retrieval tuning.
-- Feed quality deltas into alerting and evaluation workflows.
+- Near-duplicate and semantic duplicate detection.
+- Relevance scoring and reranking.
+- Stale and conflicting context detection.

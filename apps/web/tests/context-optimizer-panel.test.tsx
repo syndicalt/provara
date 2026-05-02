@@ -75,6 +75,51 @@ describe("ContextOptimizerPanel", () => {
           ],
         }));
       }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 2,
+            retrievedChunks: 10,
+            usedChunks: 6,
+            unusedChunks: 4,
+            duplicateChunks: 2,
+            riskyChunks: 1,
+            retrievedTokens: 1000,
+            usedTokens: 620,
+            unusedTokens: 380,
+            efficiencyPct: 62,
+            duplicateRatePct: 20,
+            riskyRatePct: 10,
+            latestAt: "2026-05-01T21:45:00.000Z",
+          },
+        }));
+      }
+      if (path === "/v1/context/retrieval/events?limit=10") {
+        return Promise.resolve(jsonResponse({
+          events: [
+            {
+              id: "retrieval-1",
+              tenantId: "tenant-pro",
+              optimizationEventId: "evt-1",
+              retrievedChunks: 5,
+              usedChunks: 3,
+              unusedChunks: 2,
+              duplicateChunks: 1,
+              riskyChunks: 1,
+              retrievedTokens: 500,
+              usedTokens: 300,
+              unusedTokens: 200,
+              efficiencyPct: 60,
+              duplicateRatePct: 20,
+              riskyRatePct: 20,
+              usedSourceIds: ["chunk-a", "chunk-b", "chunk-c"],
+              unusedSourceIds: ["chunk-c", "chunk-risky"],
+              riskySourceIds: ["chunk-risky"],
+              createdAt: "2026-05-01T21:45:00.000Z",
+            },
+          ],
+        }));
+      }
       return Promise.resolve(jsonResponse({
         events: [
           {
@@ -113,12 +158,15 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("10 input chunks scanned")).toBeInTheDocument();
     expect(screen.getByText("27%")).toBeInTheDocument();
     expect(screen.getByText("chunk-b")).toBeInTheDocument();
-    expect(screen.getByText("chunk-c")).toBeInTheDocument();
+    expect(screen.getAllByText("chunk-c").length).toBeGreaterThan(0);
     expect(screen.getByText("Risky Chunks")).toBeInTheDocument();
-    expect(screen.getByText("chunk-risky")).toBeInTheDocument();
+    expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
     expect(screen.getByText("Quality Delta")).toBeInTheDocument();
     expect(screen.getByText("Regression")).toBeInTheDocument();
     expect(screen.getByText("refunds#1")).toBeInTheDocument();
+    expect(screen.getByText("Retrieval Efficiency")).toBeInTheDocument();
+    expect(screen.getByText("Unused Context")).toBeInTheDocument();
+    expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
   });
 
   it("shows the empty state", async () => {
@@ -155,6 +203,28 @@ describe("ContextOptimizerPanel", () => {
       if (path === "/v1/context/quality/events?limit=10") {
         return Promise.resolve(jsonResponse({ events: [] }));
       }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            retrievedChunks: 0,
+            usedChunks: 0,
+            unusedChunks: 0,
+            duplicateChunks: 0,
+            riskyChunks: 0,
+            retrievedTokens: 0,
+            usedTokens: 0,
+            unusedTokens: 0,
+            efficiencyPct: 0,
+            duplicateRatePct: 0,
+            riskyRatePct: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/retrieval/events?limit=10") {
+        return Promise.resolve(jsonResponse({ events: [] }));
+      }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
 
@@ -162,6 +232,7 @@ describe("ContextOptimizerPanel", () => {
 
     expect(await screen.findByText("No context optimization events yet.")).toBeInTheDocument();
     expect(screen.getByText("No context quality checks yet.")).toBeInTheDocument();
+    expect(screen.getByText("No context retrieval events yet.")).toBeInTheDocument();
   });
 
   it("shows upgrade messaging for gated tenants", async () => {

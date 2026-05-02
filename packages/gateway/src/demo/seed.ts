@@ -11,6 +11,7 @@ import {
   costMigrations,
   contextOptimizationEvents,
   contextQualityEvents,
+  contextRetrievalEvents,
   customProviders,
   feedback,
   guardrailLogs,
@@ -723,6 +724,34 @@ export async function reseedDemoTenant(db: Db, now: Date = new Date()): Promise<
     }).run();
   }
 
+  for (const event of contextEvents) {
+    const riskyChunks = event.flaggedChunks + event.quarantinedChunks;
+    const usedSourceIds = event.duplicateSourceIds.length === 0
+      ? [`${event.id}#used`]
+      : event.duplicateSourceIds.slice(0, Math.max(1, Math.min(4, event.outputChunks)));
+    const unusedSourceIds = [...event.duplicateSourceIds, ...event.riskySourceIds];
+    await db.insert(contextRetrievalEvents).values({
+      id: `cre_${event.id.replace(/^coe_/, "")}`,
+      tenantId,
+      optimizationEventId: event.id,
+      retrievedChunks: event.inputChunks,
+      usedChunks: event.outputChunks,
+      unusedChunks: event.inputChunks - event.outputChunks,
+      duplicateChunks: event.droppedChunks,
+      riskyChunks,
+      retrievedTokens: event.inputTokens,
+      usedTokens: event.outputTokens,
+      unusedTokens: event.savedTokens,
+      efficiencyPct: Number(((event.outputTokens / event.inputTokens) * 100).toFixed(2)),
+      duplicateRatePct: Number(((event.droppedChunks / event.inputChunks) * 100).toFixed(2)),
+      riskyRatePct: Number(((riskyChunks / event.inputChunks) * 100).toFixed(2)),
+      usedSourceIds: JSON.stringify(usedSourceIds),
+      unusedSourceIds: JSON.stringify(unusedSourceIds),
+      riskySourceIds: JSON.stringify(event.riskySourceIds),
+      createdAt: event.createdAt,
+    }).run();
+  }
+
   const contextQualityRows = [
     {
       id: "cqe_demo_refunds_stable",
@@ -811,6 +840,7 @@ async function wipe(db: Db, tenantId: string): Promise<void> {
   await db.delete(routingWeightSnapshots).where(eq(routingWeightSnapshots.tenantId, tenantId)).run();
   await db.delete(spendBudgets).where(eq(spendBudgets.tenantId, tenantId)).run();
   await db.delete(costMigrations).where(eq(costMigrations.tenantId, tenantId)).run();
+  await db.delete(contextRetrievalEvents).where(eq(contextRetrievalEvents.tenantId, tenantId)).run();
   await db.delete(contextQualityEvents).where(eq(contextQualityEvents.tenantId, tenantId)).run();
   await db.delete(contextOptimizationEvents).where(eq(contextOptimizationEvents.tenantId, tenantId)).run();
   await db.delete(customProviders).where(eq(customProviders.tenantId, tenantId)).run();

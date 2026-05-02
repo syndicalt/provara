@@ -368,6 +368,32 @@ export const contextQualityEvents = sqliteTable("context_quality_events", {
   index("context_quality_events_tenant_regressed_idx").on(table.tenantId, table.regressed, table.createdAt),
 ]);
 
+export const contextRetrievalEvents = sqliteTable("context_retrieval_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  optimizationEventId: text("optimization_event_id"),
+  retrievedChunks: integer("retrieved_chunks").notNull(),
+  usedChunks: integer("used_chunks").notNull(),
+  unusedChunks: integer("unused_chunks").notNull(),
+  duplicateChunks: integer("duplicate_chunks").notNull(),
+  riskyChunks: integer("risky_chunks").notNull(),
+  retrievedTokens: integer("retrieved_tokens").notNull(),
+  usedTokens: integer("used_tokens").notNull(),
+  unusedTokens: integer("unused_tokens").notNull(),
+  efficiencyPct: real("efficiency_pct").notNull(),
+  duplicateRatePct: real("duplicate_rate_pct").notNull(),
+  riskyRatePct: real("risky_rate_pct").notNull(),
+  usedSourceIds: text("used_source_ids").notNull().default("[]"),
+  unusedSourceIds: text("unused_source_ids").notNull().default("[]"),
+  riskySourceIds: text("risky_source_ids").notNull().default("[]"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_retrieval_events_tenant_created_idx").on(table.tenantId, table.createdAt),
+  index("context_retrieval_events_optimization_idx").on(table.optimizationEventId),
+]);
+
 export const alertRules = sqliteTable("alert_rules", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
