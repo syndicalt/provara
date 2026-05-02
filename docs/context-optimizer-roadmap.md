@@ -27,10 +27,11 @@ Implemented as of `0.2.0`:
 - Optional conflicting-context detection with bounded heuristic status/numeric/metadata checks and dashboard visibility.
 - Optional scored contradiction severity bands for retained-context conflicts.
 - Optional extractive compression with bounded sentence selection, compression savings metrics, and dashboard visibility.
+- Optional abstractive compression with provider summaries, provenance preservation, and mechanical fallback.
 - Dashboard configuration controls for drafting optimizer payloads.
 
 Next planned layer:
-- Abstractive compression with strict provenance and fallback behavior.
+- Persistent knowledge distillation and managed content stores.
 
 ## V1: Runtime Context Optimizer
 
@@ -45,6 +46,7 @@ Core capabilities:
 - Optional conflict detection across retained chunks.
 - Optional contradiction scoring and severity bands across retained chunks.
 - Optional extractive compression for retained chunks.
+- Optional abstractive compression for retained chunks.
 - Token savings estimation.
 - Source and citation preservation.
 - Prompt Injection Firewall risk scanning for retrieved context.

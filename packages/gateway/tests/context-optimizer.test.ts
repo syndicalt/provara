@@ -17,7 +17,10 @@ vi.mock("../src/auth/tenant.js", async (importOriginal) => ({
 
 import { requireIntelligenceTier } from "../src/auth/tier.js";
 
-function fakeRegistry(content = '{"rawScore": 4, "optimizedScore": 3, "rationale": "Optimized answer omitted one detail."}'): ProviderRegistry {
+function fakeRegistry(
+  content = '{"rawScore": 4, "optimizedScore": 3, "rationale": "Optimized answer omitted one detail."}',
+  finishReason: CompletionResponse["finish_reason"] = "stop",
+): ProviderRegistry {
   const provider: Provider = {
     name: "test-judge",
     models: ["gpt-4o-mini"],
@@ -27,7 +30,7 @@ function fakeRegistry(content = '{"rawScore": 4, "optimizedScore": 3, "rationale
         provider: "test-judge",
         model: request.model,
         content,
-        finish_reason: "stop",
+        finish_reason: finishReason,
         usage: { inputTokens: 10, outputTokens: 8 },
         latencyMs: 1,
       };
@@ -752,6 +755,107 @@ describe("POST /v1/context/optimize", () => {
       compressionSavedTokens: body.optimization.metrics.compressionSavedTokens,
       compressionRatePct: body.optimization.metrics.compressionRatePct,
     });
+  });
+
+  it("records abstractive compression analytics with provider summaries", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db, fakeRegistry("Refunds require a receipt within 30 days."));
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        compressionMode: "abstractive",
+        query: "What is the refund policy?",
+        chunks: [
+          {
+            id: "refunds-long",
+            content: [
+              "Refunds are available for paid accounts during the 30 day refund window.",
+              "A receipt is required before the support team can issue the refund.",
+              "Office locations are listed in the company directory.",
+              "Marketing launch notes are maintained by the brand team.",
+            ].join(" "),
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ id: string; content: string; compressed?: boolean; originalTokens?: number; compressedTokens?: number }>;
+        metrics: { compressedChunks: number; compressionSavedTokens: number; compressionRatePct: number };
+      };
+      event: { compressedChunks: number; compressionSavedTokens: number; compressionRatePct: number };
+      retrieval: { compressedChunks: number; compressionSavedTokens: number; compressionRatePct: number };
+    };
+
+    expect(body.optimization.optimized[0]).toMatchObject({
+      content: "Refunds require a receipt within 30 days.",
+      compressed: true,
+      originalTokens: expect.any(Number),
+      compressedTokens: expect.any(Number),
+    });
+    expect(body.optimization.metrics.compressedChunks).toBe(1);
+    expect(body.optimization.metrics.compressionSavedTokens).toBeGreaterThan(0);
+    expect(body.event).toMatchObject({
+      compressedChunks: body.optimization.metrics.compressedChunks,
+      compressionSavedTokens: body.optimization.metrics.compressionSavedTokens,
+      compressionRatePct: body.optimization.metrics.compressionRatePct,
+    });
+    expect(body.retrieval).toMatchObject({
+      compressedChunks: body.optimization.metrics.compressedChunks,
+      compressionSavedTokens: body.optimization.metrics.compressionSavedTokens,
+      compressionRatePct: body.optimization.metrics.compressionRatePct,
+    });
+  });
+
+  it("falls back to extractive compression when abstractive compression is refused", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db, fakeRegistry("", "content_filter"));
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        compressionMode: "abstractive",
+        maxSentencesPerChunk: 1,
+        query: "refund receipt",
+        chunks: [
+          {
+            id: "refunds-long",
+            content: [
+              "Refunds are available for paid accounts during the 30 day refund window.",
+              "A receipt is required before the support team can issue the refund.",
+              "Office locations are listed in the company directory.",
+            ].join(" "),
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ content: string; compressed?: boolean }>;
+        metrics: { compressedChunks: number; compressionSavedTokens: number };
+      };
+    };
+
+    expect(body.optimization.optimized[0].content).toContain("receipt");
+    expect(body.optimization.optimized[0].content).not.toBe("");
+    expect(body.optimization.optimized[0].compressed).toBe(true);
+    expect(body.optimization.metrics.compressedChunks).toBe(1);
+    expect(body.optimization.metrics.compressionSavedTokens).toBeGreaterThan(0);
   });
 
   it("records relevance analytics for lexical ranking", async () => {

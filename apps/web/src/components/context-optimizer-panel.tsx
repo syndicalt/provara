@@ -187,7 +187,7 @@ type DedupeMode = "exact" | "semantic";
 type RankMode = "none" | "lexical" | "embedding";
 type FreshnessMode = "off" | "metadata";
 type ConflictMode = "off" | "heuristic" | "scored";
-type CompressionMode = "off" | "extractive";
+type CompressionMode = "off" | "extractive" | "abstractive";
 
 interface OptimizerDraftSettings {
   dedupeMode: DedupeMode;
@@ -296,7 +296,7 @@ function readStoredOptimizerSettings(): OptimizerDraftSettings {
       conflictMode: parsed.conflictMode === "off" || parsed.conflictMode === "heuristic" || parsed.conflictMode === "scored"
         ? parsed.conflictMode
         : DEFAULT_OPTIMIZER_SETTINGS.conflictMode,
-      compressionMode: parsed.compressionMode === "off" || parsed.compressionMode === "extractive"
+      compressionMode: parsed.compressionMode === "off" || parsed.compressionMode === "extractive" || parsed.compressionMode === "abstractive"
         ? parsed.compressionMode
         : DEFAULT_OPTIMIZER_SETTINGS.compressionMode,
       maxSentencesPerChunk: Math.round(clampNumber(Number(parsed.maxSentencesPerChunk), 1, 8)),
@@ -456,7 +456,7 @@ function OptimizerConfigPanel() {
         <SelectField
           label="Compression"
           value={settings.compressionMode}
-          options={[{ value: "off", label: "Off" }, { value: "extractive", label: "Extractive" }]}
+          options={[{ value: "off", label: "Off" }, { value: "extractive", label: "Extractive" }, { value: "abstractive", label: "Abstractive" }]}
           onChange={(value) => update("compressionMode", value)}
         />
       </div>

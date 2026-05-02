@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import {
   compressContextOptimizationResult,
+  estimateContextTokens,
   optimizeContextChunks,
   rankContextOptimizationResultLexically,
   rankContextOptimizationResultWithEmbeddings,
@@ -30,9 +31,11 @@ import {
 import { getTenantId } from "../auth/tenant.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 import type { ProviderRegistry } from "../providers/index.js";
+import type { Provider } from "../providers/types.js";
 
 const MAX_CHUNKS = 200;
 const MAX_CHUNK_CHARS = 100_000;
+const ABSTRACTIVE_COMPRESSION_BATCH_SIZE = 4;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -140,8 +143,13 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
     return { error: "conflictMode must be either off, heuristic, or scored" };
   }
   const compressionMode = value.compressionMode;
-  if (compressionMode !== undefined && compressionMode !== "off" && compressionMode !== "extractive") {
-    return { error: "compressionMode must be either off or extractive" };
+  if (
+    compressionMode !== undefined &&
+    compressionMode !== "off" &&
+    compressionMode !== "extractive" &&
+    compressionMode !== "abstractive"
+  ) {
+    return { error: "compressionMode must be either off, extractive, or abstractive" };
   }
   const maxSentencesPerChunk = value.maxSentencesPerChunk;
   if (
@@ -167,7 +175,7 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
       maxContextAgeDays: typeof maxContextAgeDays === "number" ? maxContextAgeDays : undefined,
       referenceTime: parsedReferenceTime,
       conflictMode: conflictMode === "heuristic" || conflictMode === "scored" ? conflictMode : "off",
-      compressionMode: compressionMode === "extractive" ? "extractive" : "off",
+      compressionMode: compressionMode === "extractive" || compressionMode === "abstractive" ? compressionMode : "off",
       maxSentencesPerChunk: typeof maxSentencesPerChunk === "number" ? maxSentencesPerChunk : undefined,
     },
   };
@@ -402,6 +410,133 @@ async function applyRequestedRanking(
   }
 }
 
+function resolveCompressionTarget(registry?: ProviderRegistry): { provider: Provider; model: string } | null {
+  if (!registry) return null;
+  const providerName = process.env.PROVARA_CONTEXT_COMPRESSION_PROVIDER;
+  const modelName = process.env.PROVARA_CONTEXT_COMPRESSION_MODEL;
+  if (providerName && modelName) {
+    const provider = registry.get(providerName);
+    return provider && provider.models.includes(modelName) ? { provider, model: modelName } : null;
+  }
+  if (modelName) {
+    const provider = registry.getForModel(modelName);
+    return provider ? { provider, model: modelName } : null;
+  }
+  for (const provider of registry.list()) {
+    const model = provider.models[0];
+    if (model) return { provider, model };
+  }
+  return null;
+}
+
+function stripSummaryScaffolding(content: string): string {
+  return content
+    .replace(/^```(?:text|markdown)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+}
+
+function buildCompressionPrompt(chunk: OptimizedContextChunk, query: string | undefined): string {
+  const sourceIds = chunk.sourceIds.join(", ");
+  return [
+    "Compress the retrieved context below for model input.",
+    "Keep only facts supported by the source text. Do not add new facts.",
+    "Preserve names, numbers, dates, statuses, policy limits, and caveats.",
+    "Return plain text only. No bullets unless the source text requires them.",
+    query ? `User query: ${query}` : "",
+    `Source IDs: ${sourceIds}`,
+    "",
+    "Retrieved context:",
+    chunk.content,
+  ].filter(Boolean).join("\n");
+}
+
+async function summarizeChunk(
+  chunk: OptimizedContextChunk,
+  target: { provider: Provider; model: string },
+  query: string | undefined,
+): Promise<OptimizedContextChunk | null> {
+  const response = await target.provider.complete({
+    model: target.model,
+    routing_hint: "summarization",
+    temperature: 0,
+    max_tokens: Math.max(64, Math.min(512, Math.ceil(chunk.outputTokens * 0.7))),
+    messages: [
+      {
+        role: "system",
+        content: "You compress retrieved context for downstream model calls. You only preserve supported facts.",
+      },
+      {
+        role: "user",
+        content: buildCompressionPrompt(chunk, query),
+      },
+    ],
+  });
+
+  if (response.finish_reason === "content_filter") return null;
+  const content = stripSummaryScaffolding(response.content);
+  if (!content) return null;
+  const compressedTokens = estimateContextTokens(content);
+  if (compressedTokens >= chunk.outputTokens) return null;
+
+  return {
+    ...chunk,
+    content,
+    outputTokens: compressedTokens,
+    compressed: true,
+    originalTokens: chunk.originalTokens ?? chunk.outputTokens,
+    compressedTokens,
+  };
+}
+
+async function compressContextOptimizationResultAbstractively(
+  result: ContextOptimizationResult,
+  registry: ProviderRegistry | undefined,
+  options: { query?: string; maxSentencesPerChunk?: number },
+): Promise<ContextOptimizationResult> {
+  const fallback = compressContextOptimizationResult(result, options);
+  const target = resolveCompressionTarget(registry);
+  if (!target) return fallback;
+
+  const compressed: OptimizedContextChunk[] = [];
+  for (let index = 0; index < fallback.optimized.length; index += ABSTRACTIVE_COMPRESSION_BATCH_SIZE) {
+    const batch = fallback.optimized.slice(index, index + ABSTRACTIVE_COMPRESSION_BATCH_SIZE);
+    compressed.push(...await Promise.all(batch.map(async (chunk) => {
+      try {
+        return await summarizeChunk(chunk, target, options.query) ?? chunk;
+      } catch {
+        return chunk;
+      }
+    })));
+  }
+
+  const outputTokens = compressed.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
+  const savedTokens = Math.max(0, result.metrics.inputTokens - outputTokens);
+  const compressionSavedTokens = compressed.reduce(
+    (sum, chunk) => sum + Math.max(0, (chunk.originalTokens ?? chunk.inputTokens) - chunk.outputTokens),
+    0,
+  );
+  const preCompressionTokens = outputTokens + compressionSavedTokens;
+
+  return {
+    ...fallback,
+    optimized: compressed,
+    metrics: {
+      ...fallback.metrics,
+      outputTokens,
+      savedTokens,
+      reductionPct: result.metrics.inputTokens === 0
+        ? 0
+        : Number(((savedTokens / result.metrics.inputTokens) * 100).toFixed(2)),
+      compressedChunks: compressed.filter((chunk) => chunk.compressed).length,
+      compressionSavedTokens,
+      compressionRatePct: preCompressionTokens === 0
+        ? 0
+        : Number(((compressionSavedTokens / preCompressionTokens) * 100).toFixed(2)),
+    },
+  };
+}
+
 export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOptions: ContextRouteOptions = {}) {
   const app = new Hono();
 
@@ -440,7 +575,11 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     }
 
     const deferAsyncRanking = dedupe.options.rankMode === "embedding";
-    const deferCompression = (scanRisk.scanRisk || deferAsyncRanking) && dedupe.options.compressionMode === "extractive";
+    const deferCompression = dedupe.options.compressionMode !== "off" && (
+      scanRisk.scanRisk ||
+      deferAsyncRanking ||
+      dedupe.options.compressionMode === "abstractive"
+    );
     const baseOptions = deferCompression
       ? { ...dedupe.options, rankMode: deferAsyncRanking ? "none" as const : dedupe.options.rankMode, compressionMode: "off" as const }
       : deferAsyncRanking
@@ -451,7 +590,13 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
       ? await applyRiskScan(db, tenantId, baseOptimization)
       : baseOptimization;
     const rankedOptimization = await applyRequestedRanking(scannedOptimization, dedupe.options, routeOptions);
-    const optimization = deferCompression
+    const compressionOptions = {
+      query: dedupe.options.query,
+      maxSentencesPerChunk: dedupe.options.maxSentencesPerChunk,
+    };
+    const optimization = dedupe.options.compressionMode === "abstractive"
+      ? await compressContextOptimizationResultAbstractively(rankedOptimization, registry, compressionOptions)
+      : deferCompression
       ? compressContextOptimizationResult(rankedOptimization, {
         query: dedupe.options.query,
         maxSentencesPerChunk: dedupe.options.maxSentencesPerChunk,

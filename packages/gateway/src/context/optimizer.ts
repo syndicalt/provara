@@ -88,7 +88,7 @@ export interface ContextOptimizationOptions {
   maxContextAgeDays?: number;
   referenceTime?: Date;
   conflictMode?: "off" | "heuristic" | "scored";
-  compressionMode?: "off" | "extractive";
+  compressionMode?: "off" | "extractive" | "abstractive";
   maxSentencesPerChunk?: number;
 }
 
