@@ -93,6 +93,13 @@ function githubJson(value: unknown, status = 200): Response {
   });
 }
 
+function s3Xml(value: string, status = 200): Response {
+  return new Response(value, {
+    status,
+    headers: { "Content-Type": "application/xml" },
+  });
+}
+
 describe("context optimizer core", () => {
   it("drops exact duplicate chunks and reports token savings", () => {
     const result = optimizeContextChunks([
@@ -1983,6 +1990,190 @@ describe("managed context collections", () => {
       body: JSON.stringify({ name: "GitHub Docs", type: "github_token", value: "ghp_secret_token_123" }),
     });
     expect(createRes.status).toBe(503);
+  });
+
+  it("creates and idempotently syncs S3 bucket sources with AWS credentials", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const s3Fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      expect((init?.headers as Record<string, string> | undefined)?.Authorization).toContain("AWS4-HMAC-SHA256");
+      if (url.includes("list-type=2")) {
+        return s3Xml(`<?xml version="1.0" encoding="UTF-8"?>
+          <ListBucketResult>
+            <Contents><Key>docs/readme.md</Key><LastModified>2026-05-01T00:00:00.000Z</LastModified><ETag>"etag-readme"</ETag><Size>54</Size></Contents>
+            <Contents><Key>docs/api.txt</Key><LastModified>2026-05-01T00:00:00.000Z</LastModified><ETag>"etag-api"</ETag><Size>40</Size></Contents>
+            <Contents><Key>docs/image.png</Key><ETag>"etag-image"</ETag><Size>10</Size></Contents>
+          </ListBucketResult>`);
+      }
+      if (url.endsWith("/docs/readme.md")) {
+        return new Response("Refunds are available within 30 days from S3 docs.");
+      }
+      if (url.endsWith("/docs/api.txt")) {
+        return new Response("API clients should send account identifiers.");
+      }
+      return s3Xml("<Error>not found</Error>", 404);
+    });
+    const app = buildApp(db, undefined, { githubFetch: s3Fetch });
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "AWS Docs",
+        type: "aws_access_key",
+        value: JSON.stringify({ accessKeyId: "AKIA_TEST", secretAccessKey: "secret-test" }),
+      }),
+    });
+    expect(credentialRes.status).toBe(201);
+    const credentialBody = await credentialRes.json() as { credential: { id: string; type: string; hasSecret: boolean; value?: string } };
+    expect(credentialBody.credential).toMatchObject({ type: "aws_access_key", hasSecret: true });
+    expect(credentialBody.credential.value).toBeUndefined();
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "S3 KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Docs bucket",
+        type: "s3_bucket",
+        s3: {
+          bucket: "acme-docs",
+          region: "us-east-1",
+          prefix: "docs",
+          credentialId: credentialBody.credential.id,
+          extensions: [".md", ".txt"],
+          maxFiles: 10,
+          maxFileBytes: 1_000,
+        },
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as { source: { id: string; type: string; metadata: Record<string, unknown> } };
+    expect(sourceBody.source.type).toBe("s3_bucket");
+    expect(sourceBody.source.metadata.s3).toMatchObject({ bucket: "acme-docs", region: "us-east-1", prefix: "docs" });
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+    const syncBody = await syncRes.json() as {
+      synced: boolean;
+      source: { syncStatus: string; documentCount: number; metadata: Record<string, unknown> };
+      collection: { documentCount: number; blockCount: number };
+      document: { source: string };
+      blocks: Array<{ source: string; metadata: Record<string, unknown> }>;
+    };
+    expect(syncBody.synced).toBe(true);
+    expect(syncBody.source).toMatchObject({ syncStatus: "synced", documentCount: 2 });
+    expect(syncBody.collection).toMatchObject({ documentCount: 2, blockCount: 2 });
+    expect(syncBody.document.source).toBe("source:s3_bucket");
+    expect(syncBody.blocks).toHaveLength(2);
+    expect(syncBody.blocks[0]).toMatchObject({
+      source: "source:s3_bucket",
+      metadata: expect.objectContaining({ contextSourceId: sourceBody.source.id, s3Bucket: "acme-docs", s3Region: "us-east-1" }),
+    });
+    expect(syncBody.source.metadata.s3SyncedObjects).toMatchObject({
+      "docs/readme.md": "etag-readme",
+      "docs/api.txt": "etag-api",
+    });
+    const credentialRow = await db.select().from(contextConnectorCredentials).where(eq(contextConnectorCredentials.id, credentialBody.credential.id)).get();
+    expect(credentialRow?.lastUsedAt).toBeInstanceOf(Date);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
+
+    const syncAgainRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncAgainRes.status).toBe(200);
+    const syncAgainBody = await syncAgainRes.json() as { synced: boolean; source: { documentCount: number }; document: unknown; blocks: unknown[] };
+    expect(syncAgainBody).toMatchObject({ synced: false, source: { documentCount: 2 }, document: null, blocks: [] });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
+    expect(s3Fetch.mock.calls.filter(([url]) => !String(url).includes("list-type=2"))).toHaveLength(2);
+  });
+
+  it("does not allow an S3 source to bind another tenant's AWS credential", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({
+        name: "Other AWS",
+        type: "aws_access_key",
+        value: JSON.stringify({ accessKeyId: "AKIA_OTHER", secretAccessKey: "other-secret" }),
+      }),
+    });
+    const credentialBody = await credentialRes.json() as { credential: { id: string } };
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "S3 Tenant Guard KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Blocked bucket",
+        type: "s3_bucket",
+        s3: { bucket: "acme-docs", region: "us-east-1", credentialId: credentialBody.credential.id },
+      }),
+    });
+    expect(sourceRes.status).toBe(404);
+  });
+
+  it("persists failed S3 source sync status without writing documents", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const s3Fetch = vi.fn(async () => s3Xml("<Error>access denied</Error>", 403));
+    const app = buildApp(db, undefined, { githubFetch: s3Fetch });
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "AWS Docs",
+        type: "aws_access_key",
+        value: JSON.stringify({ accessKeyId: "AKIA_TEST", secretAccessKey: "secret-test" }),
+      }),
+    });
+    const credentialBody = await credentialRes.json() as { credential: { id: string } };
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "S3 Failure KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Broken bucket",
+        type: "s3_bucket",
+        s3: { bucket: "acme-docs", region: "us-east-1", credentialId: credentialBody.credential.id },
+      }),
+    });
+    const sourceBody = await sourceRes.json() as { source: { id: string } };
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(500);
+    const rows = await db.select().from(contextSources).all();
+    expect(rows).toEqual([
+      expect.objectContaining({ type: "s3_bucket", syncStatus: "failed", documentCount: 0 }),
+    ]);
+    expect(rows[0]?.lastError).toContain("S3 request failed (403)");
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
   });
 
   it("creates and idempotently syncs GitHub repository sources", async () => {

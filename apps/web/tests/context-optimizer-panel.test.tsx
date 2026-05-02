@@ -192,6 +192,16 @@ describe("ContextOptimizerPanel", () => {
               createdAt: "2026-05-01T20:00:00.000Z",
               updatedAt: "2026-05-01T22:04:00.000Z",
             },
+            {
+              id: "cred-aws",
+              tenantId: "tenant-pro",
+              name: "AWS Docs",
+              type: "aws_access_key",
+              hasSecret: true,
+              lastUsedAt: null,
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T22:04:00.000Z",
+            },
           ],
         }));
       }
@@ -271,6 +281,21 @@ describe("ContextOptimizerPanel", () => {
               lastError: null,
               metadata: { file: { filename: "handbook.md", contentType: "text/markdown", sizeBytes: 128 } },
               updatedAt: "2026-05-01T22:05:00.000Z",
+            },
+            {
+              id: "source-4",
+              collectionId: "collection-1",
+              name: "Docs bucket",
+              type: "s3_bucket",
+              externalId: "s3:acme-docs:us-east-1:docs",
+              sourceUri: "s3://acme-docs/docs",
+              syncStatus: "synced",
+              lastSyncedAt: "2026-05-01T22:06:00.000Z",
+              lastDocumentId: "doc-s3",
+              documentCount: 2,
+              lastError: null,
+              metadata: { s3: { bucket: "acme-docs", region: "us-east-1", prefix: "docs", credentialId: "cred-aws" } },
+              updatedAt: "2026-05-01T22:06:00.000Z",
             },
           ],
         }));
@@ -401,7 +426,8 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("GitHub Token Credentials")).toBeInTheDocument();
     expect(screen.getByText("GitHub Source")).toBeInTheDocument();
     expect(screen.getAllByText("GitHub Docs").length).toBeGreaterThan(0);
-    expect(screen.getByText("Stored")).toBeInTheDocument();
+    expect(screen.getAllByText("AWS Docs").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Stored").length).toBeGreaterThan(0);
     expect(screen.getByText("Collection Sources")).toBeInTheDocument();
     expect(screen.getByText("Refund source")).toBeInTheDocument();
     expect(screen.getByText("file://refunds.md")).toBeInTheDocument();
@@ -409,7 +435,9 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("acme/docs@main/docs")).toBeInTheDocument();
     expect(screen.getByText("Uploaded handbook")).toBeInTheDocument();
     expect(screen.getByText("handbook.md (text/markdown, 128 bytes)")).toBeInTheDocument();
-    expect(screen.getByText("Configured")).toBeInTheDocument();
+    expect(screen.getByText("Docs bucket")).toBeInTheDocument();
+    expect(screen.getByText("s3://acme-docs/docs (us-east-1)")).toBeInTheDocument();
+    expect(screen.getAllByText("Configured").length).toBeGreaterThan(0);
     expect(screen.getByText("Canonical")).toBeInTheDocument();
     expect(screen.getByText("Approved")).toBeInTheDocument();
     expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();
@@ -520,7 +548,31 @@ describe("ContextOptimizerPanel", () => {
         }));
       }
       if (path === "/v1/context/credentials" && init?.method === "POST") {
-        expect(JSON.parse(String(init.body))).toMatchObject({
+        const parsed = JSON.parse(String(init.body)) as Record<string, unknown>;
+        if (parsed.type === "aws_access_key") {
+          const value = JSON.parse(String(parsed.value)) as Record<string, unknown>;
+          expect(parsed).toMatchObject({
+            name: "AWS token",
+            type: "aws_access_key",
+          });
+          expect(value).toMatchObject({
+            accessKeyId: "AKIA_TEST",
+            secretAccessKey: "aws_secret_123",
+          });
+          return Promise.resolve(jsonResponse({
+            credential: {
+              id: "cred-aws-new",
+              tenantId: "tenant-pro",
+              name: "AWS token",
+              type: "aws_access_key",
+              hasSecret: true,
+              lastUsedAt: null,
+              createdAt: "2026-05-01T22:10:00.000Z",
+              updatedAt: "2026-05-01T22:10:00.000Z",
+            },
+          }));
+        }
+        expect(parsed).toMatchObject({
           name: "Docs token",
           type: "github_token",
           value: "ghp_secret_token_123",
@@ -567,6 +619,38 @@ describe("ContextOptimizerPanel", () => {
               documentCount: 0,
               lastError: null,
               metadata: { file: { filename: "guide.md", contentType: "text/markdown", sizeBytes: 35 } },
+              updatedAt: "2026-05-01T22:10:00.000Z",
+            },
+          }));
+        }
+        if (parsed.type === "s3_bucket") {
+          expect(parsed).toMatchObject({
+            name: "Docs bucket",
+            type: "s3_bucket",
+            s3: {
+              bucket: "acme-docs",
+              region: "us-east-1",
+              prefix: "docs",
+              credentialId: "cred-aws-new",
+              extensions: [".md", ".txt"],
+              maxFiles: 25,
+              maxFileBytes: 125000,
+            },
+          });
+          return Promise.resolve(jsonResponse({
+            source: {
+              id: "source-s3",
+              collectionId: "collection-1",
+              name: "Docs bucket",
+              type: "s3_bucket",
+              externalId: "s3:acme-docs:us-east-1:docs",
+              sourceUri: "s3://acme-docs/docs",
+              syncStatus: "pending",
+              lastSyncedAt: null,
+              lastDocumentId: null,
+              documentCount: 0,
+              lastError: null,
+              metadata: { s3: { bucket: "acme-docs", region: "us-east-1", prefix: "docs", credentialId: "cred-aws-new" } },
               updatedAt: "2026-05-01T22:10:00.000Z",
             },
           }));
@@ -674,6 +758,40 @@ describe("ContextOptimizerPanel", () => {
           },
         }));
       }
+      if (path === "/v1/context/sources/source-s3/sync") {
+        return Promise.resolve(jsonResponse({
+          synced: true,
+          collection: {
+            id: "collection-1",
+            tenantId: "tenant-pro",
+            name: "Support KB",
+            description: "Approved support context",
+            status: "active",
+            documentCount: 3,
+            blockCount: 6,
+            canonicalBlockCount: 1,
+            approvedBlockCount: 0,
+            tokenCount: 400,
+            createdAt: "2026-05-01T20:00:00.000Z",
+            updatedAt: "2026-05-01T22:14:00.000Z",
+          },
+          source: {
+            id: "source-s3",
+            collectionId: "collection-1",
+            name: "Docs bucket",
+            type: "s3_bucket",
+            externalId: "s3:acme-docs:us-east-1:docs",
+            sourceUri: "s3://acme-docs/docs",
+            syncStatus: "synced",
+            lastSyncedAt: "2026-05-01T22:14:00.000Z",
+            lastDocumentId: "doc-s3",
+            documentCount: 2,
+            lastError: null,
+            metadata: { s3: { bucket: "acme-docs", region: "us-east-1", prefix: "docs", credentialId: "cred-aws-new" } },
+            updatedAt: "2026-05-01T22:14:00.000Z",
+          },
+        }));
+      }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
 
@@ -688,6 +806,15 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("Docs token").length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain("ghp_secret_token_123");
 
+    fireEvent.change(screen.getByLabelText("AWS Credential Name"), { target: { value: "AWS token" } });
+    fireEvent.change(screen.getByLabelText("Access Key ID"), { target: { value: "AKIA_TEST" } });
+    fireEvent.change(screen.getByLabelText("Secret Access Key"), { target: { value: "aws_secret_123" } });
+    fireEvent.click(screen.getByText("Save AWS Credential"));
+
+    expect(await screen.findByText("AWS credential saved.")).toBeInTheDocument();
+    expect(screen.getAllByText("AWS token").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("aws_secret_123");
+
     const upload = new File(["Uploaded guide content for context."], "guide.md", { type: "text/markdown" });
     fireEvent.change(screen.getByLabelText("File"), { target: { files: [upload] } });
     expect(await screen.findByText("File loaded.")).toBeInTheDocument();
@@ -699,6 +826,17 @@ describe("ContextOptimizerPanel", () => {
     expect(await screen.findByText("File source created.")).toBeInTheDocument();
     expect(screen.getByText("guide.md (text/markdown, 35 bytes)")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("Uploaded guide content for context.");
+
+    fireEvent.change(screen.getByLabelText("S3 Source Name"), { target: { value: "Docs bucket" } });
+    fireEvent.change(screen.getByLabelText("Bucket"), { target: { value: "acme-docs" } });
+    fireEvent.change(screen.getByLabelText("Prefix"), { target: { value: "docs" } });
+    fireEvent.change(screen.getByLabelText("S3 Extensions"), { target: { value: ".md,.txt" } });
+    fireEvent.change(screen.getByLabelText("S3 Max Files"), { target: { value: "25" } });
+    fireEvent.change(screen.getByLabelText("S3 Max Bytes"), { target: { value: "125000" } });
+    fireEvent.click(screen.getByText("Create S3 Source"));
+
+    expect(await screen.findByText("S3 source created.")).toBeInTheDocument();
+    expect(screen.getAllByText("s3://acme-docs/docs (us-east-1)").length).toBeGreaterThan(0);
 
     fireEvent.change(screen.getByLabelText("GitHub Source Name"), { target: { value: "Docs repo" } });
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });

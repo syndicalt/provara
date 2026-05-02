@@ -207,7 +207,7 @@ export interface ContextSource {
   id: string;
   collectionId: string;
   name: string;
-  type: "manual" | "github_repository" | "file_upload";
+  type: "manual" | "github_repository" | "file_upload" | "s3_bucket";
   externalId: string | null;
   sourceUri: string | null;
   syncStatus: "pending" | "synced" | "failed";
@@ -223,7 +223,7 @@ export interface ContextConnectorCredential {
   id: string;
   tenantId: string;
   name: string;
-  type: "github_token";
+  type: "github_token" | "aws_access_key";
   hasSecret: boolean;
   lastUsedAt: string | null;
   createdAt: string;
@@ -326,6 +326,7 @@ function formatTimestamp(value: string | null): string {
 function formatContextSourceType(type: ContextSource["type"]): string {
   if (type === "github_repository") return "GitHub";
   if (type === "file_upload") return "File Upload";
+  if (type === "s3_bucket") return "S3";
   return "Manual";
 }
 
@@ -349,15 +350,25 @@ function formatContextSourceDetail(source: ContextSource): string {
     const sizeBytes = typeof file.sizeBytes === "number" ? file.sizeBytes : null;
     if (filename) return `${filename}${contentType ? ` (${contentType}` : ""}${contentType && sizeBytes !== null ? `, ${formatInteger(sizeBytes)} bytes)` : contentType ? ")" : ""}`;
   }
+  if (source.type === "s3_bucket") {
+    const s3 = typeof source.metadata.s3 === "object" && source.metadata.s3 !== null && !Array.isArray(source.metadata.s3)
+      ? source.metadata.s3 as Record<string, unknown>
+      : {};
+    const bucket = typeof s3.bucket === "string" ? s3.bucket : "";
+    const region = typeof s3.region === "string" ? s3.region : "";
+    const prefix = typeof s3.prefix === "string" && s3.prefix ? `/${s3.prefix}` : "";
+    if (bucket) return `s3://${bucket}${prefix}${region ? ` (${region})` : ""}`;
+  }
   return source.sourceUri || source.externalId || source.id;
 }
 
 function contextSourceHasAuth(source: ContextSource): boolean {
-  if (source.type !== "github_repository") return false;
-  const github = typeof source.metadata.github === "object" && source.metadata.github !== null && !Array.isArray(source.metadata.github)
-    ? source.metadata.github as Record<string, unknown>
+  if (source.type !== "github_repository" && source.type !== "s3_bucket") return false;
+  const credentialMetadata = source.type === "github_repository" ? source.metadata.github : source.metadata.s3;
+  const connector = typeof credentialMetadata === "object" && credentialMetadata !== null && !Array.isArray(credentialMetadata)
+    ? credentialMetadata as Record<string, unknown>
     : {};
-  return typeof github.credentialId === "string" && github.credentialId.length > 0;
+  return typeof connector.credentialId === "string" && connector.credentialId.length > 0;
 }
 
 function parseCsv(value: string): string[] {
@@ -663,6 +674,9 @@ export function ContextOptimizerPanel() {
   const [credentialDraft, setCredentialDraft] = useState({ name: "", value: "" });
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
   const [credentialMessage, setCredentialMessage] = useState<string | null>(null);
+  const [awsCredentialDraft, setAwsCredentialDraft] = useState({ name: "", accessKeyId: "", secretAccessKey: "", sessionToken: "" });
+  const [awsCredentialSubmitting, setAwsCredentialSubmitting] = useState(false);
+  const [awsCredentialMessage, setAwsCredentialMessage] = useState<string | null>(null);
   const [sourceDraft, setSourceDraft] = useState({
     name: "",
     owner: "",
@@ -676,6 +690,18 @@ export function ContextOptimizerPanel() {
   });
   const [sourceSubmitting, setSourceSubmitting] = useState(false);
   const [sourceMessage, setSourceMessage] = useState<string | null>(null);
+  const [s3Draft, setS3Draft] = useState({
+    name: "",
+    bucket: "",
+    region: "us-east-1",
+    prefix: "",
+    extensions: ".md,.mdx,.txt,.rst,.adoc,.csv,.json",
+    maxFiles: "100",
+    maxFileBytes: "250000",
+    credentialId: "",
+  });
+  const [s3Submitting, setS3Submitting] = useState(false);
+  const [s3Message, setS3Message] = useState<string | null>(null);
   const [fileDraft, setFileDraft] = useState({
     name: "",
     filename: "",
@@ -853,6 +879,8 @@ export function ContextOptimizerPanel() {
   const collectionRows = useMemo(() => state.collections, [state.collections]);
   const sourceRows = useMemo(() => state.sources, [state.sources]);
   const credentialRows = useMemo(() => state.credentials, [state.credentials]);
+  const githubCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "github_token"), [credentialRows]);
+  const awsCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "aws_access_key"), [credentialRows]);
   const canonicalRows = useMemo(() => state.canonicalBlocks, [state.canonicalBlocks]);
   const firstCollection = collectionRows[0] ?? null;
   const visibleCanonicalRows = useMemo(() => canonicalRows.slice(0, 10), [canonicalRows]);
@@ -919,6 +947,42 @@ export function ContextOptimizerPanel() {
     }
   }
 
+  async function createAwsCredential() {
+    if (!awsCredentialDraft.name.trim() || !awsCredentialDraft.accessKeyId.trim() || !awsCredentialDraft.secretAccessKey.trim()) return;
+    setAwsCredentialSubmitting(true);
+    setAwsCredentialMessage(null);
+    try {
+      const res = await gatewayFetchRaw("/v1/context/credentials", {
+        method: "POST",
+        body: JSON.stringify({
+          name: awsCredentialDraft.name.trim(),
+          type: "aws_access_key",
+          value: JSON.stringify({
+            accessKeyId: awsCredentialDraft.accessKeyId.trim(),
+            secretAccessKey: awsCredentialDraft.secretAccessKey,
+            sessionToken: awsCredentialDraft.sessionToken.trim() || undefined,
+          }),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save AWS credential");
+      const body = await res.json() as { credential: ContextConnectorCredential };
+      setState((prev) => ({
+        ...prev,
+        credentials: [
+          body.credential,
+          ...prev.credentials.filter((credential) => credential.id !== body.credential.id),
+        ],
+      }));
+      setAwsCredentialDraft({ name: "", accessKeyId: "", secretAccessKey: "", sessionToken: "" });
+      setS3Draft((prev) => ({ ...prev, credentialId: body.credential.id }));
+      setAwsCredentialMessage("AWS credential saved.");
+    } catch (err) {
+      setAwsCredentialMessage(err instanceof Error ? err.message : "Failed to save AWS credential");
+    } finally {
+      setAwsCredentialSubmitting(false);
+    }
+  }
+
   async function createGitHubSource() {
     if (!firstCollection || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()) return;
     setSourceSubmitting(true);
@@ -962,6 +1026,45 @@ export function ContextOptimizerPanel() {
       setSourceMessage(err instanceof Error ? err.message : "Failed to create GitHub source");
     } finally {
       setSourceSubmitting(false);
+    }
+  }
+
+  async function createS3Source() {
+    if (!firstCollection || !s3Draft.name.trim() || !s3Draft.bucket.trim() || !s3Draft.region.trim() || !s3Draft.credentialId) return;
+    setS3Submitting(true);
+    setS3Message(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: s3Draft.name.trim(),
+          type: "s3_bucket",
+          s3: {
+            bucket: s3Draft.bucket.trim(),
+            region: s3Draft.region.trim(),
+            prefix: s3Draft.prefix.trim() || undefined,
+            credentialId: s3Draft.credentialId,
+            extensions: parseCsv(s3Draft.extensions),
+            maxFiles: Number(s3Draft.maxFiles) || 100,
+            maxFileBytes: Number(s3Draft.maxFileBytes) || 250000,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create S3 source");
+      const body = await res.json() as { source: ContextSource };
+      setState((prev) => ({
+        ...prev,
+        sources: [
+          body.source,
+          ...prev.sources.filter((source) => source.id !== body.source.id),
+        ],
+      }));
+      setS3Draft((prev) => ({ ...prev, name: "", bucket: "", prefix: "" }));
+      setS3Message("S3 source created.");
+    } catch (err) {
+      setS3Message(err instanceof Error ? err.message : "Failed to create S3 source");
+    } finally {
+      setS3Submitting(false);
     }
   }
 
@@ -1234,7 +1337,7 @@ export function ContextOptimizerPanel() {
       <section>
         <div className="mb-3">
           <h2 className="text-lg font-semibold text-zinc-100">Connector Management</h2>
-          <p className="mt-1 text-sm text-zinc-500">Credential metadata, GitHub repository sources, file upload sources, and manual source sync controls.</p>
+          <p className="mt-1 text-sm text-zinc-500">Credential metadata, S3 buckets, GitHub repository sources, file upload sources, and manual source sync controls.</p>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -1316,6 +1419,64 @@ export function ContextOptimizerPanel() {
           </div>
 
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">AWS Access Key Credential</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-aws-credential-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">AWS Credential Name</label>
+                <input
+                  id="context-aws-credential-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={awsCredentialDraft.name}
+                  onChange={(event) => setAwsCredentialDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-aws-access-key-id" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Access Key ID</label>
+                <input
+                  id="context-aws-access-key-id"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={awsCredentialDraft.accessKeyId}
+                  onChange={(event) => setAwsCredentialDraft((prev) => ({ ...prev, accessKeyId: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-aws-secret-access-key" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Secret Access Key</label>
+                <input
+                  id="context-aws-secret-access-key"
+                  type="password"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={awsCredentialDraft.secretAccessKey}
+                  onChange={(event) => setAwsCredentialDraft((prev) => ({ ...prev, secretAccessKey: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-aws-session-token" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Session Token</label>
+                <input
+                  id="context-aws-session-token"
+                  type="password"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={awsCredentialDraft.sessionToken}
+                  onChange={(event) => setAwsCredentialDraft((prev) => ({ ...prev, sessionToken: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={awsCredentialSubmitting || !awsCredentialDraft.name.trim() || !awsCredentialDraft.accessKeyId.trim() || !awsCredentialDraft.secretAccessKey.trim()}
+                onClick={() => void createAwsCredential()}
+              >
+                {awsCredentialSubmitting ? "Saving..." : "Save AWS Credential"}
+              </button>
+              {awsCredentialMessage && <span className="text-xs text-zinc-400">{awsCredentialMessage}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">File Upload Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1359,6 +1520,106 @@ export function ContextOptimizerPanel() {
           </div>
 
           <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">S3 Source</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-s3-source-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">S3 Source Name</label>
+                <input
+                  id="context-s3-source-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={s3Draft.name}
+                  onChange={(event) => setS3Draft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-s3-credential" className="text-xs font-medium uppercase tracking-wider text-zinc-500">AWS Credential</label>
+                <select
+                  id="context-s3-credential"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={s3Draft.credentialId}
+                  onChange={(event) => setS3Draft((prev) => ({ ...prev, credentialId: event.target.value }))}
+                >
+                  <option value="">Select credential</option>
+                  {awsCredentialRows.map((credential) => (
+                    <option key={credential.id} value={credential.id}>{credential.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="context-s3-bucket" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Bucket</label>
+                <input
+                  id="context-s3-bucket"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={s3Draft.bucket}
+                  onChange={(event) => setS3Draft((prev) => ({ ...prev, bucket: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-s3-region" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Region</label>
+                <input
+                  id="context-s3-region"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={s3Draft.region}
+                  onChange={(event) => setS3Draft((prev) => ({ ...prev, region: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-s3-prefix" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Prefix</label>
+                <input
+                  id="context-s3-prefix"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={s3Draft.prefix}
+                  onChange={(event) => setS3Draft((prev) => ({ ...prev, prefix: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-s3-extensions" className="text-xs font-medium uppercase tracking-wider text-zinc-500">S3 Extensions</label>
+                <input
+                  id="context-s3-extensions"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={s3Draft.extensions}
+                  onChange={(event) => setS3Draft((prev) => ({ ...prev, extensions: event.target.value }))}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="context-s3-max-files" className="text-xs font-medium uppercase tracking-wider text-zinc-500">S3 Max Files</label>
+                  <input
+                    id="context-s3-max-files"
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                    value={s3Draft.maxFiles}
+                    onChange={(event) => setS3Draft((prev) => ({ ...prev, maxFiles: event.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="context-s3-max-bytes" className="text-xs font-medium uppercase tracking-wider text-zinc-500">S3 Max Bytes</label>
+                  <input
+                    id="context-s3-max-bytes"
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                    value={s3Draft.maxFileBytes}
+                    onChange={(event) => setS3Draft((prev) => ({ ...prev, maxFileBytes: event.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={s3Submitting || !firstCollection || !s3Draft.name.trim() || !s3Draft.bucket.trim() || !s3Draft.region.trim() || !s3Draft.credentialId}
+                onClick={() => void createS3Source()}
+              >
+                {s3Submitting ? "Creating..." : "Create S3 Source"}
+              </button>
+              {s3Message && <span className="text-xs text-zinc-400">{s3Message}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
             <h3 className="text-sm font-semibold text-zinc-100">GitHub Source</h3>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
@@ -1379,7 +1640,7 @@ export function ContextOptimizerPanel() {
                   onChange={(event) => setSourceDraft((prev) => ({ ...prev, credentialId: event.target.value }))}
                 >
                   <option value="">No credential</option>
-                  {credentialRows.map((credential) => (
+                  {githubCredentialRows.map((credential) => (
                     <option key={credential.id} value={credential.id}>{credential.name}</option>
                   ))}
                 </select>

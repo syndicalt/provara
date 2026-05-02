@@ -3075,7 +3075,7 @@ components:
           maxLength: 200
         type:
           type: string
-          enum: [manual, github_repository, file_upload]
+          enum: [manual, github_repository, file_upload, s3_bucket]
         externalId:
           type: string
           maxLength: 2000
@@ -3090,6 +3090,8 @@ components:
           $ref: "#/components/schemas/GitHubContextSourceConfig"
         file:
           $ref: "#/components/schemas/FileUploadContextSourceConfig"
+        s3:
+          $ref: "#/components/schemas/S3ContextSourceConfig"
         metadata:
           type: object
           additionalProperties: true
@@ -3106,6 +3108,43 @@ components:
           type: string
           maxLength: 120
 
+    S3ContextSourceConfig:
+      type: object
+      required: [bucket, region, credentialId]
+      properties:
+        bucket:
+          type: string
+          minLength: 3
+          maxLength: 63
+        region:
+          type: string
+          minLength: 1
+          maxLength: 64
+        prefix:
+          type: string
+          maxLength: 1000
+        credentialId:
+          type: string
+          description: Tenant-scoped aws_access_key connector credential id.
+        extensions:
+          type: array
+          description: Object key extensions to ingest. Defaults to documentation/text extensions.
+          minItems: 1
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 24
+        maxFileBytes:
+          type: integer
+          minimum: 1
+          maximum: 250000
+          default: 250000
+        maxFiles:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 100
+
     CreateContextConnectorCredentialRequest:
       type: object
       required: [name, value]
@@ -3116,12 +3155,12 @@ components:
           maxLength: 120
         type:
           type: string
-          enum: [github_token]
+          enum: [github_token, aws_access_key]
         value:
           type: string
           minLength: 1
           maxLength: 20000
-          description: Secret token value. Only accepted on write and never returned.
+          description: Secret token value. For aws_access_key, pass a JSON string with accessKeyId, secretAccessKey, and optional sessionToken. Only accepted on write and never returned.
 
     ContextConnectorCredential:
       type: object
@@ -3136,7 +3175,7 @@ components:
           type: string
         type:
           type: string
-          enum: [github_token]
+          enum: [github_token, aws_access_key]
         hasSecret:
           type: boolean
         lastUsedAt:
@@ -3273,7 +3312,7 @@ components:
           type: string
         type:
           type: string
-          enum: [manual, github_repository, file_upload]
+          enum: [manual, github_repository, file_upload, s3_bucket]
         externalId:
           type: string
           nullable: true

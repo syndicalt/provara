@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { Db } from "@provara/db";
 import {
   contextBlocks,
@@ -36,11 +36,18 @@ const MAX_CREDENTIAL_VALUE_CHARS = 20_000;
 const MAX_UPLOAD_FILENAME_CHARS = 240;
 const MAX_UPLOAD_CONTENT_TYPE_CHARS = 120;
 const MAX_UPLOAD_BYTES = 500_000;
+const MAX_S3_BUCKET_CHARS = 63;
+const MAX_S3_REGION_CHARS = 64;
+const MAX_S3_PREFIX_CHARS = 1_000;
+const MAX_S3_EXTENSION_CHARS = 24;
+const MAX_S3_FILE_BYTES = 250_000;
+const MAX_S3_FILES = 100;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
 const BLOCK_INSERT_BATCH_SIZE = 50;
 
-type ContextSourceType = "manual" | "github_repository" | "file_upload";
+type ContextSourceType = "manual" | "github_repository" | "file_upload" | "s3_bucket";
+type ContextConnectorCredentialType = "github_token" | "aws_access_key";
 
 export interface GitHubSourceConfig {
   owner: string;
@@ -59,11 +66,27 @@ export interface FileUploadSourceConfig {
   sizeBytes: number;
 }
 
+export interface S3SourceConfig {
+  bucket: string;
+  region: string;
+  prefix?: string;
+  extensions: string[];
+  maxFileBytes: number;
+  maxFiles: number;
+  credentialId: string;
+}
+
+interface AwsAccessKeyCredential {
+  accessKeyId: string;
+  secretAccessKey: string;
+  sessionToken?: string;
+}
+
 export interface ContextConnectorCredential {
   id: string;
   tenantId: string | null;
   name: string;
-  type: "github_token";
+  type: ContextConnectorCredentialType;
   hasSecret: boolean;
   lastUsedAt: Date | null;
   createdAt: Date;
@@ -191,11 +214,12 @@ export interface CreateContextSourceInput {
   metadata?: Record<string, unknown>;
   github?: GitHubSourceConfig;
   file?: FileUploadSourceConfig;
+  s3?: S3SourceConfig;
 }
 
 export interface CreateContextConnectorCredentialInput {
   name: string;
-  type: "github_token";
+  type: ContextConnectorCredentialType;
   value: string;
 }
 
@@ -218,6 +242,17 @@ interface GitHubFileCandidate {
 }
 
 interface GitHubSyncFile extends GitHubFileCandidate {
+  content: string;
+}
+
+interface S3ObjectCandidate {
+  key: string;
+  etag: string;
+  size: number;
+  lastModified?: string;
+}
+
+interface S3SyncFile extends S3ObjectCandidate {
   content: string;
 }
 
@@ -244,6 +279,32 @@ function normalizeGithubExtension(value: string): string {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) return "";
   return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+function normalizeConnectorExtension(value: string): string {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return "";
+  return trimmed.startsWith(".") ? trimmed : `.${trimmed}`;
+}
+
+function normalizeS3Prefix(value: string | undefined): string | undefined {
+  const trimmed = value?.trim().replace(/^\/+/, "") ?? "";
+  return trimmed || undefined;
+}
+
+function parseAwsCredentialValue(value: string): AwsAccessKeyCredential | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const raw = parsed as Record<string, unknown>;
+    const accessKeyId = typeof raw.accessKeyId === "string" ? raw.accessKeyId.trim() : "";
+    const secretAccessKey = typeof raw.secretAccessKey === "string" ? raw.secretAccessKey.trim() : "";
+    const sessionToken = typeof raw.sessionToken === "string" && raw.sessionToken.trim() ? raw.sessionToken.trim() : undefined;
+    if (!accessKeyId || !secretAccessKey) return null;
+    return { accessKeyId, secretAccessKey, sessionToken };
+  } catch {
+    return null;
+  }
 }
 
 function sanitizeUploadFilename(value: string): string {
@@ -298,6 +359,30 @@ function parseGithubConfig(metadata: Record<string, unknown>): GitHubSourceConfi
 
   if (!owner || !repo || !branch) throw new Error("github owner, repo, and branch are required");
   return { owner, repo, branch, path, extensions, maxFileBytes, maxFiles, credentialId };
+}
+
+function parseS3Config(metadata: Record<string, unknown>): S3SourceConfig {
+  const s3 = metadata.s3;
+  if (typeof s3 !== "object" || s3 === null || Array.isArray(s3)) {
+    throw new Error("s3 source config is required");
+  }
+  const raw = s3 as Record<string, unknown>;
+  const bucket = typeof raw.bucket === "string" ? raw.bucket : "";
+  const region = typeof raw.region === "string" ? raw.region : "";
+  const prefix = typeof raw.prefix === "string" ? normalizeS3Prefix(raw.prefix) : undefined;
+  const extensions = Array.isArray(raw.extensions)
+    ? raw.extensions.filter((value): value is string => typeof value === "string").map(normalizeConnectorExtension).filter(Boolean)
+    : [".md", ".mdx", ".txt", ".rst", ".adoc", ".csv", ".json"];
+  const maxFileBytes = typeof raw.maxFileBytes === "number" && Number.isFinite(raw.maxFileBytes)
+    ? Math.min(Math.max(Math.trunc(raw.maxFileBytes), 1), MAX_S3_FILE_BYTES)
+    : MAX_S3_FILE_BYTES;
+  const maxFiles = typeof raw.maxFiles === "number" && Number.isFinite(raw.maxFiles)
+    ? Math.min(Math.max(Math.trunc(raw.maxFiles), 1), MAX_S3_FILES)
+    : MAX_S3_FILES;
+  const credentialId = typeof raw.credentialId === "string" ? raw.credentialId.trim() : "";
+
+  if (!bucket || !region || !credentialId) throw new Error("s3 bucket, region, and credentialId are required");
+  return { bucket, region, prefix, extensions, maxFileBytes, maxFiles, credentialId };
 }
 
 function credentialFromRow(row: typeof contextConnectorCredentials.$inferSelect): ContextConnectorCredential {
@@ -557,8 +642,8 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
   if (name.error) return { error: name.error };
   if (!name.value) return { error: "name is required" };
   const type = body.type === undefined ? "manual" : body.type;
-  if (type !== "manual" && type !== "github_repository" && type !== "file_upload") {
-    return { error: "type must be manual, github_repository, or file_upload" };
+  if (type !== "manual" && type !== "github_repository" && type !== "file_upload" && type !== "s3_bucket") {
+    return { error: "type must be manual, github_repository, file_upload, or s3_bucket" };
   }
   const externalId = trimOptional(body.externalId, "externalId", MAX_SOURCE_URI_CHARS);
   if (externalId.error) return { error: externalId.error };
@@ -658,6 +743,66 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
     file = { filename, contentType, sizeBytes };
   }
 
+  let s3: S3SourceConfig | undefined;
+  if (type === "s3_bucket") {
+    if (typeof body.s3 !== "object" || body.s3 === null || Array.isArray(body.s3)) {
+      return { error: "s3 config is required" };
+    }
+    const raw = body.s3 as Record<string, unknown>;
+    const bucket = trimOptional(raw.bucket, "s3.bucket", MAX_S3_BUCKET_CHARS);
+    if (bucket.error) return { error: bucket.error };
+    if (!bucket.value) return { error: "s3.bucket is required" };
+    if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket.value) || bucket.value.includes("..")) {
+      return { error: "s3.bucket is invalid" };
+    }
+    const region = trimOptional(raw.region, "s3.region", MAX_S3_REGION_CHARS);
+    if (region.error) return { error: region.error };
+    if (!region.value) return { error: "s3.region is required" };
+    if (!/^[a-z0-9-]+$/.test(region.value)) return { error: "s3.region is invalid" };
+    const prefix = trimOptional(raw.prefix, "s3.prefix", MAX_S3_PREFIX_CHARS);
+    if (prefix.error) return { error: prefix.error };
+    const credentialId = trimOptional(raw.credentialId, "s3.credentialId", MAX_SOURCE_URI_CHARS);
+    if (credentialId.error) return { error: credentialId.error };
+    if (!credentialId.value) return { error: "s3.credentialId is required" };
+
+    let extensions = [".md", ".mdx", ".txt", ".rst", ".adoc", ".csv", ".json"];
+    if (raw.extensions !== undefined) {
+      if (!Array.isArray(raw.extensions)) return { error: "s3.extensions must be an array" };
+      if (raw.extensions.length === 0 || raw.extensions.length > 20) return { error: "s3.extensions must contain 1 to 20 entries" };
+      extensions = [];
+      for (const [index, entry] of raw.extensions.entries()) {
+        if (typeof entry !== "string") return { error: `s3.extensions[${index}] must be a string` };
+        const normalized = normalizeConnectorExtension(entry);
+        if (!normalized) return { error: `s3.extensions[${index}] is required` };
+        if (normalized.length > MAX_S3_EXTENSION_CHARS) {
+          return { error: `s3.extensions[${index}] must be at most ${MAX_S3_EXTENSION_CHARS} characters` };
+        }
+        if (!extensions.includes(normalized)) extensions.push(normalized);
+      }
+    }
+
+    const maxFileBytes = raw.maxFileBytes === undefined ? MAX_S3_FILE_BYTES : raw.maxFileBytes;
+    if (typeof maxFileBytes !== "number" || !Number.isFinite(maxFileBytes)) return { error: "s3.maxFileBytes must be a number" };
+    if (maxFileBytes < 1 || maxFileBytes > MAX_S3_FILE_BYTES) {
+      return { error: `s3.maxFileBytes must be between 1 and ${MAX_S3_FILE_BYTES}` };
+    }
+    const maxFiles = raw.maxFiles === undefined ? MAX_S3_FILES : raw.maxFiles;
+    if (typeof maxFiles !== "number" || !Number.isFinite(maxFiles)) return { error: "s3.maxFiles must be a number" };
+    if (maxFiles < 1 || maxFiles > MAX_S3_FILES) {
+      return { error: `s3.maxFiles must be between 1 and ${MAX_S3_FILES}` };
+    }
+
+    s3 = {
+      bucket: bucket.value,
+      region: region.value,
+      prefix: normalizeS3Prefix(prefix.value),
+      extensions,
+      maxFileBytes: Math.trunc(maxFileBytes),
+      maxFiles: Math.trunc(maxFiles),
+      credentialId: credentialId.value,
+    };
+  }
+
   return {
     value: {
       name: name.value,
@@ -668,6 +813,7 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
       metadata,
       github,
       file,
+      s3,
     },
   };
 }
@@ -681,11 +827,14 @@ export function validateCreateContextConnectorCredentialBody(value: unknown): Va
   if (name.error) return { error: name.error };
   if (!name.value) return { error: "name is required" };
   const type = body.type === undefined ? "github_token" : body.type;
-  if (type !== "github_token") return { error: "type must be github_token" };
+  if (type !== "github_token" && type !== "aws_access_key") return { error: "type must be github_token or aws_access_key" };
   if (typeof body.value !== "string") return { error: "value is required" };
   const credentialValue = body.value.trim();
   if (!credentialValue) return { error: "value cannot be empty or whitespace-only" };
   if (credentialValue.length > MAX_CREDENTIAL_VALUE_CHARS) return { error: `value must be at most ${MAX_CREDENTIAL_VALUE_CHARS} characters` };
+  if (type === "aws_access_key" && !parseAwsCredentialValue(credentialValue)) {
+    return { error: "value must be a JSON object with accessKeyId and secretAccessKey" };
+  }
   return { value: { name: name.value, type, value: credentialValue } };
 }
 
@@ -876,23 +1025,35 @@ export async function createContextSource(
     const credential = await db.select({ id: contextConnectorCredentials.id }).from(contextConnectorCredentials).where(credentialWhere).get();
     if (!credential) throw new Error("connector credential not found");
   }
+  if (input.s3?.credentialId) {
+    const credentialWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.id, input.s3.credentialId));
+    const credential = await db.select({ id: contextConnectorCredentials.id, type: contextConnectorCredentials.type }).from(contextConnectorCredentials).where(credentialWhere).get();
+    if (!credential) throw new Error("connector credential not found");
+    if (credential.type !== "aws_access_key") throw new Error("connector credential must be aws_access_key");
+  }
 
   const now = new Date();
   const id = nanoid();
   const metadata = input.github
     ? { ...(input.metadata ?? {}), github: input.github, githubSyncedFiles: {} }
+    : input.s3
+      ? { ...(input.metadata ?? {}), s3: input.s3, s3SyncedObjects: {} }
     : input.file
       ? { ...(input.metadata ?? {}), file: input.file }
       : input.metadata ?? {};
   const sourceUri = input.sourceUri
     ?? (input.github
       ? `https://github.com/${input.github.owner}/${input.github.repo}/tree/${encodeURIComponent(input.github.branch)}`
+      : input.s3
+        ? `s3://${input.s3.bucket}/${input.s3.prefix ?? ""}`
       : input.file
         ? `upload://${encodeURIComponent(input.file.filename)}`
         : null);
   const externalId = input.externalId
     ?? (input.github
       ? `github:${input.github.owner}/${input.github.repo}:${input.github.branch}:${input.github.path ?? ""}`
+      : input.s3
+        ? `s3:${input.s3.bucket}:${input.s3.region}:${input.s3.prefix ?? ""}`
       : input.file
         ? `upload:${hashContent(`${input.file.filename}:${input.content ?? ""}`).slice(0, 32)}`
         : id);
@@ -906,7 +1067,7 @@ export async function createContextSource(
     externalId,
     sourceUri,
     content,
-    contentHash: hashContent(input.github ? JSON.stringify(input.github) : content),
+    contentHash: hashContent(input.github ? JSON.stringify(input.github) : input.s3 ? JSON.stringify(input.s3) : content),
     syncStatus: "pending",
     documentCount: 0,
     metadata: JSON.stringify(metadata),
@@ -1106,6 +1267,16 @@ function getSyncedGithubFiles(metadata: Record<string, unknown>): Record<string,
   return result;
 }
 
+function getSyncedS3Objects(metadata: Record<string, unknown>): Record<string, string> {
+  const objects = metadata.s3SyncedObjects;
+  if (typeof objects !== "object" || objects === null || Array.isArray(objects)) return {};
+  const result: Record<string, string> = {};
+  for (const [key, etag] of Object.entries(objects)) {
+    if (typeof etag === "string") result[key] = etag;
+  }
+  return result;
+}
+
 async function resolveGithubToken(
   db: Db,
   tenantId: string | null,
@@ -1133,6 +1304,171 @@ async function resolveGithubToken(
     if (err instanceof Error && err.message === "connector credential is empty") throw err;
     throw new Error("connector credential could not be decrypted");
   }
+}
+
+async function resolveAwsCredential(
+  db: Db,
+  tenantId: string | null,
+  credentialId: string,
+): Promise<AwsAccessKeyCredential> {
+  if (!hasMasterKey()) throw new Error("PROVARA_MASTER_KEY not set");
+  const credentialWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.id, credentialId));
+  const credential = await db.select().from(contextConnectorCredentials).where(credentialWhere).get();
+  if (!credential) throw new Error("connector credential not found");
+  if (credential.type !== "aws_access_key") throw new Error("connector credential must be aws_access_key");
+  try {
+    const raw = decrypt({
+      encrypted: credential.encryptedValue,
+      iv: credential.iv,
+      authTag: credential.authTag,
+    }).replace(/[^\x20-\x7E\t\r\n]/g, "").trim();
+    const parsed = parseAwsCredentialValue(raw);
+    if (!parsed) throw new Error("connector credential is invalid");
+    await db.update(contextConnectorCredentials).set({
+      lastUsedAt: new Date(),
+    }).where(eq(contextConnectorCredentials.id, credential.id)).run();
+    return parsed;
+  } catch (err) {
+    if (err instanceof Error && err.message === "connector credential is invalid") throw err;
+    throw new Error("connector credential could not be decrypted");
+  }
+}
+
+function hmac(key: Buffer | string, value: string): Buffer {
+  return createHmac("sha256", key).update(value).digest();
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function encodeS3KeyPath(key: string): string {
+  return key.split("/").map(encodeURIComponent).join("/");
+}
+
+function s3Host(config: S3SourceConfig): string {
+  return `${config.bucket}.s3.${config.region}.amazonaws.com`;
+}
+
+function signS3Request(
+  method: "GET",
+  url: URL,
+  config: S3SourceConfig,
+  credential: AwsAccessKeyCredential,
+  now = new Date(),
+): HeadersInit {
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex("");
+  const headers: Record<string, string> = {
+    host: url.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+  };
+  if (credential.sessionToken) headers["x-amz-security-token"] = credential.sessionToken;
+  const signedHeaders = Object.keys(headers).sort().join(";");
+  const canonicalHeaders = Object.keys(headers).sort().map((name) => `${name}:${headers[name]}\n`).join("");
+  const canonicalQuery = Array.from(url.searchParams.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join("&");
+  const canonicalRequest = [
+    method,
+    url.pathname || "/",
+    canonicalQuery,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n");
+  const credentialScope = `${dateStamp}/${config.region}/s3/aws4_request`;
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    sha256Hex(canonicalRequest),
+  ].join("\n");
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${credential.secretAccessKey}`, dateStamp), config.region), "s3"), "aws4_request");
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  return {
+    Host: headers.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+    ...(credential.sessionToken ? { "x-amz-security-token": credential.sessionToken } : {}),
+    Authorization: `AWS4-HMAC-SHA256 Credential=${credential.accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+function decodeXml(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function xmlText(block: string, tag: string): string | undefined {
+  const match = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(block);
+  return match ? decodeXml(match[1] ?? "") : undefined;
+}
+
+function shouldIngestS3Object(candidate: S3ObjectCandidate, config: S3SourceConfig): boolean {
+  if (candidate.size <= 0 || candidate.size > config.maxFileBytes) return false;
+  const lowerKey = candidate.key.toLowerCase();
+  return config.extensions.some((extension) => lowerKey.endsWith(extension));
+}
+
+async function fetchS3Text(fetchFn: typeof fetch, url: URL, config: S3SourceConfig, credential: AwsAccessKeyCredential): Promise<string> {
+  const response = await fetchFn(url, { headers: signS3Request("GET", url, config, credential) });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    const detail = text ? `: ${text.slice(0, 200)}` : "";
+    throw new Error(`S3 request failed (${response.status})${detail}`);
+  }
+  return response.text();
+}
+
+async function fetchS3Candidates(
+  fetchFn: typeof fetch,
+  config: S3SourceConfig,
+  credential: AwsAccessKeyCredential,
+): Promise<S3ObjectCandidate[]> {
+  const url = new URL(`https://${s3Host(config)}/`);
+  url.searchParams.set("list-type", "2");
+  url.searchParams.set("max-keys", String(config.maxFiles));
+  if (config.prefix) url.searchParams.set("prefix", config.prefix);
+  const xml = await fetchS3Text(fetchFn, url, config, credential);
+  const objects: S3ObjectCandidate[] = [];
+  const matches = xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g);
+  for (const match of matches) {
+    const block = match[1] ?? "";
+    const key = xmlText(block, "Key");
+    const etag = xmlText(block, "ETag")?.replace(/^"|"$/g, "");
+    const size = Number(xmlText(block, "Size") ?? "0");
+    const lastModified = xmlText(block, "LastModified");
+    if (!key || !etag || !Number.isFinite(size)) continue;
+    objects.push({ key, etag, size, lastModified });
+    if (objects.length >= config.maxFiles) break;
+  }
+  return objects
+    .filter((candidate) => shouldIngestS3Object(candidate, config))
+    .sort((left, right) => left.key.localeCompare(right.key))
+    .slice(0, config.maxFiles);
+}
+
+async function fetchS3File(
+  fetchFn: typeof fetch,
+  config: S3SourceConfig,
+  credential: AwsAccessKeyCredential,
+  candidate: S3ObjectCandidate,
+): Promise<S3SyncFile> {
+  if (candidate.size > config.maxFileBytes) throw new Error(`S3 object exceeds maxFileBytes: ${candidate.key}`);
+  const url = new URL(`https://${s3Host(config)}/${encodeS3KeyPath(candidate.key)}`);
+  const content = await fetchS3Text(fetchFn, url, config, credential);
+  if (Buffer.byteLength(content, "utf8") > config.maxFileBytes) throw new Error(`S3 object exceeds maxFileBytes: ${candidate.key}`);
+  if (!isSafeUploadedText(content)) throw new Error(`S3 object must be text: ${candidate.key}`);
+  if (content.trim().length === 0) throw new Error(`S3 object is empty: ${candidate.key}`);
+  return { ...candidate, content };
 }
 
 async function syncGithubContextSource(
@@ -1238,6 +1574,110 @@ async function syncGithubContextSource(
   };
 }
 
+async function syncS3ContextSource(
+  db: Db,
+  tenantId: string | null,
+  sourceRow: typeof contextSources.$inferSelect,
+  collection: typeof contextCollections.$inferSelect,
+  options: ContextSourceSyncOptions,
+): Promise<{ source: ContextSource; collection: ContextCollection; document: ContextDocument | null; blocks: ContextBlock[]; synced: boolean }> {
+  const fetchFn = options.fetch ?? globalThis.fetch;
+  if (!fetchFn) throw new Error("fetch is unavailable");
+  const metadata = parseMetadata(sourceRow.metadata);
+  const config = parseS3Config(metadata);
+  const credential = await resolveAwsCredential(db, tenantId, config.credentialId);
+  const syncedObjects = getSyncedS3Objects(metadata);
+  const candidates = await fetchS3Candidates(fetchFn, config, credential);
+  const changedCandidates = candidates.filter((candidate) => syncedObjects[candidate.key] !== candidate.etag);
+  const now = new Date();
+
+  if (changedCandidates.length === 0 && sourceRow.syncStatus === "synced") {
+    await db.update(contextSources).set({
+      lastSyncedAt: now,
+      lastError: null,
+      updatedAt: now,
+      metadata: JSON.stringify({
+        ...metadata,
+        s3LastSync: {
+          checkedAt: now.toISOString(),
+          matchedObjects: candidates.length,
+          changedObjects: 0,
+        },
+      }),
+    }).where(eq(contextSources.id, sourceRow.id)).run();
+    const unchangedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceRow.id)).get();
+    return {
+      source: sourceFromRow(unchangedSource ?? sourceRow),
+      collection: collectionFromRow(collection),
+      document: null,
+      blocks: [],
+      synced: false,
+    };
+  }
+
+  const allBlocks: ContextBlock[] = [];
+  let lastDocument: ContextDocument | null = null;
+  let latestCollection: ContextCollection = collectionFromRow(collection);
+  const nextSyncedObjects = { ...syncedObjects };
+
+  for (const candidate of changedCandidates) {
+    const file = await fetchS3File(fetchFn, config, credential, candidate);
+    const result = await ingestContextDocument(db, tenantId, sourceRow.collectionId, {
+      title: file.key,
+      text: file.content,
+      source: `source:${sourceRow.type}`,
+      sourceUri: `s3://${config.bucket}/${file.key}`,
+      metadata: {
+        ...metadata,
+        s3SyncedObjects: undefined,
+        contextSourceId: sourceRow.id,
+        contextSourceType: sourceRow.type,
+        externalId: sourceRow.externalId,
+        s3Bucket: config.bucket,
+        s3Region: config.region,
+        s3Prefix: config.prefix ?? null,
+        s3Key: file.key,
+        s3Etag: file.etag,
+        s3Size: file.size,
+        s3LastModified: file.lastModified ?? null,
+      },
+    });
+    nextSyncedObjects[file.key] = file.etag;
+    latestCollection = result.collection;
+    lastDocument = result.document;
+    allBlocks.push(...result.blocks);
+  }
+
+  await db.update(contextSources).set({
+    syncStatus: "synced",
+    lastSyncedAt: now,
+    lastDocumentId: lastDocument?.id ?? sourceRow.lastDocumentId,
+    documentCount: sourceRow.documentCount + changedCandidates.length,
+    lastError: null,
+    contentHash: hashContent(candidates.map((candidate) => `${candidate.key}:${candidate.etag}`).join("\n")),
+    metadata: JSON.stringify({
+      ...metadata,
+      s3SyncedObjects: nextSyncedObjects,
+      s3LastSync: {
+        checkedAt: now.toISOString(),
+        matchedObjects: candidates.length,
+        changedObjects: changedCandidates.length,
+      },
+    }),
+    updatedAt: now,
+  }).where(eq(contextSources.id, sourceRow.id)).run();
+
+  const syncedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceRow.id)).get();
+  if (!syncedSource) throw new Error("Failed to sync context source");
+  return {
+    source: sourceFromRow(syncedSource),
+    collection: latestCollection,
+    document: lastDocument,
+    blocks: allBlocks,
+    synced: changedCandidates.length > 0,
+  };
+}
+
 export async function syncContextSource(
   db: Db,
   tenantId: string | null,
@@ -1254,6 +1694,21 @@ export async function syncContextSource(
     const now = new Date();
     try {
       return await syncGithubContextSource(db, tenantId, sourceRow, collection, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sync context source";
+      await db.update(contextSources).set({
+        syncStatus: "failed",
+        lastError: message,
+        updatedAt: now,
+      }).where(eq(contextSources.id, sourceId)).run();
+      throw new Error(message);
+    }
+  }
+
+  if (sourceRow.type === "s3_bucket") {
+    const now = new Date();
+    try {
+      return await syncS3ContextSource(db, tenantId, sourceRow, collection, options);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sync context source";
       await db.update(contextSources).set({
