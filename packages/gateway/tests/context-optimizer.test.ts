@@ -198,6 +198,43 @@ describe("context optimizer core", () => {
     expect(result.metrics.avgFreshnessScore).toEqual(expect.any(Number));
     expect(result.metrics.staleChunks).toBe(2);
   });
+
+  it("detects conflicting retained context with bounded heuristic signals", () => {
+    const result = optimizeContextChunks([
+      {
+        id: "refunds-current",
+        content: "Refund policy says paid accounts have a 30 day refund window and refunds are available.",
+        metadata: { conflictKey: "refund-policy", status: "active" },
+      },
+      {
+        id: "refunds-legacy",
+        content: "Refund policy says paid accounts have a 14 day refund window and refunds are unavailable.",
+        metadata: { conflictKey: "refund-policy", status: "inactive" },
+      },
+      {
+        id: "security",
+        content: "Enterprise plans include audit logs and SAML single sign on.",
+      },
+    ], { conflictMode: "heuristic" });
+
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({
+      kind: "metadata",
+      chunkIds: ["refunds-current", "refunds-legacy"],
+      sourceIds: ["refunds-current", "refunds-legacy"],
+      leftValue: "status:active",
+      rightValue: "status:inactive",
+    });
+    expect(result.optimized.find((chunk) => chunk.id === "refunds-current")).toMatchObject({
+      conflict: true,
+      conflictGroupIds: ["conflict-1"],
+    });
+    expect(result.optimized.find((chunk) => chunk.id === "security")?.conflict).toBeUndefined();
+    expect(result.metrics).toMatchObject({
+      conflictChunks: 2,
+      conflictGroups: 1,
+    });
+  });
 });
 
 describe("POST /v1/context/optimize", () => {
@@ -266,6 +303,8 @@ describe("POST /v1/context/optimize", () => {
           rerankedChunks: number;
           avgFreshnessScore: number | null;
           staleChunks: number;
+          conflictChunks: number;
+          conflictGroups: number;
         };
       };
       event: {
@@ -278,8 +317,11 @@ describe("POST /v1/context/optimize", () => {
         rerankedChunks: number;
         avgFreshnessScore: number | null;
         staleChunks: number;
+        conflictChunks: number;
+        conflictGroups: number;
         duplicateSourceIds: string[];
         nearDuplicateSourceIds: string[];
+        conflictSourceIds: string[];
       };
       retrieval: {
         retrievedChunks: number;
@@ -292,8 +334,12 @@ describe("POST /v1/context/optimize", () => {
         rerankedChunks: number;
         avgFreshnessScore: number | null;
         staleChunks: number;
+        conflictChunks: number;
+        conflictGroups: number;
+        conflictRatePct: number;
         usedSourceIds: string[];
         unusedSourceIds: string[];
+        conflictSourceIds: string[];
       };
     };
     expect(body.optimization.optimized).toHaveLength(2);
@@ -312,6 +358,8 @@ describe("POST /v1/context/optimize", () => {
       rerankedChunks: 0,
       avgFreshnessScore: null,
       staleChunks: 0,
+      conflictChunks: 0,
+      conflictGroups: 0,
     });
     expect(body.event).toMatchObject({
       tenantId: "tenant-pro",
@@ -322,8 +370,11 @@ describe("POST /v1/context/optimize", () => {
       rerankedChunks: 0,
       avgFreshnessScore: null,
       staleChunks: 0,
+      conflictChunks: 0,
+      conflictGroups: 0,
       duplicateSourceIds: ["b"],
       nearDuplicateSourceIds: [],
+      conflictSourceIds: [],
     });
     expect(body.retrieval).toMatchObject({
       retrievedChunks: 3,
@@ -336,8 +387,11 @@ describe("POST /v1/context/optimize", () => {
       rerankedChunks: 0,
       avgFreshnessScore: null,
       staleChunks: 0,
+      conflictChunks: 0,
+      conflictGroups: 0,
       usedSourceIds: ["a", "c"],
       unusedSourceIds: ["b"],
+      conflictSourceIds: [],
     });
 
     const rows = await db.select().from(contextOptimizationEvents).all();
@@ -425,6 +479,86 @@ describe("POST /v1/context/optimize", () => {
       avgFreshnessScore: body.optimization.metrics.avgFreshnessScore,
       staleChunks: body.optimization.metrics.staleChunks,
     });
+  });
+
+  it("records conflicting context analytics from heuristic mode", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        conflictMode: "heuristic",
+        chunks: [
+          {
+            id: "pricing-current",
+            content: "Pro pricing includes 10000 requests per month and API access is enabled.",
+            metadata: { conflictKey: "pro-pricing", status: "active" },
+          },
+          {
+            id: "pricing-old",
+            content: "Pro pricing includes 5000 requests per month and API access is disabled.",
+            metadata: { conflictKey: "pro-pricing", status: "inactive" },
+          },
+          {
+            id: "security",
+            content: "Enterprise plans include audit logs.",
+          },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        optimized: Array<{ id: string; conflict?: boolean; conflictGroupIds?: string[] }>;
+        conflicts: Array<{ kind: string; chunkIds: [string, string]; sourceIds: string[] }>;
+        metrics: { conflictChunks: number; conflictGroups: number };
+      };
+      event: {
+        conflictChunks: number;
+        conflictGroups: number;
+        conflictSourceIds: string[];
+        conflictDetails: Array<{ kind: string; chunkIds: [string, string]; sourceIds: string[] }>;
+      };
+      retrieval: {
+        conflictChunks: number;
+        conflictGroups: number;
+        conflictRatePct: number;
+        conflictSourceIds: string[];
+      };
+    };
+
+    expect(body.optimization.conflicts).toHaveLength(1);
+    expect(body.optimization.optimized.find((chunk) => chunk.id === "pricing-current")).toMatchObject({
+      conflict: true,
+      conflictGroupIds: ["conflict-1"],
+    });
+    expect(body.optimization.metrics).toMatchObject({
+      conflictChunks: 2,
+      conflictGroups: 1,
+    });
+    expect(body.event).toMatchObject({
+      conflictChunks: 2,
+      conflictGroups: 1,
+      conflictSourceIds: ["pricing-current", "pricing-old"],
+    });
+    expect(body.event.conflictDetails[0]).toMatchObject({
+      kind: "metadata",
+      chunkIds: ["pricing-current", "pricing-old"],
+      sourceIds: ["pricing-current", "pricing-old"],
+    });
+    expect(body.retrieval).toMatchObject({
+      conflictChunks: 2,
+      conflictGroups: 1,
+      conflictSourceIds: ["pricing-current", "pricing-old"],
+    });
+    expect(body.retrieval.conflictRatePct).toBeGreaterThan(0);
   });
 
   it("records relevance analytics for lexical ranking", async () => {

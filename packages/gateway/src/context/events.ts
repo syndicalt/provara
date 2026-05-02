@@ -21,6 +21,18 @@ export interface ContextOptimizationEvent {
   rerankedChunks: number;
   avgFreshnessScore: number | null;
   staleChunks: number;
+  conflictChunks: number;
+  conflictGroups: number;
+  conflictSourceIds: string[];
+  conflictDetails: Array<{
+    id: string;
+    kind: string;
+    chunkIds: [string, string];
+    sourceIds: string[];
+    topicTokens: string[];
+    leftValue: string;
+    rightValue: string;
+  }>;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
   riskScanned: boolean;
@@ -63,6 +75,10 @@ function eventFromRow(row: typeof contextOptimizationEvents.$inferSelect): Conte
     rerankedChunks: row.rerankedChunks,
     avgFreshnessScore: row.avgFreshnessScore,
     staleChunks: row.staleChunks,
+    conflictChunks: row.conflictChunks,
+    conflictGroups: row.conflictGroups,
+    conflictSourceIds: parseDuplicateSourceIds(row.conflictSourceIds),
+    conflictDetails: parseConflictDetails(row.conflictDetails),
     duplicateSourceIds: parseDuplicateSourceIds(row.duplicateSourceIds),
     nearDuplicateSourceIds: parseDuplicateSourceIds(row.nearDuplicateSourceIds),
     riskScanned: row.riskScanned,
@@ -92,6 +108,31 @@ function parseRiskDetails(value: string | null): ContextOptimizationEvent["riskD
   }
 }
 
+function parseConflictDetails(value: string | null): ContextOptimizationEvent["conflictDetails"] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is ContextOptimizationEvent["conflictDetails"][number] => (
+      typeof item === "object" &&
+      item !== null &&
+      typeof item.id === "string" &&
+      typeof item.kind === "string" &&
+      Array.isArray(item.chunkIds) &&
+      item.chunkIds.length === 2 &&
+      item.chunkIds.every((id: unknown) => typeof id === "string") &&
+      Array.isArray(item.sourceIds) &&
+      item.sourceIds.every((id: unknown) => typeof id === "string") &&
+      Array.isArray(item.topicTokens) &&
+      item.topicTokens.every((token: unknown) => typeof token === "string") &&
+      typeof item.leftValue === "string" &&
+      typeof item.rightValue === "string"
+    ));
+  } catch {
+    return [];
+  }
+}
+
 export async function recordContextOptimizationEvent(
   db: Db,
   tenantId: string | null,
@@ -104,6 +145,16 @@ export async function recordContextOptimizationEvent(
   const nearDuplicateSourceIds = result.dropped
     .filter((chunk) => chunk.reason === "near_duplicate")
     .map((chunk) => chunk.id);
+  const conflictSourceIds = [...new Set(result.conflicts.flatMap((conflict) => conflict.sourceIds))];
+  const conflictDetails = result.conflicts.map((conflict) => ({
+    id: conflict.id,
+    kind: conflict.kind,
+    chunkIds: conflict.chunkIds,
+    sourceIds: conflict.sourceIds,
+    topicTokens: conflict.topicTokens,
+    leftValue: conflict.leftValue,
+    rightValue: conflict.rightValue,
+  }));
   const riskyChunks = [...result.flagged, ...result.quarantined];
   const riskDetails = riskyChunks.map((chunk) => ({
     id: chunk.id,
@@ -130,6 +181,10 @@ export async function recordContextOptimizationEvent(
     rerankedChunks: result.metrics.rerankedChunks,
     avgFreshnessScore: result.metrics.avgFreshnessScore,
     staleChunks: result.metrics.staleChunks,
+    conflictChunks: result.metrics.conflictChunks,
+    conflictGroups: result.metrics.conflictGroups,
+    conflictSourceIds: JSON.stringify(conflictSourceIds),
+    conflictDetails: JSON.stringify(conflictDetails),
     duplicateSourceIds: JSON.stringify(duplicateSourceIds),
     nearDuplicateSourceIds: JSON.stringify(nearDuplicateSourceIds),
     riskScanned: options.riskScanned ?? false,
@@ -183,6 +238,8 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       rerankedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.rerankedChunks}), 0)`,
       avgFreshnessScore: sql<number | null>`avg(${contextOptimizationEvents.avgFreshnessScore})`,
       staleChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.staleChunks}), 0)`,
+      conflictChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.conflictChunks}), 0)`,
+      conflictGroups: sql<number>`coalesce(sum(${contextOptimizationEvents.conflictGroups}), 0)`,
       flaggedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.flaggedChunks}), 0)`,
       quarantinedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.quarantinedChunks}), 0)`,
     })
@@ -223,6 +280,8 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       ? null
       : Number(row.avgFreshnessScore.toFixed(4)),
     staleChunks: row?.staleChunks ?? 0,
+    conflictChunks: row?.conflictChunks ?? 0,
+    conflictGroups: row?.conflictGroups ?? 0,
     latestAt: latestRow?.createdAt ?? null,
   };
 }

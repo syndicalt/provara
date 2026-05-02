@@ -131,6 +131,10 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
     }
     parsedReferenceTime = new Date(millis);
   }
+  const conflictMode = value.conflictMode;
+  if (conflictMode !== undefined && conflictMode !== "off" && conflictMode !== "heuristic") {
+    return { error: "conflictMode must be either off or heuristic" };
+  }
 
   return {
     options: {
@@ -142,6 +146,7 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
       freshnessMode: freshnessMode === "metadata" ? "metadata" : "off",
       maxContextAgeDays: typeof maxContextAgeDays === "number" ? maxContextAgeDays : undefined,
       referenceTime: parsedReferenceTime,
+      conflictMode: conflictMode === "heuristic" ? "heuristic" : "off",
     },
   };
 }
@@ -221,8 +226,14 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
   const avgFreshnessScore = freshnessScores.length === 0
     ? null
     : Number((freshnessScores.reduce((sum, score) => sum + score, 0) / freshnessScores.length).toFixed(4));
+  const safeIds = new Set(result.optimized.map((chunk) => chunk.id));
+  const conflicts = result.conflicts.filter((conflict) => (
+    conflict.chunkIds.every((chunkId) => safeIds.has(chunkId))
+  ));
+  const conflictChunkIds = new Set(conflicts.flatMap((conflict) => conflict.chunkIds));
   return {
     ...result,
+    conflicts,
     metrics: {
       ...result.metrics,
       outputChunks: result.optimized.length,
@@ -239,6 +250,8 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
         : result.optimized.filter((chunk) => (chunk.relevanceScore ?? 0) < 0.2).length,
       avgFreshnessScore,
       staleChunks: result.optimized.filter((chunk) => chunk.stale).length,
+      conflictChunks: result.optimized.filter((chunk) => conflictChunkIds.has(chunk.id)).length,
+      conflictGroups: conflicts.length,
     },
   };
 }
