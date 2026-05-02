@@ -183,6 +183,42 @@ interface LoadState {
   gate: GateState | null;
 }
 
+type DedupeMode = "exact" | "semantic";
+type RankMode = "none" | "lexical" | "embedding";
+type FreshnessMode = "off" | "metadata";
+type ConflictMode = "off" | "heuristic" | "scored";
+type CompressionMode = "off" | "extractive";
+
+interface OptimizerDraftSettings {
+  dedupeMode: DedupeMode;
+  semanticThreshold: number;
+  rankMode: RankMode;
+  query: string;
+  minRelevanceScore: number;
+  freshnessMode: FreshnessMode;
+  maxContextAgeDays: number;
+  conflictMode: ConflictMode;
+  compressionMode: CompressionMode;
+  maxSentencesPerChunk: number;
+  scanRisk: boolean;
+}
+
+const OPTIMIZER_SETTINGS_STORAGE_KEY = "provara:context-optimizer:settings";
+
+const DEFAULT_OPTIMIZER_SETTINGS: OptimizerDraftSettings = {
+  dedupeMode: "semantic",
+  semanticThreshold: 0.72,
+  rankMode: "embedding",
+  query: "What is the refund policy for paid accounts?",
+  minRelevanceScore: 0.2,
+  freshnessMode: "metadata",
+  maxContextAgeDays: 180,
+  conflictMode: "scored",
+  compressionMode: "extractive",
+  maxSentencesPerChunk: 3,
+  scanRisk: true,
+};
+
 function formatInteger(value: number): string {
   return new Intl.NumberFormat("en-US").format(value);
 }
@@ -230,6 +266,235 @@ function deltaTone(value: number | null | undefined): string {
   if (value < 0) return "text-red-300";
   if (value > 0) return "text-emerald-300";
   return "text-zinc-200";
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function readStoredOptimizerSettings(): OptimizerDraftSettings {
+  if (typeof window === "undefined") return DEFAULT_OPTIMIZER_SETTINGS;
+  try {
+    const raw = window.localStorage.getItem(OPTIMIZER_SETTINGS_STORAGE_KEY);
+    if (!raw) return DEFAULT_OPTIMIZER_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<OptimizerDraftSettings>;
+    return {
+      dedupeMode: parsed.dedupeMode === "exact" || parsed.dedupeMode === "semantic"
+        ? parsed.dedupeMode
+        : DEFAULT_OPTIMIZER_SETTINGS.dedupeMode,
+      semanticThreshold: clampNumber(Number(parsed.semanticThreshold), 0.5, 1),
+      rankMode: parsed.rankMode === "none" || parsed.rankMode === "lexical" || parsed.rankMode === "embedding"
+        ? parsed.rankMode
+        : DEFAULT_OPTIMIZER_SETTINGS.rankMode,
+      query: typeof parsed.query === "string" ? parsed.query.slice(0, 2000) : DEFAULT_OPTIMIZER_SETTINGS.query,
+      minRelevanceScore: clampNumber(Number(parsed.minRelevanceScore), 0, 1),
+      freshnessMode: parsed.freshnessMode === "off" || parsed.freshnessMode === "metadata"
+        ? parsed.freshnessMode
+        : DEFAULT_OPTIMIZER_SETTINGS.freshnessMode,
+      maxContextAgeDays: Math.round(clampNumber(Number(parsed.maxContextAgeDays), 1, 3650)),
+      conflictMode: parsed.conflictMode === "off" || parsed.conflictMode === "heuristic" || parsed.conflictMode === "scored"
+        ? parsed.conflictMode
+        : DEFAULT_OPTIMIZER_SETTINGS.conflictMode,
+      compressionMode: parsed.compressionMode === "off" || parsed.compressionMode === "extractive"
+        ? parsed.compressionMode
+        : DEFAULT_OPTIMIZER_SETTINGS.compressionMode,
+      maxSentencesPerChunk: Math.round(clampNumber(Number(parsed.maxSentencesPerChunk), 1, 8)),
+      scanRisk: typeof parsed.scanRisk === "boolean" ? parsed.scanRisk : DEFAULT_OPTIMIZER_SETTINGS.scanRisk,
+    };
+  } catch {
+    return DEFAULT_OPTIMIZER_SETTINGS;
+  }
+}
+
+function buildOptimizerPayload(settings: OptimizerDraftSettings) {
+  return {
+    dedupeMode: settings.dedupeMode,
+    semanticThreshold: settings.semanticThreshold,
+    rankMode: settings.rankMode,
+    query: settings.query,
+    minRelevanceScore: settings.minRelevanceScore,
+    freshnessMode: settings.freshnessMode,
+    maxContextAgeDays: settings.maxContextAgeDays,
+    conflictMode: settings.conflictMode,
+    compressionMode: settings.compressionMode,
+    maxSentencesPerChunk: settings.maxSentencesPerChunk,
+    scanRisk: settings.scanRisk,
+    chunks: [
+      {
+        id: "refunds-current.md#2",
+        content: "Refunds are available for paid accounts within 30 days when a receipt is present.",
+        source: "help-center",
+        metadata: { conflictKey: "refund-policy", status: "active", updatedAt: "2026-04-01T00:00:00.000Z" },
+      },
+      {
+        id: "refunds-legacy.md#8",
+        content: "Refunds are available for paid accounts within 14 days.",
+        source: "legacy-docs",
+        metadata: { conflictKey: "refund-policy", status: "deprecated", updatedAt: "2024-01-15T00:00:00.000Z" },
+      },
+    ],
+  };
+}
+
+function SelectField<T extends string>({ label, value, options, onChange }: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <label className="block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      {label}
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+        className="mt-2 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-100 outline-none focus:border-blue-500"
+      >
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function NumberField({ label, value, min, max, step, onChange }: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="block text-xs font-medium uppercase tracking-wider text-zinc-500">
+      {label}
+      <input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(clampNumber(Number(event.target.value), min, max))}
+        className="mt-2 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-100 outline-none focus:border-blue-500"
+      />
+    </label>
+  );
+}
+
+function OptimizerConfigPanel() {
+  const [settings, setSettings] = useState<OptimizerDraftSettings>(() => readStoredOptimizerSettings());
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(OPTIMIZER_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+      // Ignore storage failures in locked-down browser contexts.
+    }
+  }, [settings]);
+
+  const payload = useMemo(() => buildOptimizerPayload(settings), [settings]);
+  const payloadText = useMemo(() => JSON.stringify(payload, null, 2), [payload]);
+
+  async function copyPayload() {
+    try {
+      await navigator.clipboard.writeText(payloadText);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  function update<K extends keyof OptimizerDraftSettings>(key: K, value: OptimizerDraftSettings[K]) {
+    setSettings((prev) => ({ ...prev, [key]: value }));
+  }
+
+  return (
+    <section className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-zinc-100">Configuration</h2>
+          <p className="mt-1 text-sm text-zinc-500">Draft optimizer modes and export the request payload.</p>
+        </div>
+        <button
+          type="button"
+          onClick={copyPayload}
+          className="inline-flex items-center justify-center rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-500"
+        >
+          {copied ? "Copied" : "Copy API Payload"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <SelectField
+          label="Dedupe"
+          value={settings.dedupeMode}
+          options={[{ value: "exact", label: "Exact" }, { value: "semantic", label: "Semantic" }]}
+          onChange={(value) => update("dedupeMode", value)}
+        />
+        <SelectField
+          label="Ranking"
+          value={settings.rankMode}
+          options={[{ value: "none", label: "None" }, { value: "lexical", label: "Lexical" }, { value: "embedding", label: "Embedding" }]}
+          onChange={(value) => update("rankMode", value)}
+        />
+        <SelectField
+          label="Freshness"
+          value={settings.freshnessMode}
+          options={[{ value: "off", label: "Off" }, { value: "metadata", label: "Metadata" }]}
+          onChange={(value) => update("freshnessMode", value)}
+        />
+        <SelectField
+          label="Conflicts"
+          value={settings.conflictMode}
+          options={[{ value: "off", label: "Off" }, { value: "heuristic", label: "Heuristic" }, { value: "scored", label: "Scored" }]}
+          onChange={(value) => update("conflictMode", value)}
+        />
+        <SelectField
+          label="Compression"
+          value={settings.compressionMode}
+          options={[{ value: "off", label: "Off" }, { value: "extractive", label: "Extractive" }]}
+          onChange={(value) => update("compressionMode", value)}
+        />
+      </div>
+
+      <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <NumberField label="Semantic Threshold" value={settings.semanticThreshold} min={0.5} max={1} step={0.01} onChange={(value) => update("semanticThreshold", value)} />
+        <NumberField label="Min Relevance" value={settings.minRelevanceScore} min={0} max={1} step={0.01} onChange={(value) => update("minRelevanceScore", value)} />
+        <NumberField label="Max Age Days" value={settings.maxContextAgeDays} min={1} max={3650} step={1} onChange={(value) => update("maxContextAgeDays", Math.round(value))} />
+        <NumberField label="Max Sentences" value={settings.maxSentencesPerChunk} min={1} max={8} step={1} onChange={(value) => update("maxSentencesPerChunk", Math.round(value))} />
+        <label className="flex min-h-[66px] items-center justify-between rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-200">
+          <span>
+            <span className="block text-xs font-medium uppercase tracking-wider text-zinc-500">Risk Scan</span>
+            <span className="mt-1 block text-zinc-300">{settings.scanRisk ? "Enabled" : "Disabled"}</span>
+          </span>
+          <input
+            aria-label="Risk Scan"
+            type="checkbox"
+            checked={settings.scanRisk}
+            onChange={(event) => update("scanRisk", event.target.checked)}
+            className="h-4 w-4 accent-blue-600"
+          />
+        </label>
+      </div>
+
+      <label className="mt-3 block text-xs font-medium uppercase tracking-wider text-zinc-500">
+        Query
+        <input
+          value={settings.query}
+          onChange={(event) => update("query", event.target.value.slice(0, 2000))}
+          className="mt-2 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm font-normal normal-case tracking-normal text-zinc-100 outline-none focus:border-blue-500"
+        />
+      </label>
+
+      <pre className="mt-4 max-h-72 overflow-auto rounded-md border border-zinc-800 bg-zinc-950 p-3 text-xs text-zinc-300">
+        {payloadText}
+      </pre>
+    </section>
+  );
 }
 
 function StatTile({ label, value, detail, tone }: {
@@ -455,6 +720,8 @@ export function ContextOptimizerPanel() {
           tone={metricTone(summary?.reductionPct ?? 0)}
         />
       </div>
+
+      <OptimizerConfigPanel />
 
       <section>
         <div className="mb-3">
