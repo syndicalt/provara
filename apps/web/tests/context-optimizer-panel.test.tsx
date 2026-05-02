@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ContextOptimizerPanel } from "../src/components/context-optimizer-panel";
 import { gatewayFetchRaw } from "../src/lib/gateway-client";
 
@@ -20,6 +20,7 @@ function jsonResponse(body: unknown, init: ResponseInit = {}) {
 describe("ContextOptimizerPanel", () => {
   beforeEach(() => {
     mockedFetch.mockReset();
+    window.localStorage.clear();
   });
 
   it("renders summary metrics and recent events", async () => {
@@ -219,6 +220,8 @@ describe("ContextOptimizerPanel", () => {
 
     expect(await screen.findByText("Context Optimizer")).toBeInTheDocument();
     expect(screen.getByText("270")).toBeInTheDocument();
+    expect(screen.getByText("Configuration")).toBeInTheDocument();
+    expect(document.body.textContent).toContain('"rankMode": "embedding"');
     expect(screen.getByText("10 input chunks scanned")).toBeInTheDocument();
     expect(screen.getByText("27%")).toBeInTheDocument();
     expect(screen.getByText("chunk-b")).toBeInTheDocument();
@@ -235,9 +238,103 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("Conflicts").length).toBeGreaterThan(0);
     expect(screen.getByText(/medium 0.76/i)).toBeInTheDocument();
     expect(screen.getByText("Conflict Rate")).toBeInTheDocument();
-    expect(screen.getByText("Compression")).toBeInTheDocument();
+    expect(screen.getAllByText("Compression").length).toBeGreaterThan(0);
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();
     expect(screen.getAllByText("chunk-risky").length).toBeGreaterThan(0);
+  });
+
+  it("updates and persists optimizer payload controls", async () => {
+    mockedFetch.mockImplementation((path) => {
+      if (path === "/v1/context/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            inputChunks: 0,
+            outputChunks: 0,
+            droppedChunks: 0,
+            nearDuplicateChunks: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            savedTokens: 0,
+            reductionPct: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            flaggedChunks: 0,
+            quarantinedChunks: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            regressedCount: 0,
+            avgRawScore: null,
+            avgOptimizedScore: null,
+            avgDelta: null,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            retrievedChunks: 0,
+            usedChunks: 0,
+            unusedChunks: 0,
+            duplicateChunks: 0,
+            nearDuplicateChunks: 0,
+            riskyChunks: 0,
+            retrievedTokens: 0,
+            usedTokens: 0,
+            unusedTokens: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            efficiencyPct: 0,
+            duplicateRatePct: 0,
+            nearDuplicateRatePct: 0,
+            riskyRatePct: 0,
+            conflictRatePct: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ events: [] }));
+    });
+
+    render(<ContextOptimizerPanel />);
+
+    expect(await screen.findByText("Configuration")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Ranking"), { target: { value: "lexical" } });
+    fireEvent.change(screen.getByLabelText("Conflicts"), { target: { value: "heuristic" } });
+    fireEvent.change(screen.getByLabelText("Max Sentences"), { target: { value: "5" } });
+    fireEvent.click(screen.getByLabelText("Risk Scan"));
+
+    expect(document.body.textContent).toContain('"rankMode": "lexical"');
+    expect(document.body.textContent).toContain('"conflictMode": "heuristic"');
+    expect(document.body.textContent).toContain('"maxSentencesPerChunk": 5');
+    expect(document.body.textContent).toContain('"scanRisk": false');
+    await waitFor(() => {
+      expect(window.localStorage.getItem("provara:context-optimizer:settings")).toContain('"rankMode":"lexical"');
+    });
   });
 
   it("shows the empty state", async () => {

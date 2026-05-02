@@ -24,6 +24,7 @@ All notable Provara changes are tracked here.
   - Context Optimizer conflicting-context detection with `conflictMode: "heuristic"`, bounded status/numeric/metadata checks, conflict metrics, demo rows, APIs, and dashboard visibility.
   - Context Optimizer scored contradiction detection with `conflictMode: "scored"`, bounded conflict scores, severity bands, APIs, and dashboard visibility.
   - Context Optimizer extractive compression with `compressionMode: "extractive"`, bounded sentence selection, compression savings metrics, demo rows, APIs, and dashboard visibility.
+  - Context Optimizer dashboard configuration controls for optimizer modes, thresholds, risk scanning, local draft persistence, and copyable API payloads.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
 - Optional semantic and hybrid prompt-injection scan modes using the configured judge model.
@@ -37,7 +38,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, and extractive compression as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive compression, and dashboard configuration controls as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.

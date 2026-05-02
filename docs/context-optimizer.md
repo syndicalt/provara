@@ -21,6 +21,7 @@ The shipped V1 implementation is intentionally narrow:
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
+- Dashboard configuration controls for composing and copying an optimization request payload.
 
 It does not yet perform embedding-backed semantic deduplication, abstractive compression, or persistent review workflows. Those belong to later roadmap phases.
 
@@ -138,6 +139,8 @@ It shows five summary cards:
 - **Dropped Chunks**: duplicate chunks removed from model context.
 - **Risky Chunks**: flagged and quarantined chunks removed by risk scanning.
 - **Reduction**: saved tokens divided by estimated input tokens.
+
+The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
 The Recent Events table shows:
 

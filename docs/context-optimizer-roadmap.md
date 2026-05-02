@@ -13,6 +13,7 @@ Implemented as of `0.2.0`:
 - Persisted `context_optimization_events`.
 - Tenant-scoped `GET /v1/context/summary` and `GET /v1/context/events`.
 - Dashboard visibility at `/dashboard/context`.
+- Dashboard configuration controls for optimizer modes and copyable API payloads.
 - Demo tenant seed data for screenshot-ready examples.
 - Optional retrieved-context risk scanning with active Guardrails rules.
 - Flagged and quarantined context reporting in API events and the dashboard.
@@ -26,6 +27,7 @@ Implemented as of `0.2.0`:
 - Optional conflicting-context detection with bounded heuristic status/numeric/metadata checks and dashboard visibility.
 - Optional scored contradiction severity bands for retained-context conflicts.
 - Optional extractive compression with bounded sentence selection, compression savings metrics, and dashboard visibility.
+- Dashboard configuration controls for drafting optimizer payloads.
 
 Next planned layer:
 - Abstractive compression with strict provenance and fallback behavior.
@@ -68,6 +70,7 @@ Capabilities:
 - Stale-context and freshness reporting. Shipped in V1.2.
 - Conflicting-context reporting. Shipped in V1.2.
 - Extractive-compression reporting. Shipped in V1.2.
+- Optimizer configuration controls and copyable request payloads. Shipped in V1.2.
 - Request-detail integration.
 - Dashboard cards for saved tokens, dropped chunks, reduction, and risk flags.
 
