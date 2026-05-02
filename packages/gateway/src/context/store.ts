@@ -42,12 +42,19 @@ const MAX_S3_PREFIX_CHARS = 1_000;
 const MAX_S3_EXTENSION_CHARS = 24;
 const MAX_S3_FILE_BYTES = 250_000;
 const MAX_S3_FILES = 100;
+const MAX_CONFLUENCE_BASE_URL_CHARS = 300;
+const MAX_CONFLUENCE_EMAIL_CHARS = 320;
+const MAX_CONFLUENCE_SPACE_KEY_CHARS = 120;
+const MAX_CONFLUENCE_LABEL_CHARS = 80;
+const MAX_CONFLUENCE_TITLE_FILTER_CHARS = 120;
+const MAX_CONFLUENCE_PAGE_BYTES = 250_000;
+const MAX_CONFLUENCE_PAGES = 100;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
 const BLOCK_INSERT_BATCH_SIZE = 50;
 
-type ContextSourceType = "manual" | "github_repository" | "file_upload" | "s3_bucket";
-type ContextConnectorCredentialType = "github_token" | "aws_access_key";
+type ContextSourceType = "manual" | "github_repository" | "file_upload" | "s3_bucket" | "confluence_space";
+type ContextConnectorCredentialType = "github_token" | "aws_access_key" | "confluence_api_token";
 
 export interface GitHubSourceConfig {
   owner: string;
@@ -76,10 +83,25 @@ export interface S3SourceConfig {
   credentialId: string;
 }
 
+export interface ConfluenceSourceConfig {
+  baseUrl: string;
+  spaceKey: string;
+  labels: string[];
+  titleContains?: string;
+  maxPageBytes: number;
+  maxPages: number;
+  credentialId: string;
+}
+
 interface AwsAccessKeyCredential {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken?: string;
+}
+
+interface ConfluenceApiTokenCredential {
+  email: string;
+  apiToken: string;
 }
 
 export interface ContextConnectorCredential {
@@ -215,6 +237,7 @@ export interface CreateContextSourceInput {
   github?: GitHubSourceConfig;
   file?: FileUploadSourceConfig;
   s3?: S3SourceConfig;
+  confluence?: ConfluenceSourceConfig;
 }
 
 export interface CreateContextConnectorCredentialInput {
@@ -256,6 +279,19 @@ interface S3SyncFile extends S3ObjectCandidate {
   content: string;
 }
 
+interface ConfluencePageCandidate {
+  id: string;
+  title: string;
+  version: string;
+  bodyHtml: string;
+  webUrl: string;
+  sizeBytes: number;
+}
+
+interface ConfluenceSyncPage extends ConfluencePageCandidate {
+  content: string;
+}
+
 export interface ContextSourceSyncOptions {
   fetch?: typeof fetch;
   githubToken?: string;
@@ -292,6 +328,21 @@ function normalizeS3Prefix(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizeConfluenceBaseUrl(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_CONFLUENCE_BASE_URL_CHARS) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "https:") return null;
+    url.hash = "";
+    url.search = "";
+    url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/wiki$/, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
 function parseAwsCredentialValue(value: string): AwsAccessKeyCredential | null {
   try {
     const parsed = JSON.parse(value) as unknown;
@@ -302,6 +353,20 @@ function parseAwsCredentialValue(value: string): AwsAccessKeyCredential | null {
     const sessionToken = typeof raw.sessionToken === "string" && raw.sessionToken.trim() ? raw.sessionToken.trim() : undefined;
     if (!accessKeyId || !secretAccessKey) return null;
     return { accessKeyId, secretAccessKey, sessionToken };
+  } catch {
+    return null;
+  }
+}
+
+function parseConfluenceCredentialValue(value: string): ConfluenceApiTokenCredential | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    const raw = parsed as Record<string, unknown>;
+    const email = typeof raw.email === "string" ? raw.email.trim() : "";
+    const apiToken = typeof raw.apiToken === "string" ? raw.apiToken.trim() : "";
+    if (!email || email.length > MAX_CONFLUENCE_EMAIL_CHARS || !apiToken) return null;
+    return { email, apiToken };
   } catch {
     return null;
   }
@@ -383,6 +448,30 @@ function parseS3Config(metadata: Record<string, unknown>): S3SourceConfig {
 
   if (!bucket || !region || !credentialId) throw new Error("s3 bucket, region, and credentialId are required");
   return { bucket, region, prefix, extensions, maxFileBytes, maxFiles, credentialId };
+}
+
+function parseConfluenceConfig(metadata: Record<string, unknown>): ConfluenceSourceConfig {
+  const confluence = metadata.confluence;
+  if (typeof confluence !== "object" || confluence === null || Array.isArray(confluence)) {
+    throw new Error("confluence source config is required");
+  }
+  const raw = confluence as Record<string, unknown>;
+  const baseUrl = typeof raw.baseUrl === "string" ? normalizeConfluenceBaseUrl(raw.baseUrl) : null;
+  const spaceKey = typeof raw.spaceKey === "string" ? raw.spaceKey.trim() : "";
+  const labels = Array.isArray(raw.labels)
+    ? raw.labels.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean).slice(0, 20)
+    : [];
+  const titleContains = typeof raw.titleContains === "string" && raw.titleContains.trim() ? raw.titleContains.trim() : undefined;
+  const maxPageBytes = typeof raw.maxPageBytes === "number" && Number.isFinite(raw.maxPageBytes)
+    ? Math.min(Math.max(Math.trunc(raw.maxPageBytes), 1), MAX_CONFLUENCE_PAGE_BYTES)
+    : MAX_CONFLUENCE_PAGE_BYTES;
+  const maxPages = typeof raw.maxPages === "number" && Number.isFinite(raw.maxPages)
+    ? Math.min(Math.max(Math.trunc(raw.maxPages), 1), MAX_CONFLUENCE_PAGES)
+    : MAX_CONFLUENCE_PAGES;
+  const credentialId = typeof raw.credentialId === "string" ? raw.credentialId.trim() : "";
+
+  if (!baseUrl || !spaceKey || !credentialId) throw new Error("confluence baseUrl, spaceKey, and credentialId are required");
+  return { baseUrl, spaceKey, labels, titleContains, maxPageBytes, maxPages, credentialId };
 }
 
 function credentialFromRow(row: typeof contextConnectorCredentials.$inferSelect): ContextConnectorCredential {
@@ -642,8 +731,8 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
   if (name.error) return { error: name.error };
   if (!name.value) return { error: "name is required" };
   const type = body.type === undefined ? "manual" : body.type;
-  if (type !== "manual" && type !== "github_repository" && type !== "file_upload" && type !== "s3_bucket") {
-    return { error: "type must be manual, github_repository, file_upload, or s3_bucket" };
+  if (type !== "manual" && type !== "github_repository" && type !== "file_upload" && type !== "s3_bucket" && type !== "confluence_space") {
+    return { error: "type must be manual, github_repository, file_upload, s3_bucket, or confluence_space" };
   }
   const externalId = trimOptional(body.externalId, "externalId", MAX_SOURCE_URI_CHARS);
   if (externalId.error) return { error: externalId.error };
@@ -803,6 +892,66 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
     };
   }
 
+  let confluence: ConfluenceSourceConfig | undefined;
+  if (type === "confluence_space") {
+    if (typeof body.confluence !== "object" || body.confluence === null || Array.isArray(body.confluence)) {
+      return { error: "confluence config is required" };
+    }
+    const raw = body.confluence as Record<string, unknown>;
+    const baseUrl = trimOptional(raw.baseUrl, "confluence.baseUrl", MAX_CONFLUENCE_BASE_URL_CHARS);
+    if (baseUrl.error) return { error: baseUrl.error };
+    if (!baseUrl.value) return { error: "confluence.baseUrl is required" };
+    const normalizedBaseUrl = normalizeConfluenceBaseUrl(baseUrl.value);
+    if (!normalizedBaseUrl) return { error: "confluence.baseUrl must be an https URL" };
+    const spaceKey = trimOptional(raw.spaceKey, "confluence.spaceKey", MAX_CONFLUENCE_SPACE_KEY_CHARS);
+    if (spaceKey.error) return { error: spaceKey.error };
+    if (!spaceKey.value) return { error: "confluence.spaceKey is required" };
+    if (!/^[A-Za-z0-9_-]+$/.test(spaceKey.value)) return { error: "confluence.spaceKey is invalid" };
+    const credentialId = trimOptional(raw.credentialId, "confluence.credentialId", MAX_SOURCE_URI_CHARS);
+    if (credentialId.error) return { error: credentialId.error };
+    if (!credentialId.value) return { error: "confluence.credentialId is required" };
+    const titleContains = trimOptional(raw.titleContains, "confluence.titleContains", MAX_CONFLUENCE_TITLE_FILTER_CHARS);
+    if (titleContains.error) return { error: titleContains.error };
+
+    let labels: string[] = [];
+    if (raw.labels !== undefined) {
+      if (!Array.isArray(raw.labels)) return { error: "confluence.labels must be an array" };
+      if (raw.labels.length > 20) return { error: "confluence.labels must contain at most 20 entries" };
+      labels = [];
+      for (const [index, entry] of raw.labels.entries()) {
+        if (typeof entry !== "string") return { error: `confluence.labels[${index}] must be a string` };
+        const label = entry.trim();
+        if (!label) continue;
+        if (label.length > MAX_CONFLUENCE_LABEL_CHARS) {
+          return { error: `confluence.labels[${index}] must be at most ${MAX_CONFLUENCE_LABEL_CHARS} characters` };
+        }
+        if (!/^[A-Za-z0-9_.:-]+$/.test(label)) return { error: `confluence.labels[${index}] is invalid` };
+        if (!labels.includes(label)) labels.push(label);
+      }
+    }
+
+    const maxPageBytes = raw.maxPageBytes === undefined ? MAX_CONFLUENCE_PAGE_BYTES : raw.maxPageBytes;
+    if (typeof maxPageBytes !== "number" || !Number.isFinite(maxPageBytes)) return { error: "confluence.maxPageBytes must be a number" };
+    if (maxPageBytes < 1 || maxPageBytes > MAX_CONFLUENCE_PAGE_BYTES) {
+      return { error: `confluence.maxPageBytes must be between 1 and ${MAX_CONFLUENCE_PAGE_BYTES}` };
+    }
+    const maxPages = raw.maxPages === undefined ? MAX_CONFLUENCE_PAGES : raw.maxPages;
+    if (typeof maxPages !== "number" || !Number.isFinite(maxPages)) return { error: "confluence.maxPages must be a number" };
+    if (maxPages < 1 || maxPages > MAX_CONFLUENCE_PAGES) {
+      return { error: `confluence.maxPages must be between 1 and ${MAX_CONFLUENCE_PAGES}` };
+    }
+
+    confluence = {
+      baseUrl: normalizedBaseUrl,
+      spaceKey: spaceKey.value,
+      labels,
+      titleContains: titleContains.value,
+      maxPageBytes: Math.trunc(maxPageBytes),
+      maxPages: Math.trunc(maxPages),
+      credentialId: credentialId.value,
+    };
+  }
+
   return {
     value: {
       name: name.value,
@@ -814,6 +963,7 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
       github,
       file,
       s3,
+      confluence,
     },
   };
 }
@@ -827,13 +977,18 @@ export function validateCreateContextConnectorCredentialBody(value: unknown): Va
   if (name.error) return { error: name.error };
   if (!name.value) return { error: "name is required" };
   const type = body.type === undefined ? "github_token" : body.type;
-  if (type !== "github_token" && type !== "aws_access_key") return { error: "type must be github_token or aws_access_key" };
+  if (type !== "github_token" && type !== "aws_access_key" && type !== "confluence_api_token") {
+    return { error: "type must be github_token, aws_access_key, or confluence_api_token" };
+  }
   if (typeof body.value !== "string") return { error: "value is required" };
   const credentialValue = body.value.trim();
   if (!credentialValue) return { error: "value cannot be empty or whitespace-only" };
   if (credentialValue.length > MAX_CREDENTIAL_VALUE_CHARS) return { error: `value must be at most ${MAX_CREDENTIAL_VALUE_CHARS} characters` };
   if (type === "aws_access_key" && !parseAwsCredentialValue(credentialValue)) {
     return { error: "value must be a JSON object with accessKeyId and secretAccessKey" };
+  }
+  if (type === "confluence_api_token" && !parseConfluenceCredentialValue(credentialValue)) {
+    return { error: "value must be a JSON object with email and apiToken" };
   }
   return { value: { name: name.value, type, value: credentialValue } };
 }
@@ -1031,6 +1186,12 @@ export async function createContextSource(
     if (!credential) throw new Error("connector credential not found");
     if (credential.type !== "aws_access_key") throw new Error("connector credential must be aws_access_key");
   }
+  if (input.confluence?.credentialId) {
+    const credentialWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.id, input.confluence.credentialId));
+    const credential = await db.select({ id: contextConnectorCredentials.id, type: contextConnectorCredentials.type }).from(contextConnectorCredentials).where(credentialWhere).get();
+    if (!credential) throw new Error("connector credential not found");
+    if (credential.type !== "confluence_api_token") throw new Error("connector credential must be confluence_api_token");
+  }
 
   const now = new Date();
   const id = nanoid();
@@ -1038,6 +1199,8 @@ export async function createContextSource(
     ? { ...(input.metadata ?? {}), github: input.github, githubSyncedFiles: {} }
     : input.s3
       ? { ...(input.metadata ?? {}), s3: input.s3, s3SyncedObjects: {} }
+    : input.confluence
+      ? { ...(input.metadata ?? {}), confluence: input.confluence, confluenceSyncedPages: {} }
     : input.file
       ? { ...(input.metadata ?? {}), file: input.file }
       : input.metadata ?? {};
@@ -1046,6 +1209,8 @@ export async function createContextSource(
       ? `https://github.com/${input.github.owner}/${input.github.repo}/tree/${encodeURIComponent(input.github.branch)}`
       : input.s3
         ? `s3://${input.s3.bucket}/${input.s3.prefix ?? ""}`
+      : input.confluence
+        ? `${input.confluence.baseUrl}/wiki/spaces/${encodeURIComponent(input.confluence.spaceKey)}`
       : input.file
         ? `upload://${encodeURIComponent(input.file.filename)}`
         : null);
@@ -1054,6 +1219,8 @@ export async function createContextSource(
       ? `github:${input.github.owner}/${input.github.repo}:${input.github.branch}:${input.github.path ?? ""}`
       : input.s3
         ? `s3:${input.s3.bucket}:${input.s3.region}:${input.s3.prefix ?? ""}`
+      : input.confluence
+        ? `confluence:${input.confluence.baseUrl}:${input.confluence.spaceKey}:${input.confluence.labels.join(",")}:${input.confluence.titleContains ?? ""}`
       : input.file
         ? `upload:${hashContent(`${input.file.filename}:${input.content ?? ""}`).slice(0, 32)}`
         : id);
@@ -1067,7 +1234,7 @@ export async function createContextSource(
     externalId,
     sourceUri,
     content,
-    contentHash: hashContent(input.github ? JSON.stringify(input.github) : input.s3 ? JSON.stringify(input.s3) : content),
+    contentHash: hashContent(input.github ? JSON.stringify(input.github) : input.s3 ? JSON.stringify(input.s3) : input.confluence ? JSON.stringify(input.confluence) : content),
     syncStatus: "pending",
     documentCount: 0,
     metadata: JSON.stringify(metadata),
@@ -1277,6 +1444,16 @@ function getSyncedS3Objects(metadata: Record<string, unknown>): Record<string, s
   return result;
 }
 
+function getSyncedConfluencePages(metadata: Record<string, unknown>): Record<string, string> {
+  const pages = metadata.confluenceSyncedPages;
+  if (typeof pages !== "object" || pages === null || Array.isArray(pages)) return {};
+  const result: Record<string, string> = {};
+  for (const [id, version] of Object.entries(pages)) {
+    if (typeof version === "string") result[id] = version;
+  }
+  return result;
+}
+
 async function resolveGithubToken(
   db: Db,
   tenantId: string | null,
@@ -1323,6 +1500,34 @@ async function resolveAwsCredential(
       authTag: credential.authTag,
     }).replace(/[^\x20-\x7E\t\r\n]/g, "").trim();
     const parsed = parseAwsCredentialValue(raw);
+    if (!parsed) throw new Error("connector credential is invalid");
+    await db.update(contextConnectorCredentials).set({
+      lastUsedAt: new Date(),
+    }).where(eq(contextConnectorCredentials.id, credential.id)).run();
+    return parsed;
+  } catch (err) {
+    if (err instanceof Error && err.message === "connector credential is invalid") throw err;
+    throw new Error("connector credential could not be decrypted");
+  }
+}
+
+async function resolveConfluenceCredential(
+  db: Db,
+  tenantId: string | null,
+  credentialId: string,
+): Promise<ConfluenceApiTokenCredential> {
+  if (!hasMasterKey()) throw new Error("PROVARA_MASTER_KEY not set");
+  const credentialWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.id, credentialId));
+  const credential = await db.select().from(contextConnectorCredentials).where(credentialWhere).get();
+  if (!credential) throw new Error("connector credential not found");
+  if (credential.type !== "confluence_api_token") throw new Error("connector credential must be confluence_api_token");
+  try {
+    const raw = decrypt({
+      encrypted: credential.encryptedValue,
+      iv: credential.iv,
+      authTag: credential.authTag,
+    }).replace(/[^\x20-\x7E\t\r\n]/g, "").trim();
+    const parsed = parseConfluenceCredentialValue(raw);
     if (!parsed) throw new Error("connector credential is invalid");
     await db.update(contextConnectorCredentials).set({
       lastUsedAt: new Date(),
@@ -1468,6 +1673,118 @@ async function fetchS3File(
   if (Buffer.byteLength(content, "utf8") > config.maxFileBytes) throw new Error(`S3 object exceeds maxFileBytes: ${candidate.key}`);
   if (!isSafeUploadedText(content)) throw new Error(`S3 object must be text: ${candidate.key}`);
   if (content.trim().length === 0) throw new Error(`S3 object is empty: ${candidate.key}`);
+  return { ...candidate, content };
+}
+
+function confluenceHeaders(credential: ConfluenceApiTokenCredential): HeadersInit {
+  return {
+    Accept: "application/json",
+    Authorization: `Basic ${Buffer.from(`${credential.email}:${credential.apiToken}`).toString("base64")}`,
+    "User-Agent": "provara-context-connector",
+  };
+}
+
+function confluenceApiUrl(config: ConfluenceSourceConfig): URL {
+  const url = new URL(`${config.baseUrl}/wiki/rest/api/content/search`);
+  const cqlParts = [`space="${config.spaceKey.replace(/"/g, "")}"`, "type=page"];
+  if (config.titleContains) cqlParts.push(`title~"${config.titleContains.replace(/"/g, "")}"`);
+  for (const label of config.labels) cqlParts.push(`label="${label.replace(/"/g, "")}"`);
+  url.searchParams.set("cql", cqlParts.join(" and "));
+  url.searchParams.set("limit", String(config.maxPages));
+  url.searchParams.set("expand", "body.storage,version,_links");
+  return url;
+}
+
+function confluencePageUrl(config: ConfluenceSourceConfig, links: Record<string, unknown>, id: string): string {
+  const webui = typeof links.webui === "string" ? links.webui : "";
+  if (webui) return `${config.baseUrl}${webui.startsWith("/") ? "" : "/"}${webui}`;
+  return `${config.baseUrl}/wiki/pages/${encodeURIComponent(id)}`;
+}
+
+function htmlToText(value: string): string {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(p|div|h[1-6]|li|tr|table|ul|ol|blockquote)>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code: string) => String.fromCharCode(Number.parseInt(code, 16)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function fetchConfluenceJson(
+  fetchFn: typeof fetch,
+  url: URL,
+  credential: ConfluenceApiTokenCredential,
+): Promise<unknown> {
+  const response = await fetchFn(url, { headers: confluenceHeaders(credential) });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    const detail = text ? `: ${text.slice(0, 200)}` : "";
+    throw new Error(`Confluence request failed (${response.status})${detail}`);
+  }
+  return response.json() as Promise<unknown>;
+}
+
+async function fetchConfluenceCandidates(
+  fetchFn: typeof fetch,
+  config: ConfluenceSourceConfig,
+  credential: ConfluenceApiTokenCredential,
+): Promise<ConfluencePageCandidate[]> {
+  const payload = await fetchConfluenceJson(fetchFn, confluenceApiUrl(config), credential);
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) throw new Error("Confluence response is invalid");
+  const results = (payload as { results?: unknown }).results;
+  if (!Array.isArray(results)) throw new Error("Confluence response is missing pages");
+  const pages: ConfluencePageCandidate[] = [];
+  for (const entry of results) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) continue;
+    const page = entry as Record<string, unknown>;
+    const id = typeof page.id === "string" ? page.id : "";
+    const title = typeof page.title === "string" ? page.title.trim() : "";
+    const versionRaw = typeof page.version === "object" && page.version !== null && !Array.isArray(page.version)
+      ? (page.version as Record<string, unknown>).number
+      : undefined;
+    const version = typeof versionRaw === "number" || typeof versionRaw === "string" ? String(versionRaw) : "";
+    const body = typeof page.body === "object" && page.body !== null && !Array.isArray(page.body)
+      ? (page.body as Record<string, unknown>).storage
+      : undefined;
+    const bodyHtml = typeof body === "object" && body !== null && !Array.isArray(body) && typeof (body as Record<string, unknown>).value === "string"
+      ? (body as Record<string, unknown>).value as string
+      : "";
+    const links = typeof page._links === "object" && page._links !== null && !Array.isArray(page._links)
+      ? page._links as Record<string, unknown>
+      : {};
+    const sizeBytes = Buffer.byteLength(bodyHtml, "utf8");
+    if (!id || !title || !version || sizeBytes <= 0 || sizeBytes > config.maxPageBytes) continue;
+    pages.push({
+      id,
+      title,
+      version,
+      bodyHtml,
+      webUrl: confluencePageUrl(config, links, id),
+      sizeBytes,
+    });
+    if (pages.length >= config.maxPages) break;
+  }
+  return pages.sort((left, right) => left.title.localeCompare(right.title)).slice(0, config.maxPages);
+}
+
+function confluenceSyncPage(config: ConfluenceSourceConfig, candidate: ConfluencePageCandidate): ConfluenceSyncPage {
+  if (candidate.sizeBytes > config.maxPageBytes) throw new Error(`Confluence page exceeds maxPageBytes: ${candidate.id}`);
+  const content = htmlToText(candidate.bodyHtml);
+  if (Buffer.byteLength(content, "utf8") > config.maxPageBytes) throw new Error(`Confluence page exceeds maxPageBytes: ${candidate.id}`);
+  if (!isSafeUploadedText(content)) throw new Error(`Confluence page must be text: ${candidate.id}`);
+  if (content.trim().length === 0) throw new Error(`Confluence page is empty: ${candidate.id}`);
   return { ...candidate, content };
 }
 
@@ -1678,6 +1995,109 @@ async function syncS3ContextSource(
   };
 }
 
+async function syncConfluenceContextSource(
+  db: Db,
+  tenantId: string | null,
+  sourceRow: typeof contextSources.$inferSelect,
+  collection: typeof contextCollections.$inferSelect,
+  options: ContextSourceSyncOptions,
+): Promise<{ source: ContextSource; collection: ContextCollection; document: ContextDocument | null; blocks: ContextBlock[]; synced: boolean }> {
+  const fetchFn = options.fetch ?? globalThis.fetch;
+  if (!fetchFn) throw new Error("fetch is unavailable");
+  const metadata = parseMetadata(sourceRow.metadata);
+  const config = parseConfluenceConfig(metadata);
+  const credential = await resolveConfluenceCredential(db, tenantId, config.credentialId);
+  const syncedPages = getSyncedConfluencePages(metadata);
+  const candidates = await fetchConfluenceCandidates(fetchFn, config, credential);
+  const changedCandidates = candidates.filter((candidate) => syncedPages[candidate.id] !== candidate.version);
+  const now = new Date();
+
+  if (changedCandidates.length === 0 && sourceRow.syncStatus === "synced") {
+    await db.update(contextSources).set({
+      lastSyncedAt: now,
+      lastError: null,
+      updatedAt: now,
+      metadata: JSON.stringify({
+        ...metadata,
+        confluenceLastSync: {
+          checkedAt: now.toISOString(),
+          matchedPages: candidates.length,
+          changedPages: 0,
+        },
+      }),
+    }).where(eq(contextSources.id, sourceRow.id)).run();
+    const unchangedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceRow.id)).get();
+    return {
+      source: sourceFromRow(unchangedSource ?? sourceRow),
+      collection: collectionFromRow(collection),
+      document: null,
+      blocks: [],
+      synced: false,
+    };
+  }
+
+  const allBlocks: ContextBlock[] = [];
+  let lastDocument: ContextDocument | null = null;
+  let latestCollection: ContextCollection = collectionFromRow(collection);
+  const nextSyncedPages = { ...syncedPages };
+
+  for (const candidate of changedCandidates) {
+    const page = confluenceSyncPage(config, candidate);
+    const result = await ingestContextDocument(db, tenantId, sourceRow.collectionId, {
+      title: page.title,
+      text: page.content,
+      source: `source:${sourceRow.type}`,
+      sourceUri: page.webUrl,
+      metadata: {
+        ...metadata,
+        confluenceSyncedPages: undefined,
+        contextSourceId: sourceRow.id,
+        contextSourceType: sourceRow.type,
+        externalId: sourceRow.externalId,
+        confluenceBaseUrl: config.baseUrl,
+        confluenceSpaceKey: config.spaceKey,
+        confluencePageId: page.id,
+        confluencePageTitle: page.title,
+        confluencePageVersion: page.version,
+        confluencePageSize: page.sizeBytes,
+      },
+    });
+    nextSyncedPages[page.id] = page.version;
+    latestCollection = result.collection;
+    lastDocument = result.document;
+    allBlocks.push(...result.blocks);
+  }
+
+  await db.update(contextSources).set({
+    syncStatus: "synced",
+    lastSyncedAt: now,
+    lastDocumentId: lastDocument?.id ?? sourceRow.lastDocumentId,
+    documentCount: sourceRow.documentCount + changedCandidates.length,
+    lastError: null,
+    contentHash: hashContent(candidates.map((candidate) => `${candidate.id}:${candidate.version}`).join("\n")),
+    metadata: JSON.stringify({
+      ...metadata,
+      confluenceSyncedPages: nextSyncedPages,
+      confluenceLastSync: {
+        checkedAt: now.toISOString(),
+        matchedPages: candidates.length,
+        changedPages: changedCandidates.length,
+      },
+    }),
+    updatedAt: now,
+  }).where(eq(contextSources.id, sourceRow.id)).run();
+
+  const syncedSource = await db.select().from(contextSources).where(eq(contextSources.id, sourceRow.id)).get();
+  if (!syncedSource) throw new Error("Failed to sync context source");
+  return {
+    source: sourceFromRow(syncedSource),
+    collection: latestCollection,
+    document: lastDocument,
+    blocks: allBlocks,
+    synced: changedCandidates.length > 0,
+  };
+}
+
 export async function syncContextSource(
   db: Db,
   tenantId: string | null,
@@ -1709,6 +2129,21 @@ export async function syncContextSource(
     const now = new Date();
     try {
       return await syncS3ContextSource(db, tenantId, sourceRow, collection, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to sync context source";
+      await db.update(contextSources).set({
+        syncStatus: "failed",
+        lastError: message,
+        updatedAt: now,
+      }).where(eq(contextSources.id, sourceId)).run();
+      throw new Error(message);
+    }
+  }
+
+  if (sourceRow.type === "confluence_space") {
+    const now = new Date();
+    try {
+      return await syncConfluenceContextSource(db, tenantId, sourceRow, collection, options);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to sync context source";
       await db.update(contextSources).set({

@@ -21,15 +21,15 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
-- Connector ingestion with tenant-scoped manual, file upload, GitHub repository, and S3 bucket sources plus encrypted connector credentials.
+- Connector ingestion with tenant-scoped manual, file upload, GitHub repository, S3 bucket, and Confluence space sources plus encrypted connector credentials.
 - Canonical context block distillation with review status and approved-only export.
 - Canonical review audit events with reviewer notes and actor attribution when available.
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
-- Dashboard connector management for GitHub credentials, AWS credentials, file upload source creation, S3 bucket source creation, GitHub repository source creation, and manual source sync.
+- Dashboard connector management for GitHub credentials, AWS credentials, Confluence credentials, file upload source creation, S3 bucket source creation, Confluence space source creation, GitHub repository source creation, and manual source sync.
 
-It does not yet perform connector pulls from systems such as Confluence or Drive. Those belong to later roadmap phases.
+It does not yet perform connector pulls from systems such as Drive, SharePoint, Notion, or help centers. Those belong to later roadmap phases.
 
 ## API
 
@@ -191,7 +191,27 @@ S3 bucket sources use `type: "s3_bucket"` with an `s3` config object:
 
 S3 sync uses AWS Signature Version 4 against S3 ListObjectsV2 and GetObject, bounds objects by extension/count/size, stores bucket/key/ETag metadata on ingested documents and blocks, and skips objects whose ETag has already synced.
 
-Connector credentials are tenant-scoped encrypted secrets. `POST /v1/context/credentials` accepts `type: "github_token"` and a token `value`, or `type: "aws_access_key"` with a JSON string containing `accessKeyId`, `secretAccessKey`, and optional `sessionToken`. Values are stored with the same AES-GCM master-key encryption used for provider API keys, and responses return only metadata plus `hasSecret: true`. `GET /v1/context/credentials` never returns raw secret values. GitHub sources can set `github.credentialId`; S3 sources must set `s3.credentialId`; sync decrypts the credential server-side and records missing or undecryptable credentials as failed source syncs.
+Confluence space sources use `type: "confluence_space"` with a `confluence` config object:
+
+```json
+{
+  "name": "Support space",
+  "type": "confluence_space",
+  "confluence": {
+    "baseUrl": "https://acme.atlassian.net",
+    "spaceKey": "SUP",
+    "credentialId": "credential-id",
+    "labels": ["policy"],
+    "titleContains": "Refund",
+    "maxPages": 100,
+    "maxPageBytes": 250000
+  }
+}
+```
+
+Confluence sync uses the Confluence Cloud content search API, bounds pages by count and storage-body byte size, extracts text from storage HTML, stores space/page/version metadata on ingested documents and blocks, and skips pages whose version number has already synced.
+
+Connector credentials are tenant-scoped encrypted secrets. `POST /v1/context/credentials` accepts `type: "github_token"` and a token `value`, `type: "aws_access_key"` with a JSON string containing `accessKeyId`, `secretAccessKey`, and optional `sessionToken`, or `type: "confluence_api_token"` with a JSON string containing `email` and `apiToken`. Values are stored with the same AES-GCM master-key encryption used for provider API keys, and responses return only metadata plus `hasSecret: true`. `GET /v1/context/credentials` never returns raw secret values. GitHub sources can set `github.credentialId`; S3 sources must set `s3.credentialId`; Confluence sources must set `confluence.credentialId`; sync decrypts the credential server-side and records missing or undecryptable credentials as failed source syncs.
 
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
@@ -242,7 +262,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, create AWS access-key credentials, list credential metadata without secret values, create text file upload sources, create S3 bucket sources, create GitHub repository sources for the first managed collection, and bind external sources to stored credentials. The Collection Sources section shows manual, file upload, GitHub, and S3 sources for the first managed collection, including source URI, filename metadata, repo/branch/path, or bucket/prefix/region, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, AWS access-key credentials, Confluence API-token credentials, list credential metadata without secret values, create text file upload sources, create S3 bucket sources, create Confluence space sources, create GitHub repository sources for the first managed collection, and bind external sources to stored credentials. The Collection Sources section shows manual, file upload, GitHub, S3, and Confluence sources for the first managed collection, including source URI, filename metadata, repo/branch/path, bucket/prefix/region, or Confluence base URL/space/labels, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -283,6 +303,5 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 The next behavior layer is additional external connector ingestion:
 
-- Confluence, Google Drive, SharePoint, Notion, and Zendesk/Intercom connectors.
-- Source provenance and sync metadata for managed collections.
+- Google Drive, SharePoint, Notion, and Zendesk/Intercom connectors.
 - Connector-level review and policy defaults.
