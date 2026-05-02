@@ -1578,18 +1578,47 @@ describe("POST /v1/context/optimize", () => {
 describe("managed context collections", () => {
   let db: Db;
   let originalMasterKey: string | undefined;
+  let originalDocumentStorageDriver: string | undefined;
+  let originalR2Endpoint: string | undefined;
+  let originalR2Bucket: string | undefined;
+  let originalR2AccessKeyId: string | undefined;
+  let originalR2SecretAccessKey: string | undefined;
+  let originalR2Region: string | undefined;
+  let originalR2Prefix: string | undefined;
 
   beforeEach(async () => {
     db = await makeTestDb();
     resetTierEnv();
     process.env.PROVARA_CLOUD = "true";
     originalMasterKey = process.env.PROVARA_MASTER_KEY;
+    originalDocumentStorageDriver = process.env.DOCUMENT_STORAGE_DRIVER;
+    originalR2Endpoint = process.env.R2_ENDPOINT;
+    originalR2Bucket = process.env.R2_BUCKET;
+    originalR2AccessKeyId = process.env.R2_ACCESS_KEY_ID;
+    originalR2SecretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+    originalR2Region = process.env.R2_REGION;
+    originalR2Prefix = process.env.R2_PREFIX;
   });
 
   afterEach(() => {
     resetTierEnv();
+    vi.unstubAllGlobals();
     if (originalMasterKey === undefined) delete process.env.PROVARA_MASTER_KEY;
     else process.env.PROVARA_MASTER_KEY = originalMasterKey;
+    if (originalDocumentStorageDriver === undefined) delete process.env.DOCUMENT_STORAGE_DRIVER;
+    else process.env.DOCUMENT_STORAGE_DRIVER = originalDocumentStorageDriver;
+    if (originalR2Endpoint === undefined) delete process.env.R2_ENDPOINT;
+    else process.env.R2_ENDPOINT = originalR2Endpoint;
+    if (originalR2Bucket === undefined) delete process.env.R2_BUCKET;
+    else process.env.R2_BUCKET = originalR2Bucket;
+    if (originalR2AccessKeyId === undefined) delete process.env.R2_ACCESS_KEY_ID;
+    else process.env.R2_ACCESS_KEY_ID = originalR2AccessKeyId;
+    if (originalR2SecretAccessKey === undefined) delete process.env.R2_SECRET_ACCESS_KEY;
+    else process.env.R2_SECRET_ACCESS_KEY = originalR2SecretAccessKey;
+    if (originalR2Region === undefined) delete process.env.R2_REGION;
+    else process.env.R2_REGION = originalR2Region;
+    if (originalR2Prefix === undefined) delete process.env.R2_PREFIX;
+    else process.env.R2_PREFIX = originalR2Prefix;
   });
 
   it("creates and lists tenant-scoped collections", async () => {
@@ -1683,6 +1712,92 @@ describe("managed context collections", () => {
     const rows = await db.select().from(contextBlocks).all();
     expect(rows).toHaveLength(1);
     expect(rows[0].content).toContain("Refunds require a receipt");
+  });
+
+  it("stores raw context documents in R2 when document storage is enabled", async () => {
+    process.env.DOCUMENT_STORAGE_DRIVER = "r2";
+    process.env.R2_ENDPOINT = "https://305aa000c2183ba4d6ef3be09b39cb4a.r2.cloudflarestorage.com/provara-contextdocs";
+    process.env.R2_BUCKET = "provara-contextdocs";
+    process.env.R2_ACCESS_KEY_ID = "r2-access";
+    process.env.R2_SECRET_ACCESS_KEY = "r2-secret";
+    process.env.R2_PREFIX = "contextdocs";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const r2Fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      expect(init?.method).toBe("PUT");
+      expect(url.origin).toBe("https://305aa000c2183ba4d6ef3be09b39cb4a.r2.cloudflarestorage.com");
+      expect(url.pathname).toMatch(/^\/provara-contextdocs\/contextdocs\/tenant-pro\//);
+      expect((init?.headers as Record<string, string> | undefined)?.Authorization).toContain("AWS4-HMAC-SHA256");
+      expect(String(init?.body)).toContain("Refunds require a receipt");
+      return new Response("", { status: 200 });
+    });
+    vi.stubGlobal("fetch", r2Fetch);
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "R2 Policy KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const ingestRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        title: "Refund policy",
+        text: "Refunds require a receipt and must be requested within 30 days.",
+        source: "help-center",
+      }),
+    });
+
+    expect(ingestRes.status).toBe(201);
+    expect(r2Fetch).toHaveBeenCalledOnce();
+    const ingestBody = await ingestRes.json() as {
+      document: { metadata: Record<string, unknown> };
+      blocks: Array<{ metadata: Record<string, unknown> }>;
+    };
+    expect(ingestBody.document.metadata.documentStorage).toMatchObject({
+      driver: "r2",
+      bucket: "provara-contextdocs",
+      uri: expect.stringMatching(/^r2:\/\/provara-contextdocs\/contextdocs\/tenant-pro\//),
+      sizeBytes: expect.any(Number),
+      contentHash: expect.any(String),
+    });
+    expect(ingestBody.blocks[0]?.metadata.documentStorage).toMatchObject({
+      driver: "r2",
+      bucket: "provara-contextdocs",
+    });
+  });
+
+  it("fails context ingest before writing rows when enabled R2 storage fails", async () => {
+    process.env.DOCUMENT_STORAGE_DRIVER = "r2";
+    process.env.R2_ENDPOINT = "https://305aa000c2183ba4d6ef3be09b39cb4a.r2.cloudflarestorage.com";
+    process.env.R2_BUCKET = "provara-contextdocs";
+    process.env.R2_ACCESS_KEY_ID = "r2-access";
+    process.env.R2_SECRET_ACCESS_KEY = "r2-secret";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("write denied", { status: 403 })));
+    const app = buildApp(db);
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "R2 Failure KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const ingestRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        title: "Refund policy",
+        text: "Refunds require a receipt.",
+      }),
+    });
+
+    expect(ingestRes.status).toBe(500);
+    expect(await ingestRes.json()).toMatchObject({ error: { message: expect.stringContaining("R2 document storage failed (403)") } });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
+    expect(await db.select().from(contextBlocks).all()).toHaveLength(0);
   });
 
   it("rejects invalid ingest requests before writing rows", async () => {

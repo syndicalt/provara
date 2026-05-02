@@ -38,6 +38,7 @@ All notable Provara changes are tracked here.
   - File upload connector v1 with bounded text upload validation, sanitized filename metadata, idempotent source sync, OpenAPI coverage, and dashboard creation controls.
   - S3 connector v1 with encrypted AWS access-key credentials, SigV4 ListObjectsV2/GetObject sync, prefix/extension/file-size/file-count bounds, ETag idempotency, OpenAPI coverage, and dashboard creation controls.
   - Confluence connector v1 with encrypted API-token credentials, bounded Confluence Cloud page search, storage-body text extraction, page-version idempotency, OpenAPI coverage, and dashboard creation controls.
+  - Optional R2 document storage for raw context documents, using `DOCUMENT_STORAGE_DRIVER=r2` plus R2 S3 API env vars while preserving DB metadata and searchable context blocks.
   - Context Optimizer dashboard configuration controls for optimizer modes, thresholds, risk scanning, local draft persistence, and copyable API payloads.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.

@@ -967,6 +967,13 @@ PROVARA_EMAIL_FROM="Provara <noreply@yourdomain.com>"
 | `STRIPE_WEBHOOK_SECRET` | Cloud | Signature secret for verifying Stripe webhook deliveries |
 | `RESEND_API_KEY` | No | Enables transactional email (team invites, welcome). Without it, invites still persist and can be copy-pasted from the dashboard |
 | `PROVARA_EMAIL_FROM` | No | Sender address for transactional email (default: `Provara <noreply@provara.xyz>`) — must be on a Resend-verified domain |
+| `DOCUMENT_STORAGE_DRIVER` | No | Set to `r2` to store raw context documents in Cloudflare R2 before DB metadata/block writes |
+| `R2_ENDPOINT` | For R2 | Cloudflare R2 S3 endpoint. May be the account endpoint or a bucket URL; Provara normalizes either form |
+| `R2_BUCKET` | For R2 | R2 bucket for raw context documents, e.g. `provara-contextdocs` |
+| `R2_ACCESS_KEY_ID` | For R2 | R2 S3 API access key ID |
+| `R2_SECRET_ACCESS_KEY` | For R2 | R2 S3 API secret access key |
+| `R2_REGION` | No | R2 signing region, default `auto` |
+| `R2_PREFIX` | No | Object key prefix for context documents, default `context-documents/` |
 
 ### Web Dashboard
 
