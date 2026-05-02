@@ -238,6 +238,8 @@ describe("context optimizer core", () => {
       sourceIds: ["refunds-current", "refunds-legacy"],
       leftValue: "status:active",
       rightValue: "status:inactive",
+      score: expect.any(Number),
+      severity: "high",
     });
     expect(result.optimized.find((chunk) => chunk.id === "refunds-current")).toMatchObject({
       conflict: true,
@@ -247,6 +249,38 @@ describe("context optimizer core", () => {
     expect(result.metrics).toMatchObject({
       conflictChunks: 2,
       conflictGroups: 1,
+    });
+  });
+
+  it("scores conflicting retained context with severity bands", () => {
+    const result = optimizeContextChunks([
+      {
+        id: "refunds-current",
+        content: "Refund policy says paid accounts have a 30 day refund window.",
+      },
+      {
+        id: "refunds-legacy",
+        content: "Refund policy says paid accounts have a 14 day refund window.",
+      },
+      {
+        id: "security",
+        content: "Enterprise plans include audit logs.",
+      },
+    ], { conflictMode: "scored" });
+
+    expect(result.conflicts).toHaveLength(1);
+    expect(result.conflicts[0]).toMatchObject({
+      kind: "numeric",
+      leftValue: "30 day",
+      rightValue: "14 day",
+      score: expect.any(Number),
+      severity: expect.stringMatching(/^(low|medium|high)$/),
+    });
+    expect(result.conflicts[0].score).toBeGreaterThanOrEqual(0);
+    expect(result.conflicts[0].score).toBeLessThanOrEqual(1);
+    expect(result.optimized.find((chunk) => chunk.id === "refunds-current")).toMatchObject({
+      conflict: true,
+      conflictSeverity: result.conflicts[0].severity,
     });
   });
 
@@ -550,7 +584,7 @@ describe("POST /v1/context/optimize", () => {
     });
   });
 
-  it("records conflicting context analytics from heuristic mode", async () => {
+  it("records scored conflicting context analytics", async () => {
     process.env.PROVARA_CLOUD = "true";
     await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
     const app = buildApp(db);
@@ -562,7 +596,7 @@ describe("POST /v1/context/optimize", () => {
         "x-test-tenant": "tenant-pro",
       },
       body: JSON.stringify({
-        conflictMode: "heuristic",
+        conflictMode: "scored",
         chunks: [
           {
             id: "pricing-current",
@@ -585,15 +619,15 @@ describe("POST /v1/context/optimize", () => {
     expect(res.status).toBe(200);
     const body = await res.json() as {
       optimization: {
-        optimized: Array<{ id: string; conflict?: boolean; conflictGroupIds?: string[] }>;
-        conflicts: Array<{ kind: string; chunkIds: [string, string]; sourceIds: string[] }>;
+        optimized: Array<{ id: string; conflict?: boolean; conflictGroupIds?: string[]; conflictSeverity?: string }>;
+        conflicts: Array<{ kind: string; chunkIds: [string, string]; sourceIds: string[]; score?: number; severity?: string }>;
         metrics: { conflictChunks: number; conflictGroups: number };
       };
       event: {
         conflictChunks: number;
         conflictGroups: number;
         conflictSourceIds: string[];
-        conflictDetails: Array<{ kind: string; chunkIds: [string, string]; sourceIds: string[] }>;
+        conflictDetails: Array<{ kind: string; chunkIds: [string, string]; sourceIds: string[]; score?: number; severity?: string }>;
       };
       retrieval: {
         conflictChunks: number;
@@ -607,6 +641,7 @@ describe("POST /v1/context/optimize", () => {
     expect(body.optimization.optimized.find((chunk) => chunk.id === "pricing-current")).toMatchObject({
       conflict: true,
       conflictGroupIds: ["conflict-1"],
+      conflictSeverity: "high",
     });
     expect(body.optimization.metrics).toMatchObject({
       conflictChunks: 2,
@@ -621,6 +656,8 @@ describe("POST /v1/context/optimize", () => {
       kind: "metadata",
       chunkIds: ["pricing-current", "pricing-old"],
       sourceIds: ["pricing-current", "pricing-old"],
+      score: expect.any(Number),
+      severity: "high",
     });
     expect(body.retrieval).toMatchObject({
       conflictChunks: 2,

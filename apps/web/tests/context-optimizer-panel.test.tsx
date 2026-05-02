@@ -191,6 +191,8 @@ describe("ContextOptimizerPanel", () => {
                 topicTokens: ["refund", "window"],
                 leftValue: "30 days",
                 rightValue: "14 days",
+                score: 0.76,
+                severity: "medium",
               },
             ],
             duplicateSourceIds: ["chunk-b"],
@@ -231,6 +233,7 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("Relevance").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Freshness").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Conflicts").length).toBeGreaterThan(0);
+    expect(screen.getByText(/medium 0.76/i)).toBeInTheDocument();
     expect(screen.getByText("Conflict Rate")).toBeInTheDocument();
     expect(screen.getByText("Compression")).toBeInTheDocument();
     expect(screen.getByText("Semantic Rate")).toBeInTheDocument();

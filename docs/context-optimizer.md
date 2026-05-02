@@ -11,7 +11,7 @@ The shipped V1 implementation is intentionally narrow:
 - Optional lexical relevance scoring and reranking for retained chunks.
 - Optional embedding-backed relevance scoring and reranking with lexical fallback.
 - Optional stale-context detection from bounded freshness metadata.
-- Optional conflicting-context detection with bounded heuristic claim checks.
+- Optional conflicting-context detection with bounded heuristic claim checks and scored severity bands.
 - Optional extractive compression with bounded sentence selection.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
@@ -43,7 +43,7 @@ The request accepts already-retrieved context chunks:
   "minRelevanceScore": 0.2,
   "freshnessMode": "metadata",
   "maxContextAgeDays": 180,
-  "conflictMode": "heuristic",
+  "conflictMode": "scored",
   "compressionMode": "extractive",
   "maxSentencesPerChunk": 3,
   "scanRisk": true,
@@ -83,7 +83,7 @@ The response includes:
 
 `freshnessMode` defaults to `off`. Set `freshnessMode` to `metadata` to score retained chunks from bounded freshness metadata. Provara checks common fields such as `updatedAt`, `lastModified`, `publishedAt`, and `expiresAt`, stores aggregate freshness metrics only, and does not persist the full metadata payload. `maxContextAgeDays` defaults to `180`.
 
-`conflictMode` defaults to `off`. Set `conflictMode` to `heuristic` to detect lightweight contradictions across retained chunks. The first implementation uses bounded local signals: shared metadata keys, status disagreements, and numeric claim disagreements such as different day/hour/percent/USD values on the same topic. It caps extracted signals and pair comparisons, so this stays deterministic and local; embedding or NLI-backed contradiction checks remain future paid-layer work.
+`conflictMode` defaults to `off`. Set `conflictMode` to `heuristic` to detect lightweight contradictions across retained chunks. Set `conflictMode` to `scored` to include bounded contradiction `score` values and `low`/`medium`/`high` severity bands on conflict groups and retained chunks. The detector uses local signals: shared metadata keys, status disagreements, and numeric claim disagreements such as different day/hour/percent/USD values on the same topic. It caps extracted signals and pair comparisons, so this stays deterministic and local; NLI-backed contradiction checks remain future paid-layer work.
 
 `compressionMode` defaults to `off`. Set `compressionMode` to `extractive` to keep the highest-value sentences from retained chunks. The selector uses bounded sentence splitting, capped query tokens, stable local scoring, and preserves original sentence order in the compressed chunk. It records `compressedChunks`, `compressionSavedTokens`, and `compressionRatePct`. `maxSentencesPerChunk` defaults to `3` and accepts values from `1` to `8`. Abstractive/LLM compression is intentionally out of scope for this mode.
 
@@ -168,7 +168,7 @@ The Retrieval Analytics section shows:
 - Average relevance score, low-relevance chunk count, and reranked chunk count.
 - Average freshness score and stale context count.
 - Risky context rate.
-- Recent retrieval events with used/retrieved chunks, relevance, freshness, duplicate/semantic/risky counts, and unused source IDs.
+- Recent retrieval events with used/retrieved chunks, relevance, freshness, duplicate/semantic/risky/conflict counts, conflict severity, and unused source IDs.
 
 ## Demo Mode
 

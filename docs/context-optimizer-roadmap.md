@@ -24,10 +24,11 @@ Implemented as of `0.2.0`:
 - Optional embedding-backed relevance scoring and reranking with lexical fallback.
 - Optional stale-context detection from freshness metadata with aggregate freshness metrics and dashboard visibility.
 - Optional conflicting-context detection with bounded heuristic status/numeric/metadata checks and dashboard visibility.
+- Optional scored contradiction severity bands for retained-context conflicts.
 - Optional extractive compression with bounded sentence selection, compression savings metrics, and dashboard visibility.
 
 Next planned layer:
-- Contradiction scoring and abstractive compression.
+- Abstractive compression with strict provenance and fallback behavior.
 
 ## V1: Runtime Context Optimizer
 
@@ -40,6 +41,7 @@ Core capabilities:
 - Optional embedding-backed relevance scoring and reranking.
 - Optional freshness scoring from chunk metadata.
 - Optional conflict detection across retained chunks.
+- Optional contradiction scoring and severity bands across retained chunks.
 - Optional extractive compression for retained chunks.
 - Token savings estimation.
 - Source and citation preservation.

@@ -2133,9 +2133,9 @@ components:
           description: Optional reference time for deterministic freshness scoring. Defaults to server time.
         conflictMode:
           type: string
-          enum: [off, heuristic]
+          enum: [off, heuristic, scored]
           default: off
-          description: Heuristic mode detects lightweight status, numeric, and metadata conflicts across retained chunks.
+          description: Heuristic mode detects lightweight status, numeric, and metadata conflicts across retained chunks. Scored mode emits bounded contradiction scores and severity bands.
         compressionMode:
           type: string
           enum: [off, extractive]
@@ -2179,6 +2179,10 @@ components:
               items:
                 type: string
               description: Conflict group ids involving this chunk.
+            conflictSeverity:
+              type: string
+              enum: [low, medium, high]
+              description: Highest severity band for conflicts involving this retained chunk.
             compressed:
               type: boolean
               description: Whether extractive compression shortened this chunk.
@@ -2216,6 +2220,15 @@ components:
           type: string
         rightValue:
           type: string
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: Bounded contradiction likelihood score.
+        severity:
+          type: string
+          enum: [low, medium, high]
+          description: Severity band derived from the contradiction score.
 
     DroppedContextChunk:
       type: object
