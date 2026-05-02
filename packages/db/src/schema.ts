@@ -495,6 +495,26 @@ export const contextSources = sqliteTable("context_sources", {
   uniqueIndex("context_sources_collection_external_idx").on(table.collectionId, table.externalId),
 ]);
 
+export const contextConnectorCredentials = sqliteTable("context_connector_credentials", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  name: text("name").notNull(),
+  type: text("type", { enum: ["github_token"] }).notNull(),
+  encryptedValue: text("encrypted_value").notNull(),
+  iv: text("iv").notNull(),
+  authTag: text("auth_tag").notNull(),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp" }),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_connector_credentials_tenant_idx").on(table.tenantId, table.updatedAt),
+  uniqueIndex("context_connector_credentials_tenant_name_idx").on(table.tenantId, table.name),
+]);
+
 export const contextBlocks = sqliteTable("context_blocks", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),

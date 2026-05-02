@@ -329,6 +329,14 @@ function formatContextSourceDetail(source: ContextSource): string {
   return source.sourceUri || source.externalId || source.id;
 }
 
+function contextSourceHasAuth(source: ContextSource): boolean {
+  if (source.type !== "github_repository") return false;
+  const github = typeof source.metadata.github === "object" && source.metadata.github !== null && !Array.isArray(source.metadata.github)
+    ? source.metadata.github as Record<string, unknown>
+    : {};
+  return typeof github.credentialId === "string" && github.credentialId.length > 0;
+}
+
 function metricTone(value: number): string {
   if (value > 0) return "text-emerald-300";
   return "text-zinc-200";
@@ -1027,6 +1035,7 @@ export function ContextOptimizerPanel() {
                   <tr>
                     <th className="px-4 py-3 text-left font-medium">Source</th>
                     <th className="px-4 py-3 text-left font-medium">Type</th>
+                    <th className="px-4 py-3 text-left font-medium">Auth</th>
                     <th className="px-4 py-3 text-left font-medium">Sync</th>
                     <th className="px-4 py-3 text-right font-medium">Documents</th>
                     <th className="px-4 py-3 text-left font-medium">Last Synced</th>
@@ -1044,6 +1053,15 @@ export function ContextOptimizerPanel() {
                         {source.lastError && <div className="mt-1 text-xs text-red-300">{source.lastError}</div>}
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatContextSourceType(source.type)}</td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span className={`rounded border px-2 py-0.5 text-xs ${
+                          contextSourceHasAuth(source)
+                            ? "border-emerald-900/70 bg-emerald-950/20 text-emerald-200"
+                            : "border-zinc-800 bg-zinc-950/50 text-zinc-400"
+                        }`}>
+                          {contextSourceHasAuth(source) ? "Configured" : "None"}
+                        </span>
+                      </td>
                       <td className="whitespace-nowrap px-4 py-3">
                         <span className={`rounded border px-2 py-0.5 text-xs capitalize ${
                           source.syncStatus === "synced"

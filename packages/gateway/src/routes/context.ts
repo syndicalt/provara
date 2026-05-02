@@ -30,6 +30,7 @@ import {
 } from "../context/retrieval.js";
 import {
   createContextCollection,
+  createContextConnectorCredential,
   createContextSource,
   distillContextCollection,
   exportApprovedContextBlocks,
@@ -38,6 +39,7 @@ import {
   listContextCanonicalBlocks,
   listContextCanonicalReviewEvents,
   listContextCollections,
+  listContextConnectorCredentials,
   listContextSources,
   recordContextCanonicalPolicyCheck,
   syncContextSource,
@@ -45,6 +47,7 @@ import {
   validateBulkPolicyCheckBody,
   validateBulkReviewBody,
   validateCreateCollectionBody,
+  validateCreateContextConnectorCredentialBody,
   validateCreateContextSourceBody,
   validateIngestDocumentBody,
   validateReviewStatusBody,
@@ -703,6 +706,41 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
       return c.json(
         { error: { message, type: notFound ? "not_found" : "store_error" } },
         notFound ? 404 : 500,
+      );
+    }
+  });
+
+  app.get("/credentials", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    try {
+      const credentials = await listContextConnectorCredentials(db, tenantId);
+      return c.json({ credentials });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to list connector credentials";
+      return c.json({ error: { message, type: "store_error" } }, 500);
+    }
+  });
+
+  app.post("/credentials", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateCreateContextConnectorCredentialBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid credential body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    try {
+      const credential = await createContextConnectorCredential(db, tenantId, parsed.value);
+      return c.json({ credential }, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to create connector credential";
+      const configError = message.includes("PROVARA_MASTER_KEY");
+      return c.json(
+        { error: { message, type: configError ? "configuration_error" : "store_error" } },
+        configError ? 503 : 500,
       );
     }
   });

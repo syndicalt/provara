@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
+import { eq } from "drizzle-orm";
 import type { Db } from "@provara/db";
 import {
   alertLogs,
@@ -8,6 +9,7 @@ import {
   contextCanonicalBlocks,
   contextCanonicalReviewEvents,
   contextCollections,
+  contextConnectorCredentials,
   contextDocuments,
   contextOptimizationEvents,
   contextQualityEvents,
@@ -1568,15 +1570,19 @@ describe("POST /v1/context/optimize", () => {
 
 describe("managed context collections", () => {
   let db: Db;
+  let originalMasterKey: string | undefined;
 
   beforeEach(async () => {
     db = await makeTestDb();
     resetTierEnv();
     process.env.PROVARA_CLOUD = "true";
+    originalMasterKey = process.env.PROVARA_MASTER_KEY;
   });
 
   afterEach(() => {
     resetTierEnv();
+    if (originalMasterKey === undefined) delete process.env.PROVARA_MASTER_KEY;
+    else process.env.PROVARA_MASTER_KEY = originalMasterKey;
   });
 
   it("creates and lists tenant-scoped collections", async () => {
@@ -1826,6 +1832,49 @@ describe("managed context collections", () => {
     expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
   });
 
+  it("creates and lists encrypted connector credentials without exposing secret values", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+
+    const createRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "GitHub Docs", type: "github_token", value: "ghp_secret_token_123" }),
+    });
+    expect(createRes.status).toBe(201);
+    const createBody = await createRes.json() as { credential: { id: string; name: string; type: string; hasSecret: boolean; value?: string } };
+    expect(createBody.credential).toMatchObject({ name: "GitHub Docs", type: "github_token", hasSecret: true });
+    expect(createBody.credential.value).toBeUndefined();
+
+    const rows = await db.select().from(contextConnectorCredentials).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.encryptedValue).not.toContain("ghp_secret_token_123");
+
+    const listRes = await app.request("/v1/context/credentials", {
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(listRes.status).toBe(200);
+    const listBody = await listRes.json() as { credentials: Array<{ id: string; name: string; hasSecret: boolean; value?: string }> };
+    expect(listBody.credentials).toEqual([
+      expect.objectContaining({ id: createBody.credential.id, name: "GitHub Docs", hasSecret: true }),
+    ]);
+    expect(listBody.credentials[0]?.value).toBeUndefined();
+  });
+
+  it("rejects connector credentials when encryption is not configured", async () => {
+    delete process.env.PROVARA_MASTER_KEY;
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+
+    const createRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "GitHub Docs", type: "github_token", value: "ghp_secret_token_123" }),
+    });
+    expect(createRes.status).toBe(503);
+  });
+
   it("creates and idempotently syncs GitHub repository sources", async () => {
     await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
     const githubFetch = vi.fn(async (input: RequestInfo | URL) => {
@@ -1921,6 +1970,90 @@ describe("managed context collections", () => {
     expect(syncAgainBody).toMatchObject({ synced: false, source: { documentCount: 2 }, document: null, blocks: [] });
     expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
     expect(githubFetch.mock.calls.filter(([url]) => String(url).includes("/git/blobs/"))).toHaveLength(2);
+  });
+
+  it("syncs GitHub repository sources with a tenant-scoped connector credential", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const githubFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe("Bearer ghp_secret_token_123");
+      const url = String(input);
+      if (url.includes("/git/trees/main")) {
+        return githubJson({ tree: [{ path: "docs/readme.md", type: "blob", sha: "sha-readme", size: 61 }] });
+      }
+      if (url.includes("/git/blobs/sha-readme")) {
+        return githubJson({
+          encoding: "base64",
+          size: 61,
+          content: Buffer.from("Credential-backed GitHub docs.").toString("base64"),
+        });
+      }
+      return githubJson({ message: "not found" }, 404);
+    });
+    const app = buildApp(db, undefined, { githubFetch });
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "GitHub Docs", type: "github_token", value: "ghp_secret_token_123" }),
+    });
+    const credentialBody = await credentialRes.json() as { credential: { id: string } };
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Credential GitHub KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Credential repository",
+        type: "github_repository",
+        github: { owner: "acme", repo: "docs", branch: "main", path: "docs", credentialId: credentialBody.credential.id },
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as { source: { id: string; metadata: Record<string, unknown> } };
+    expect(sourceBody.source.metadata.github).toMatchObject({ credentialId: credentialBody.credential.id });
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+    const credentialRow = await db.select().from(contextConnectorCredentials).where(eq(contextConnectorCredentials.id, credentialBody.credential.id)).get();
+    expect(credentialRow?.lastUsedAt).toBeInstanceOf(Date);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(1);
+  });
+
+  it("does not allow a GitHub source to bind another tenant's credential", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({ name: "Other GitHub", type: "github_token", value: "ghp_other_token" }),
+    });
+    const credentialBody = await credentialRes.json() as { credential: { id: string } };
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Tenant Guard KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Blocked repository",
+        type: "github_repository",
+        github: { owner: "acme", repo: "docs", branch: "main", credentialId: credentialBody.credential.id },
+      }),
+    });
+    expect(sourceRes.status).toBe(404);
   });
 
   it("persists failed GitHub source sync status without writing documents", async () => {

@@ -21,7 +21,7 @@ The shipped V1 implementation is intentionally narrow:
 - Raw-context vs optimized-context quality scoring with the configured judge model.
 - Retrieval analytics for used, unused, duplicate, and risky retrieved chunks.
 - Managed context collections with plain-text ingestion into reusable blocks.
-- Connector ingestion with tenant-scoped manual and GitHub repository sources.
+- Connector ingestion with tenant-scoped manual and GitHub repository sources plus encrypted connector credentials.
 - Canonical context block distillation with review status and approved-only export.
 - Canonical review audit events with reviewer notes and actor attribution when available.
 - Tenant-scoped optimization events for reporting.
@@ -116,6 +116,8 @@ POST /v1/context/collections
 POST /v1/context/collections/{id}/documents
 GET /v1/context/collections/{id}/sources
 POST /v1/context/collections/{id}/sources
+GET /v1/context/credentials
+POST /v1/context/credentials
 POST /v1/context/sources/{id}/sync
 POST /v1/context/collections/{id}/distill
 GET /v1/context/collections/{id}/canonical-blocks
@@ -142,6 +144,7 @@ GitHub repository sources use `type: "github_repository"` with a `github` config
     "repo": "docs",
     "branch": "main",
     "path": "docs",
+    "credentialId": "credential-id",
     "extensions": [".md", ".txt"],
     "maxFiles": 100,
     "maxFileBytes": 250000
@@ -150,6 +153,8 @@ GitHub repository sources use `type: "github_repository"` with a `github` config
 ```
 
 GitHub sync fetches the repository tree and selected blobs through GitHub's JSON API, bounds files by extension/count/size, stores repo/path/SHA metadata on ingested documents and blocks, and skips files whose blob SHA has already synced.
+
+Connector credentials are tenant-scoped encrypted secrets. `POST /v1/context/credentials` accepts `type: "github_token"` and a token `value`, stores it with the same AES-GCM master-key encryption used for provider API keys, and returns only metadata plus `hasSecret: true`. `GET /v1/context/credentials` never returns raw token values. GitHub sources can set `github.credentialId`; sync decrypts that credential server-side, sends it as the GitHub bearer token, and records missing or undecryptable credentials as failed source syncs.
 
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
@@ -200,7 +205,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Collection Sources section shows manual and GitHub sources for the first managed collection, including source URI or repo/branch/path, sync status, document count, last synced time, update time, and last sync error. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, source sync, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Collection Sources section shows manual and GitHub sources for the first managed collection, including source URI or repo/branch/path, auth-configured status, sync status, document count, last synced time, update time, and last sync error. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, source sync, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
