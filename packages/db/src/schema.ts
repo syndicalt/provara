@@ -505,6 +505,9 @@ export const contextCanonicalBlocks = sqliteTable("context_canonical_blocks", {
   reviewNote: text("review_note"),
   reviewedByUserId: text("reviewed_by_user_id"),
   reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
+  policyStatus: text("policy_status", { enum: ["unchecked", "passed", "failed"] }).notNull().default("unchecked"),
+  policyCheckedAt: integer("policy_checked_at", { mode: "timestamp" }),
+  policyDetails: text("policy_details").notNull().default("[]"),
   metadata: text("metadata").notNull().default("{}"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -515,6 +518,7 @@ export const contextCanonicalBlocks = sqliteTable("context_canonical_blocks", {
 }, (table) => [
   index("context_canonical_blocks_tenant_collection_idx").on(table.tenantId, table.collectionId),
   index("context_canonical_blocks_review_idx").on(table.tenantId, table.collectionId, table.reviewStatus),
+  index("context_canonical_blocks_policy_idx").on(table.tenantId, table.collectionId, table.policyStatus),
   uniqueIndex("context_canonical_blocks_collection_hash_idx").on(table.collectionId, table.contentHash),
 ]);
 

@@ -664,6 +664,49 @@ paths:
           $ref: "#/components/responses/InsufficientTier"
         "404":
           description: Canonical block not found.
+        "409":
+          description: Canonical block policy check has not passed.
+
+  /v1/context/canonical-blocks/{id}/policy-check:
+    post:
+      tags: [Context Optimizer]
+      summary: Run a pre-approval policy check for a canonical block
+      operationId: checkContextCanonicalBlockPolicy
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Policy check result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [canonicalBlock, policy]
+                properties:
+                  canonicalBlock:
+                    $ref: "#/components/schemas/ContextCanonicalBlock"
+                  policy:
+                    type: object
+                    required: [status, decision, violations]
+                    properties:
+                      status:
+                        type: string
+                        enum: [unchecked, passed, failed]
+                      decision:
+                        type: string
+                        enum: [allow, flag, redact, block, quarantine]
+                      violations:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ContextCanonicalPolicyDetail"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Canonical block not found.
 
   /v1/context/canonical-review-events:
     get:
@@ -2964,6 +3007,9 @@ components:
         - reviewNote
         - reviewedByUserId
         - reviewedAt
+        - policyStatus
+        - policyCheckedAt
+        - policyDetails
         - metadata
         - createdAt
         - updatedAt
@@ -3004,6 +3050,17 @@ components:
           type: string
           format: date-time
           nullable: true
+        policyStatus:
+          type: string
+          enum: [unchecked, passed, failed]
+        policyCheckedAt:
+          type: string
+          format: date-time
+          nullable: true
+        policyDetails:
+          type: array
+          items:
+            $ref: "#/components/schemas/ContextCanonicalPolicyDetail"
         metadata:
           type: object
           additionalProperties: true
@@ -3013,6 +3070,26 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    ContextCanonicalPolicyDetail:
+      type: object
+      required: [decision, ruleId, ruleName, action, matchedSnippet]
+      properties:
+        decision:
+          type: string
+          enum: [allow, flag, redact, block, quarantine]
+        ruleId:
+          type: string
+          nullable: true
+        ruleName:
+          type: string
+          nullable: true
+        action:
+          type: string
+          nullable: true
+        matchedSnippet:
+          type: string
+          nullable: true
 
     ContextCanonicalReviewEvent:
       type: object

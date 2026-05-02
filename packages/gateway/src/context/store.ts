@@ -53,9 +53,20 @@ export interface ContextCanonicalBlock {
   reviewNote: string | null;
   reviewedByUserId: string | null;
   reviewedAt: Date | null;
+  policyStatus: "unchecked" | "passed" | "failed";
+  policyCheckedAt: Date | null;
+  policyDetails: ContextCanonicalPolicyDetail[];
   metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ContextCanonicalPolicyDetail {
+  decision: "allow" | "flag" | "redact" | "block" | "quarantine";
+  ruleId: string | null;
+  ruleName: string | null;
+  action: string | null;
+  matchedSnippet: string | null;
 }
 
 export interface ContextCanonicalReviewEvent {
@@ -152,6 +163,37 @@ function parseStringArray(value: string | null): string[] {
   }
 }
 
+function parsePolicyDetails(value: string | null): ContextCanonicalPolicyDetail[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((detail): ContextCanonicalPolicyDetail[] => {
+      if (typeof detail !== "object" || detail === null || Array.isArray(detail)) return [];
+      const record = detail as Record<string, unknown>;
+      const decision = record.decision;
+      if (
+        decision !== "allow"
+        && decision !== "flag"
+        && decision !== "redact"
+        && decision !== "block"
+        && decision !== "quarantine"
+      ) {
+        return [];
+      }
+      return [{
+        decision,
+        ruleId: typeof record.ruleId === "string" ? record.ruleId : null,
+        ruleName: typeof record.ruleName === "string" ? record.ruleName : null,
+        action: typeof record.action === "string" ? record.action : null,
+        matchedSnippet: typeof record.matchedSnippet === "string" ? record.matchedSnippet : null,
+      }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 function canonicalBlockFromRow(row: typeof contextCanonicalBlocks.$inferSelect): ContextCanonicalBlock {
   return {
     id: row.id,
@@ -167,6 +209,9 @@ function canonicalBlockFromRow(row: typeof contextCanonicalBlocks.$inferSelect):
     reviewNote: row.reviewNote,
     reviewedByUserId: row.reviewedByUserId,
     reviewedAt: row.reviewedAt,
+    policyStatus: row.policyStatus,
+    policyCheckedAt: row.policyCheckedAt,
+    policyDetails: parsePolicyDetails(row.policyDetails),
     metadata: parseMetadata(row.metadata),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -569,6 +614,64 @@ export async function listContextCanonicalBlocks(
   return rows.map(canonicalBlockFromRow);
 }
 
+export async function getContextCanonicalBlock(
+  db: Db,
+  tenantId: string | null,
+  blockId: string,
+): Promise<ContextCanonicalBlock> {
+  const row = await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.id, blockId)).get();
+  if (!row) throw new Error("canonical block not found");
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, row.collectionId));
+  const collection = await db.select({ id: contextCollections.id }).from(contextCollections).where(collectionWhere).get();
+  if (!collection) throw new Error("canonical block not found");
+  return canonicalBlockFromRow(row);
+}
+
+export async function recordContextCanonicalPolicyCheck(
+  db: Db,
+  tenantId: string | null,
+  blockId: string,
+  scan: {
+    decision: ContextCanonicalPolicyDetail["decision"];
+    violations: {
+      ruleId: string;
+      ruleName: string;
+      action: string;
+      matchedSnippet: string;
+    }[];
+  },
+): Promise<ContextCanonicalBlock> {
+  await getContextCanonicalBlock(db, tenantId, blockId);
+  const now = new Date();
+  const failed = scan.decision === "block" || scan.decision === "quarantine";
+  const policyDetails: ContextCanonicalPolicyDetail[] = scan.violations.length === 0
+    ? [{
+      decision: scan.decision,
+      ruleId: null,
+      ruleName: null,
+      action: null,
+      matchedSnippet: null,
+    }]
+    : scan.violations.map((violation) => ({
+      decision: scan.decision,
+      ruleId: violation.ruleId,
+      ruleName: violation.ruleName,
+      action: violation.action,
+      matchedSnippet: violation.matchedSnippet,
+    }));
+
+  await db.update(contextCanonicalBlocks).set({
+    policyStatus: failed ? "failed" : "passed",
+    policyCheckedAt: now,
+    policyDetails: JSON.stringify(policyDetails),
+    updatedAt: now,
+  }).where(eq(contextCanonicalBlocks.id, blockId)).run();
+
+  const row = await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.id, blockId)).get();
+  if (!row) throw new Error("Failed to record canonical block policy check");
+  return canonicalBlockFromRow(row);
+}
+
 export async function updateContextCanonicalBlockReview(
   db: Db,
   tenantId: string | null,
@@ -581,6 +684,9 @@ export async function updateContextCanonicalBlockReview(
   const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, existing.collectionId));
   const collection = await db.select({ id: contextCollections.id }).from(contextCollections).where(collectionWhere).get();
   if (!collection) throw new Error("canonical block not found");
+  if (reviewStatus === "approved" && existing.policyStatus !== "passed") {
+    throw new Error("canonical block policy check must pass before approval");
+  }
 
   const now = new Date();
   const reviewNote = options.note ?? null;

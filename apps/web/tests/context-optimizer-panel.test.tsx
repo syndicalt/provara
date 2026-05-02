@@ -192,6 +192,17 @@ describe("ContextOptimizerPanel", () => {
               reviewNote: null,
               reviewedByUserId: null,
               reviewedAt: null,
+              policyStatus: "failed",
+              policyCheckedAt: "2026-05-01T22:04:00.000Z",
+              policyDetails: [
+                {
+                  decision: "quarantine",
+                  ruleId: "rule-injection",
+                  ruleName: "Prompt injection firewall",
+                  action: "block",
+                  matchedSnippet: "ignore previous instructions",
+                },
+              ],
               updatedAt: "2026-05-01T22:05:00.000Z",
             },
           ],
@@ -286,6 +297,7 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Approved")).toBeInTheDocument();
     expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();
     expect(screen.getByText("Refunds require a receipt within 30 days.")).toBeInTheDocument();
+    expect(screen.getByText("Prompt injection firewall: ignore previous instructions")).toBeInTheDocument();
   });
 
   it("updates and persists optimizer payload controls", async () => {
