@@ -35,6 +35,8 @@ export interface ContextOptimizationEvent {
     topicTokens: string[];
     leftValue: string;
     rightValue: string;
+    score?: number;
+    severity?: "low" | "medium" | "high";
   }>;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
@@ -132,7 +134,14 @@ function parseConflictDetails(value: string | null): ContextOptimizationEvent["c
       Array.isArray(item.topicTokens) &&
       item.topicTokens.every((token: unknown) => typeof token === "string") &&
       typeof item.leftValue === "string" &&
-      typeof item.rightValue === "string"
+      typeof item.rightValue === "string" &&
+      (item.score === undefined || typeof item.score === "number") &&
+      (
+        item.severity === undefined ||
+        item.severity === "low" ||
+        item.severity === "medium" ||
+        item.severity === "high"
+      )
     ));
   } catch {
     return [];
@@ -160,6 +169,8 @@ export async function recordContextOptimizationEvent(
     topicTokens: conflict.topicTokens,
     leftValue: conflict.leftValue,
     rightValue: conflict.rightValue,
+    score: conflict.score,
+    severity: conflict.severity,
   }));
   const riskyChunks = [...result.flagged, ...result.quarantined];
   const riskDetails = riskyChunks.map((chunk) => ({

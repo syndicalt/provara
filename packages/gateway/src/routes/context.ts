@@ -136,8 +136,8 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
     parsedReferenceTime = new Date(millis);
   }
   const conflictMode = value.conflictMode;
-  if (conflictMode !== undefined && conflictMode !== "off" && conflictMode !== "heuristic") {
-    return { error: "conflictMode must be either off or heuristic" };
+  if (conflictMode !== undefined && conflictMode !== "off" && conflictMode !== "heuristic" && conflictMode !== "scored") {
+    return { error: "conflictMode must be either off, heuristic, or scored" };
   }
   const compressionMode = value.compressionMode;
   if (compressionMode !== undefined && compressionMode !== "off" && compressionMode !== "extractive") {
@@ -166,7 +166,7 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
       freshnessMode: freshnessMode === "metadata" ? "metadata" : "off",
       maxContextAgeDays: typeof maxContextAgeDays === "number" ? maxContextAgeDays : undefined,
       referenceTime: parsedReferenceTime,
-      conflictMode: conflictMode === "heuristic" ? "heuristic" : "off",
+      conflictMode: conflictMode === "heuristic" || conflictMode === "scored" ? conflictMode : "off",
       compressionMode: compressionMode === "extractive" ? "extractive" : "off",
       maxSentencesPerChunk: typeof maxSentencesPerChunk === "number" ? maxSentencesPerChunk : undefined,
     },
@@ -233,6 +233,12 @@ function validateQualityBody(value: unknown): {
   };
 }
 
+function conflictSeverityFromScore(score: number): "low" | "medium" | "high" {
+  if (score >= 0.85) return "high";
+  if (score >= 0.65) return "medium";
+  return "low";
+}
+
 function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizationResult {
   const outputTokens = result.optimized.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
   const savedTokens = Math.max(0, result.metrics.inputTokens - outputTokens);
@@ -253,6 +259,31 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
     conflict.chunkIds.every((chunkId) => safeIds.has(chunkId))
   ));
   const conflictChunkIds = new Set(conflicts.flatMap((conflict) => conflict.chunkIds));
+  const conflictGroupIds = new Map<string, string[]>();
+  const conflictScores = new Map<string, number>();
+  for (const conflict of conflicts) {
+    for (const chunkId of conflict.chunkIds) {
+      conflictGroupIds.set(chunkId, [...(conflictGroupIds.get(chunkId) ?? []), conflict.id]);
+      conflictScores.set(chunkId, Math.max(conflictScores.get(chunkId) ?? 0, conflict.score ?? 0));
+    }
+  }
+  const optimized = result.optimized.map((chunk) => {
+    const groupIds = conflictGroupIds.get(chunk.id);
+    if (!groupIds) {
+      return {
+        ...chunk,
+        conflict: undefined,
+        conflictGroupIds: undefined,
+        conflictSeverity: undefined,
+      };
+    }
+    return {
+      ...chunk,
+      conflict: true,
+      conflictGroupIds: groupIds,
+      conflictSeverity: conflictSeverityFromScore(conflictScores.get(chunk.id) ?? 0),
+    };
+  });
   const compressionSavedTokens = result.optimized.reduce(
     (sum, chunk) => sum + Math.max(0, (chunk.originalTokens ?? chunk.inputTokens) - chunk.outputTokens),
     0,
@@ -260,6 +291,7 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
   const preCompressionTokens = outputTokens + compressionSavedTokens;
   return {
     ...result,
+    optimized,
     conflicts,
     metrics: {
       ...result.metrics,
@@ -277,7 +309,7 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
         : result.optimized.filter((chunk) => (chunk.relevanceScore ?? 0) < 0.2).length,
       avgFreshnessScore,
       staleChunks: result.optimized.filter((chunk) => chunk.stale).length,
-      conflictChunks: result.optimized.filter((chunk) => conflictChunkIds.has(chunk.id)).length,
+      conflictChunks: optimized.filter((chunk) => conflictChunkIds.has(chunk.id)).length,
       conflictGroups: conflicts.length,
       compressedChunks: result.optimized.filter((chunk) => chunk.compressed).length,
       compressionSavedTokens,

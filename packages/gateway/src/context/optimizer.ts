@@ -21,6 +21,7 @@ export interface OptimizedContextChunk {
   stale?: boolean;
   conflict?: boolean;
   conflictGroupIds?: string[];
+  conflictSeverity?: ConflictSeverity;
   compressed?: boolean;
   originalTokens?: number;
   compressedTokens?: number;
@@ -86,7 +87,7 @@ export interface ContextOptimizationOptions {
   freshnessMode?: "off" | "metadata";
   maxContextAgeDays?: number;
   referenceTime?: Date;
-  conflictMode?: "off" | "heuristic";
+  conflictMode?: "off" | "heuristic" | "scored";
   compressionMode?: "off" | "extractive";
   maxSentencesPerChunk?: number;
 }
@@ -99,7 +100,11 @@ export interface ContextConflict {
   topicTokens: string[];
   leftValue: string;
   rightValue: string;
+  score?: number;
+  severity?: ConflictSeverity;
 }
+
+export type ConflictSeverity = "low" | "medium" | "high";
 
 export function estimateContextTokens(text: string): number {
   return Math.ceil(text.length / 4);
@@ -507,15 +512,39 @@ function sharedTopicTokens(left: ConflictSignals, right: ConflictSignals): strin
   return shared;
 }
 
+function conflictSeverity(score: number): ConflictSeverity {
+  if (score >= 0.85) return "high";
+  if (score >= 0.65) return "medium";
+  return "low";
+}
+
+function boundedConflictScore(score: number): number {
+  return Number(Math.max(0, Math.min(1, score)).toFixed(4));
+}
+
+function scoredConflict(
+  conflict: Omit<ContextConflict, "id" | "chunkIds" | "sourceIds" | "score" | "severity">,
+  score: number,
+): Omit<ContextConflict, "id" | "chunkIds" | "sourceIds"> {
+  const normalized = boundedConflictScore(score);
+  return {
+    ...conflict,
+    score: normalized,
+    severity: conflictSeverity(normalized),
+  };
+}
+
 function findPairConflict(
   leftChunk: OptimizedContextChunk,
   leftSignals: ConflictSignals,
   rightChunk: OptimizedContextChunk,
   rightSignals: ConflictSignals,
+  mode: "heuristic" | "scored",
 ): Omit<ContextConflict, "id" | "chunkIds" | "sourceIds"> | null {
   const topicTokens = sharedTopicTokens(leftSignals, rightSignals);
   const sameMetadataKey = Boolean(leftSignals.metadataKey && leftSignals.metadataKey === rightSignals.metadataKey);
-  if (!sameMetadataKey && topicTokens.length < 2) return null;
+  const minSharedTopics = mode === "scored" ? 1 : 2;
+  if (!sameMetadataKey && topicTokens.length < minSharedTopics) return null;
 
   if (
     sameMetadataKey &&
@@ -523,32 +552,48 @@ function findPairConflict(
     rightSignals.metadataStatus &&
     leftSignals.metadataStatus !== rightSignals.metadataStatus
   ) {
-    return {
+    return scoredConflict({
       kind: "metadata",
       topicTokens,
       leftValue: `status:${leftSignals.metadataStatus}`,
       rightValue: `status:${rightSignals.metadataStatus}`,
-    };
+    }, 0.94);
   }
 
   for (const [leftStatus, rightStatus] of STATUS_CONFLICTS) {
     if (leftSignals.statusTerms.has(leftStatus) && rightSignals.statusTerms.has(rightStatus)) {
-      return { kind: "status", topicTokens, leftValue: leftStatus, rightValue: rightStatus };
+      return scoredConflict({
+        kind: "status",
+        topicTokens,
+        leftValue: leftStatus,
+        rightValue: rightStatus,
+      }, sameMetadataKey ? 0.88 : 0.72 + Math.min(0.12, topicTokens.length * 0.03));
     }
     if (leftSignals.statusTerms.has(rightStatus) && rightSignals.statusTerms.has(leftStatus)) {
-      return { kind: "status", topicTokens, leftValue: rightStatus, rightValue: leftStatus };
+      return scoredConflict({
+        kind: "status",
+        topicTokens,
+        leftValue: rightStatus,
+        rightValue: leftStatus,
+      }, sameMetadataKey ? 0.88 : 0.72 + Math.min(0.12, topicTokens.length * 0.03));
     }
   }
 
   for (const leftClaim of leftSignals.numericClaims) {
     for (const rightClaim of rightSignals.numericClaims) {
       if (leftClaim.unit === rightClaim.unit && leftClaim.value !== rightClaim.value) {
-        return {
+        const maxValue = Math.max(Math.abs(leftClaim.value), Math.abs(rightClaim.value), 1);
+        const relativeDelta = Math.abs(leftClaim.value - rightClaim.value) / maxValue;
+        const score = 0.55 +
+          Math.min(0.25, relativeDelta * 0.35) +
+          (sameMetadataKey ? 0.12 : 0) +
+          Math.min(0.08, topicTokens.length * 0.02);
+        return scoredConflict({
           kind: "numeric",
           topicTokens,
           leftValue: leftClaim.raw,
           rightValue: rightClaim.raw,
-        };
+        }, score);
       }
     }
   }
@@ -558,9 +603,9 @@ function findPairConflict(
 
 function applyConflictDetection(
   chunks: OptimizedContextChunk[],
-  enabled: boolean,
+  mode: "off" | "heuristic" | "scored",
 ): { chunks: OptimizedContextChunk[]; conflicts: ContextConflict[]; conflictChunks: number; conflictGroups: number } {
-  if (!enabled || chunks.length < 2) {
+  if (mode === "off" || chunks.length < 2) {
     return { chunks, conflicts: [], conflictChunks: 0, conflictGroups: 0 };
   }
 
@@ -574,7 +619,7 @@ function applyConflictDetection(
   for (let i = 0; i < chunks.length - 1 && checkedPairs < maxPairs; i += 1) {
     for (let j = i + 1; j < chunks.length && checkedPairs < maxPairs; j += 1) {
       checkedPairs += 1;
-      const conflict = findPairConflict(chunks[i], signals[i], chunks[j], signals[j]);
+      const conflict = findPairConflict(chunks[i], signals[i], chunks[j], signals[j], mode);
       if (!conflict) continue;
       const id = `conflict-${conflicts.length + 1}`;
       conflicts.push({
@@ -585,6 +630,8 @@ function applyConflictDetection(
         topicTokens: conflict.topicTokens,
         leftValue: conflict.leftValue,
         rightValue: conflict.rightValue,
+        score: conflict.score,
+        severity: conflict.severity,
       });
       conflictedIds.add(chunks[i].id);
       conflictedIds.add(chunks[j].id);
@@ -600,7 +647,16 @@ function applyConflictDetection(
   return {
     chunks: chunks.map((chunk) => {
       const groupIds = conflictGroupIds.get(chunk.id);
-      return groupIds ? { ...chunk, conflict: true, conflictGroupIds: groupIds } : chunk;
+      if (!groupIds) return chunk;
+      const maxScore = conflicts
+        .filter((conflict) => conflict.chunkIds.includes(chunk.id))
+        .reduce((max, conflict) => Math.max(max, conflict.score ?? 0), 0);
+      return {
+        ...chunk,
+        conflict: true,
+        conflictGroupIds: groupIds,
+        conflictSeverity: conflictSeverity(maxScore),
+      };
     }),
     conflicts,
     conflictChunks: conflictedIds.size,
@@ -802,7 +858,7 @@ export function optimizeContextChunks(
     maxAgeDays: maxContextAgeDays,
     referenceTime: options.referenceTime,
   });
-  const conflict = applyConflictDetection(freshness.chunks, conflictMode === "heuristic");
+  const conflict = applyConflictDetection(freshness.chunks, conflictMode);
   const outputTokens = conflict.chunks.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
   const savedTokens = Math.max(0, inputTokens - outputTokens);
   const reductionPct = inputTokens === 0 ? 0 : Number(((savedTokens / inputTokens) * 100).toFixed(2));

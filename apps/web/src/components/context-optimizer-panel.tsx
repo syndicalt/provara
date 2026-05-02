@@ -58,6 +58,8 @@ export interface ContextOptimizationEvent {
     topicTokens: string[];
     leftValue: string;
     rightValue: string;
+    score?: number;
+    severity?: "low" | "medium" | "high";
   }>;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
@@ -214,6 +216,13 @@ function metricTone(value: number): string {
 function riskTone(value: number): string {
   if (value > 0) return "text-amber-300";
   return "text-zinc-200";
+}
+
+function conflictSeverityTone(severity: string | undefined): string {
+  if (severity === "high") return "text-red-300";
+  if (severity === "medium") return "text-amber-300";
+  if (severity === "low") return "text-zinc-400";
+  return "text-zinc-500";
 }
 
 function deltaTone(value: number | null | undefined): string {
@@ -742,6 +751,9 @@ export function ContextOptimizerPanel() {
                 <tbody className="divide-y divide-zinc-800">
                   {eventRows.map((event) => {
                     const riskyChunks = event.flaggedChunks + event.quarantinedChunks;
+                    const topConflict = event.conflictDetails
+                      .slice()
+                      .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))[0];
                     return (
                       <tr key={event.id}>
                         <td className="whitespace-nowrap px-4 py-3 text-zinc-300">{formatTimestamp(event.createdAt)}</td>
@@ -771,6 +783,11 @@ export function ContextOptimizerPanel() {
                           <span className="ml-2 text-xs text-zinc-500">
                             {formatInteger(event.conflictGroups)}
                           </span>
+                          {topConflict ? (
+                            <span className={`ml-2 text-xs uppercase ${conflictSeverityTone(topConflict.severity)}`}>
+                              {topConflict.severity ?? "scored"} {topConflict.score !== undefined ? topConflict.score.toFixed(2) : ""}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
                           {event.riskScanned ? (
