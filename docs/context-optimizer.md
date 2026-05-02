@@ -27,6 +27,7 @@ The shipped V1 implementation is intentionally narrow:
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
+- Dashboard connector management for GitHub credentials, GitHub repository source creation, and manual source sync.
 
 It does not yet perform connector pulls from systems such as Confluence, Drive, or S3. Those belong to later roadmap phases.
 
@@ -205,7 +206,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Collection Sources section shows manual and GitHub sources for the first managed collection, including source URI or repo/branch/path, auth-configured status, sync status, document count, last synced time, update time, and last sync error. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Creation, source sync, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, list credential metadata without secret values, create GitHub repository sources for the first managed collection, and bind a source to a stored credential. The Collection Sources section shows manual and GitHub sources for the first managed collection, including source URI or repo/branch/path, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Collection creation, manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
