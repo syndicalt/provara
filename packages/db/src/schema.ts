@@ -472,7 +472,7 @@ export const contextSources = sqliteTable("context_sources", {
     .notNull()
     .references(() => contextCollections.id),
   name: text("name").notNull(),
-  type: text("type", { enum: ["manual", "github_repository"] }).notNull().default("manual"),
+  type: text("type", { enum: ["manual", "github_repository", "file_upload"] }).notNull().default("manual"),
   externalId: text("external_id"),
   sourceUri: text("source_uri"),
   content: text("content").notNull().default(""),

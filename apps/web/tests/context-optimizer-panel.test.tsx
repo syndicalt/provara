@@ -257,6 +257,21 @@ describe("ContextOptimizerPanel", () => {
               metadata: { github: { owner: "acme", repo: "docs", branch: "main", path: "docs", credentialId: "cred-1" } },
               updatedAt: "2026-05-01T22:04:00.000Z",
             },
+            {
+              id: "source-3",
+              collectionId: "collection-1",
+              name: "Uploaded handbook",
+              type: "file_upload",
+              externalId: "upload:handbook",
+              sourceUri: "upload://handbook.md",
+              syncStatus: "pending",
+              lastSyncedAt: null,
+              lastDocumentId: null,
+              documentCount: 0,
+              lastError: null,
+              metadata: { file: { filename: "handbook.md", contentType: "text/markdown", sizeBytes: 128 } },
+              updatedAt: "2026-05-01T22:05:00.000Z",
+            },
           ],
         }));
       }
@@ -392,6 +407,8 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("file://refunds.md")).toBeInTheDocument();
     expect(screen.getByText("Docs repository")).toBeInTheDocument();
     expect(screen.getByText("acme/docs@main/docs")).toBeInTheDocument();
+    expect(screen.getByText("Uploaded handbook")).toBeInTheDocument();
+    expect(screen.getByText("handbook.md (text/markdown, 128 bytes)")).toBeInTheDocument();
     expect(screen.getByText("Configured")).toBeInTheDocument();
     expect(screen.getByText("Canonical")).toBeInTheDocument();
     expect(screen.getByText("Approved")).toBeInTheDocument();
@@ -525,7 +542,36 @@ describe("ContextOptimizerPanel", () => {
         return Promise.resolve(jsonResponse({ credentials: [] }));
       }
       if (path === "/v1/context/collections/collection-1/sources" && init?.method === "POST") {
-        expect(JSON.parse(String(init.body))).toMatchObject({
+        const parsed = JSON.parse(String(init.body)) as Record<string, unknown>;
+        if (parsed.type === "file_upload") {
+          expect(parsed).toMatchObject({
+            name: "Uploaded guide",
+            type: "file_upload",
+            content: "Uploaded guide content for context.",
+            file: {
+              filename: "guide.md",
+              contentType: "text/markdown",
+            },
+          });
+          return Promise.resolve(jsonResponse({
+            source: {
+              id: "source-file",
+              collectionId: "collection-1",
+              name: "Uploaded guide",
+              type: "file_upload",
+              externalId: "upload:guide",
+              sourceUri: "upload://guide.md",
+              syncStatus: "pending",
+              lastSyncedAt: null,
+              lastDocumentId: null,
+              documentCount: 0,
+              lastError: null,
+              metadata: { file: { filename: "guide.md", contentType: "text/markdown", sizeBytes: 35 } },
+              updatedAt: "2026-05-01T22:10:00.000Z",
+            },
+          }));
+        }
+        expect(parsed).toMatchObject({
           name: "Docs repo",
           type: "github_repository",
           github: {
@@ -594,6 +640,40 @@ describe("ContextOptimizerPanel", () => {
           },
         }));
       }
+      if (path === "/v1/context/sources/source-file/sync") {
+        return Promise.resolve(jsonResponse({
+          synced: true,
+          collection: {
+            id: "collection-1",
+            tenantId: "tenant-pro",
+            name: "Support KB",
+            description: "Approved support context",
+            status: "active",
+            documentCount: 2,
+            blockCount: 4,
+            canonicalBlockCount: 1,
+            approvedBlockCount: 0,
+            tokenCount: 300,
+            createdAt: "2026-05-01T20:00:00.000Z",
+            updatedAt: "2026-05-01T22:13:00.000Z",
+          },
+          source: {
+            id: "source-file",
+            collectionId: "collection-1",
+            name: "Uploaded guide",
+            type: "file_upload",
+            externalId: "upload:guide",
+            sourceUri: "upload://guide.md",
+            syncStatus: "synced",
+            lastSyncedAt: "2026-05-01T22:13:00.000Z",
+            lastDocumentId: "doc-file",
+            documentCount: 1,
+            lastError: null,
+            metadata: { file: { filename: "guide.md", contentType: "text/markdown", sizeBytes: 35 } },
+            updatedAt: "2026-05-01T22:13:00.000Z",
+          },
+        }));
+      }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
 
@@ -608,7 +688,19 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("Docs token").length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain("ghp_secret_token_123");
 
-    fireEvent.change(screen.getByLabelText("Source Name"), { target: { value: "Docs repo" } });
+    const upload = new File(["Uploaded guide content for context."], "guide.md", { type: "text/markdown" });
+    fireEvent.change(screen.getByLabelText("File"), { target: { files: [upload] } });
+    expect(await screen.findByText("File loaded.")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("guide")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("Uploaded guide content for context.");
+    fireEvent.change(screen.getByLabelText("File Source Name"), { target: { value: "Uploaded guide" } });
+    fireEvent.click(screen.getByText("Create File Source"));
+
+    expect(await screen.findByText("File source created.")).toBeInTheDocument();
+    expect(screen.getByText("guide.md (text/markdown, 35 bytes)")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("Uploaded guide content for context.");
+
+    fireEvent.change(screen.getByLabelText("GitHub Source Name"), { target: { value: "Docs repo" } });
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "docs" } });
     fireEvent.change(screen.getByLabelText("Path"), { target: { value: "docs" } });
@@ -620,7 +712,7 @@ describe("ContextOptimizerPanel", () => {
     expect(await screen.findByText("GitHub source created.")).toBeInTheDocument();
     expect(screen.getByText("acme/docs@main/docs")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Sync" })[0] as HTMLElement);
     expect(await screen.findByText("Sync complete.")).toBeInTheDocument();
     expect(screen.getAllByText("1").length).toBeGreaterThan(0);
     expect(screen.getByText("synced")).toBeInTheDocument();
