@@ -2101,6 +2101,21 @@ components:
           maximum: 1
           default: 0.72
           description: Similarity threshold used when dedupeMode is semantic.
+        rankMode:
+          type: string
+          enum: [none, lexical]
+          default: none
+          description: Lexical mode scores and reranks retained chunks against query with deterministic local token matching.
+        query:
+          type: string
+          maxLength: 2000
+          description: User query used for lexical relevance scoring. Not persisted.
+        minRelevanceScore:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.2
+          description: Chunks below this score are counted as low relevance when rankMode is lexical.
 
     OptimizedContextChunk:
       allOf:
@@ -2116,6 +2131,9 @@ components:
               type: integer
             outputTokens:
               type: integer
+            relevanceScore:
+              type: number
+              description: Lexical relevance score when rankMode is lexical.
 
     DroppedContextChunk:
       type: object
@@ -2172,7 +2190,7 @@ components:
             $ref: "#/components/schemas/RiskyContextChunk"
         metrics:
           type: object
-          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct]
+          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct, avgRelevanceScore, lowRelevanceChunks, rerankedChunks]
           properties:
             inputChunks: { type: integer }
             outputChunks: { type: integer }
@@ -2185,6 +2203,11 @@ components:
             savedTokens: { type: integer }
             reductionPct:
               type: number
+            avgRelevanceScore:
+              type: number
+              nullable: true
+            lowRelevanceChunks: { type: integer }
+            rerankedChunks: { type: integer }
 
     ContextOptimizationEvent:
       type: object
@@ -2199,6 +2222,9 @@ components:
         - outputTokens
         - savedTokens
         - reductionPct
+        - avgRelevanceScore
+        - lowRelevanceChunks
+        - rerankedChunks
         - duplicateSourceIds
         - nearDuplicateSourceIds
         - riskScanned
@@ -2229,6 +2255,13 @@ components:
           type: integer
         reductionPct:
           type: number
+        avgRelevanceScore:
+          type: number
+          nullable: true
+        lowRelevanceChunks:
+          type: integer
+        rerankedChunks:
+          type: integer
         duplicateSourceIds:
           type: array
           items:
@@ -2280,6 +2313,9 @@ components:
         - outputTokens
         - savedTokens
         - reductionPct
+        - avgRelevanceScore
+        - lowRelevanceChunks
+        - rerankedChunks
         - flaggedChunks
         - quarantinedChunks
         - latestAt
@@ -2302,6 +2338,13 @@ components:
           type: integer
         reductionPct:
           type: number
+        avgRelevanceScore:
+          type: number
+          nullable: true
+        lowRelevanceChunks:
+          type: integer
+        rerankedChunks:
+          type: integer
         flaggedChunks:
           type: integer
         quarantinedChunks:
@@ -2453,6 +2496,9 @@ components:
         - retrievedTokens
         - usedTokens
         - unusedTokens
+        - avgRelevanceScore
+        - lowRelevanceChunks
+        - rerankedChunks
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
@@ -2487,6 +2533,13 @@ components:
         usedTokens:
           type: integer
         unusedTokens:
+          type: integer
+        avgRelevanceScore:
+          type: number
+          nullable: true
+        lowRelevanceChunks:
+          type: integer
+        rerankedChunks:
           type: integer
         efficiencyPct:
           type: number
@@ -2525,6 +2578,9 @@ components:
         - retrievedTokens
         - usedTokens
         - unusedTokens
+        - avgRelevanceScore
+        - lowRelevanceChunks
+        - rerankedChunks
         - efficiencyPct
         - duplicateRatePct
         - nearDuplicateRatePct
@@ -2550,6 +2606,13 @@ components:
         usedTokens:
           type: integer
         unusedTokens:
+          type: integer
+        avgRelevanceScore:
+          type: number
+          nullable: true
+        lowRelevanceChunks:
+          type: integer
+        rerankedChunks:
           type: integer
         efficiencyPct:
           type: number

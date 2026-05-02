@@ -13,6 +13,9 @@ export interface ContextOptimizationSummary {
   outputTokens: number;
   savedTokens: number;
   reductionPct: number;
+  avgRelevanceScore: number | null;
+  lowRelevanceChunks: number;
+  rerankedChunks: number;
   flaggedChunks: number;
   quarantinedChunks: number;
   latestAt: string | null;
@@ -29,6 +32,9 @@ export interface ContextOptimizationEvent {
   outputTokens: number;
   savedTokens: number;
   reductionPct: number;
+  avgRelevanceScore: number | null;
+  lowRelevanceChunks: number;
+  rerankedChunks: number;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
   riskScanned: boolean;
@@ -81,6 +87,9 @@ export interface ContextRetrievalSummary {
   retrievedTokens: number;
   usedTokens: number;
   unusedTokens: number;
+  avgRelevanceScore: number | null;
+  lowRelevanceChunks: number;
+  rerankedChunks: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -101,6 +110,9 @@ export interface ContextRetrievalEvent {
   retrievedTokens: number;
   usedTokens: number;
   unusedTokens: number;
+  avgRelevanceScore: number | null;
+  lowRelevanceChunks: number;
+  rerankedChunks: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -139,6 +151,11 @@ function formatPercent(value: number): string {
 function formatScore(value: number | null | undefined): string {
   if (value === null || value === undefined) return "n/a";
   return value.toFixed(value % 1 === 0 ? 0 : 2);
+}
+
+function formatRelevance(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "n/a";
+  return value.toFixed(2);
 }
 
 function formatTimestamp(value: string | null): string {
@@ -394,7 +411,7 @@ export function ContextOptimizerPanel() {
           <h2 className="text-lg font-semibold text-zinc-100">Retrieval Analytics</h2>
           <p className="mt-1 text-sm text-zinc-500">Context usage and retrieval health.</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <StatTile
             label="Retrieval Efficiency"
             value={formatPercent(retrievalSummary?.efficiencyPct ?? 0)}
@@ -407,6 +424,14 @@ export function ContextOptimizerPanel() {
             detail={`${formatInteger(retrievalSummary?.unusedTokens ?? 0)} unused token estimate`}
             tone={riskTone(retrievalSummary?.unusedChunks ?? 0)}
           />
+          <StatTile
+            label="Relevance"
+            value={formatRelevance(retrievalSummary?.avgRelevanceScore)}
+            detail={`${formatInteger(retrievalSummary?.lowRelevanceChunks ?? 0)} low, ${formatInteger(retrievalSummary?.rerankedChunks ?? 0)} reranked`}
+            tone={metricTone(retrievalSummary?.avgRelevanceScore ?? 0)}
+          />
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
           <StatTile
             label="Duplicate Rate"
             value={formatPercent(retrievalSummary?.duplicateRatePct ?? 0)}
@@ -449,6 +474,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-left font-medium">Time</th>
                     <th className="px-4 py-3 text-right font-medium">Chunks</th>
                     <th className="px-4 py-3 text-right font-medium">Efficiency</th>
+                    <th className="px-4 py-3 text-right font-medium">Relevance</th>
                     <th className="px-4 py-3 text-right font-medium">Duplicates</th>
                     <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Risky</th>
@@ -464,6 +490,12 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-emerald-300">
                         {formatPercent(event.efficiencyPct)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatRelevance(event.avgRelevanceScore)}
+                        <span className="ml-2 text-xs text-zinc-500">
+                          {formatInteger(event.lowRelevanceChunks)} low
+                        </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                         {formatInteger(event.duplicateChunks)}
@@ -621,6 +653,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Chunks</th>
                     <th className="px-4 py-3 text-right font-medium">Dropped</th>
                     <th className="px-4 py-3 text-right font-medium">Semantic</th>
+                    <th className="px-4 py-3 text-right font-medium">Relevance</th>
                     <th className="px-4 py-3 text-right font-medium">Risk</th>
                     <th className="px-4 py-3 text-right font-medium">Saved</th>
                     <th className="px-4 py-3 text-left font-medium">Duplicate IDs</th>
@@ -641,6 +674,12 @@ export function ContextOptimizerPanel() {
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                           {formatInteger(event.nearDuplicateChunks)}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                          {formatRelevance(event.avgRelevanceScore)}
+                          <span className="ml-2 text-xs text-zinc-500">
+                            {formatInteger(event.rerankedChunks)}
+                          </span>
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
                           {event.riskScanned ? (

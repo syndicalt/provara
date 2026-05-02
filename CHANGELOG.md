@@ -18,6 +18,7 @@ All notable Provara changes are tracked here.
   - Context Optimizer quality loop with `POST /v1/context/evaluate`, persisted `context_quality_events`, demo quality rows, and dashboard quality delta/regression visibility.
   - Context retrieval analytics with persisted `context_retrieval_events`, retrieval efficiency, unused context, duplicate rate, risky context rate, demo rows, APIs, and dashboard visibility.
   - Context Optimizer semantic near-duplicate mode with `dedupeMode: "semantic"`, configurable similarity threshold, separate near-duplicate source IDs/rates, demo rows, APIs, and dashboard visibility.
+  - Context Optimizer lexical relevance mode with `rankMode: "lexical"`, query-scored stable reranking, low-relevance/reranked metrics, demo rows, APIs, and dashboard visibility.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
 - Optional semantic and hybrid prompt-injection scan modes using the configured judge model.
@@ -31,7 +32,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, and semantic near-duplicate detection as shipped checkpoints, with retrieval quality scoring as the next planned layer.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, and lexical relevance reranking as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
@@ -46,7 +47,7 @@ All notable Provara changes are tracked here.
 ### Upgrade Notes
 
 - Run database migrations through `0044_firewall_settings`.
-- For Context Optimizer visibility, risk reporting, quality scoring, retrieval analytics, and semantic near-duplicate metrics, run database migrations through `0049_context_semantic_duplicates`.
+- For Context Optimizer visibility, risk reporting, quality scoring, retrieval analytics, semantic near-duplicate metrics, and relevance metrics, run database migrations through `0050_context_relevance_metrics`.
 - New tables:
   - `firewall_events`
   - `firewall_settings`
