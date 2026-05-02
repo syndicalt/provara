@@ -2138,9 +2138,9 @@ components:
           description: Heuristic mode detects lightweight status, numeric, and metadata conflicts across retained chunks. Scored mode emits bounded contradiction scores and severity bands.
         compressionMode:
           type: string
-          enum: [off, extractive]
+          enum: [off, extractive, abstractive]
           default: off
-          description: Extractive mode keeps the highest-value sentences from retained chunks using deterministic local scoring.
+          description: Extractive mode keeps the highest-value sentences using deterministic local scoring. Abstractive mode summarizes retained chunks with the configured provider and falls back to extractive/original content on errors, refusals, or token growth.
         maxSentencesPerChunk:
           type: number
           minimum: 1
@@ -2185,7 +2185,7 @@ components:
               description: Highest severity band for conflicts involving this retained chunk.
             compressed:
               type: boolean
-              description: Whether extractive compression shortened this chunk.
+              description: Whether compression shortened this chunk.
             originalTokens:
               type: integer
               description: Pre-compression token estimate for this retained chunk.

@@ -13,6 +13,7 @@ The shipped V1 implementation is intentionally narrow:
 - Optional stale-context detection from bounded freshness metadata.
 - Optional conflicting-context detection with bounded heuristic claim checks and scored severity bands.
 - Optional extractive compression with bounded sentence selection.
+- Optional abstractive compression with provider summaries and mechanical fallback.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
 - Optional risk scanning with active Guardrails rules for retrieved context.
@@ -23,7 +24,7 @@ The shipped V1 implementation is intentionally narrow:
 - Dashboard visibility at `/dashboard/context`.
 - Dashboard configuration controls for composing and copying an optimization request payload.
 
-It does not yet perform embedding-backed semantic deduplication, abstractive compression, or persistent review workflows. Those belong to later roadmap phases.
+It does not yet perform embedding-backed semantic deduplication or persistent review workflows. Those belong to later roadmap phases.
 
 ## API
 
@@ -45,7 +46,7 @@ The request accepts already-retrieved context chunks:
   "freshnessMode": "metadata",
   "maxContextAgeDays": 180,
   "conflictMode": "scored",
-  "compressionMode": "extractive",
+  "compressionMode": "abstractive",
   "maxSentencesPerChunk": 3,
   "scanRisk": true,
   "chunks": [
@@ -69,7 +70,7 @@ The request accepts already-retrieved context chunks:
 
 The response includes:
 
-- `optimization.optimized`: chunks retained for model context, optionally reranked, scored for relevance/freshness/conflicts, and extractively compressed.
+- `optimization.optimized`: chunks retained for model context, optionally reranked, scored for relevance/freshness/conflicts, and compressed.
 - `optimization.dropped`: exact duplicate and near-duplicate chunks removed from model context.
 - `optimization.conflicts`: lightweight conflict groups found across retained chunks.
 - `optimization.flagged`: risky chunks removed from model context but marked for operator review.
@@ -86,7 +87,7 @@ The response includes:
 
 `conflictMode` defaults to `off`. Set `conflictMode` to `heuristic` to detect lightweight contradictions across retained chunks. Set `conflictMode` to `scored` to include bounded contradiction `score` values and `low`/`medium`/`high` severity bands on conflict groups and retained chunks. The detector uses local signals: shared metadata keys, status disagreements, and numeric claim disagreements such as different day/hour/percent/USD values on the same topic. It caps extracted signals and pair comparisons, so this stays deterministic and local; NLI-backed contradiction checks remain future paid-layer work.
 
-`compressionMode` defaults to `off`. Set `compressionMode` to `extractive` to keep the highest-value sentences from retained chunks. The selector uses bounded sentence splitting, capped query tokens, stable local scoring, and preserves original sentence order in the compressed chunk. It records `compressedChunks`, `compressionSavedTokens`, and `compressionRatePct`. `maxSentencesPerChunk` defaults to `3` and accepts values from `1` to `8`. Abstractive/LLM compression is intentionally out of scope for this mode.
+`compressionMode` defaults to `off`. Set `compressionMode` to `extractive` to keep the highest-value sentences from retained chunks. The selector uses bounded sentence splitting, capped query tokens, stable local scoring, and preserves original sentence order in the compressed chunk. Set `compressionMode` to `abstractive` to summarize retained chunks through the configured provider; Provara preserves source IDs and token provenance, and falls back to extractive or original content if the model call fails, refuses, returns empty text, or increases token count. It records `compressedChunks`, `compressionSavedTokens`, and `compressionRatePct`. `maxSentencesPerChunk` defaults to `3` and accepts values from `1` to `8` for the extractive fallback.
 
 `scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 
