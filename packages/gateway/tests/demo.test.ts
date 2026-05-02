@@ -58,9 +58,11 @@ describe("#229 — demo tenant seed", () => {
       .all();
     expect(contextEvents).toHaveLength(4);
     expect(contextEvents.reduce((sum, row) => sum + row.savedTokens, 0)).toBe(11800);
+    expect(contextEvents.reduce((sum, row) => sum + row.nearDuplicateChunks, 0)).toBeGreaterThan(0);
     expect(contextEvents.reduce((sum, row) => sum + row.flaggedChunks, 0)).toBe(1);
     expect(contextEvents.reduce((sum, row) => sum + row.quarantinedChunks, 0)).toBe(1);
     expect(JSON.parse(contextEvents[0].duplicateSourceIds)).toEqual(expect.any(Array));
+    expect(JSON.parse(contextEvents[0].nearDuplicateSourceIds)).toEqual(expect.any(Array));
     expect(JSON.parse(contextEvents[0].riskySourceIds)).toEqual(expect.any(Array));
 
     const qualityEvents = await db
@@ -78,6 +80,7 @@ describe("#229 — demo tenant seed", () => {
       .all();
     expect(retrievalEvents).toHaveLength(4);
     expect(retrievalEvents.reduce((sum, row) => sum + row.unusedChunks, 0)).toBeGreaterThan(0);
+    expect(retrievalEvents.reduce((sum, row) => sum + row.nearDuplicateChunks, 0)).toBeGreaterThan(0);
     expect(JSON.parse(retrievalEvents[0].unusedSourceIds)).toEqual(expect.any(Array));
   });
 
