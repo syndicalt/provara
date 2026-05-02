@@ -25,6 +25,9 @@ export interface ContextRetrievalEvent {
   staleChunks: number;
   conflictChunks: number;
   conflictGroups: number;
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -77,6 +80,9 @@ function eventFromRow(row: typeof contextRetrievalEvents.$inferSelect): ContextR
     staleChunks: row.staleChunks,
     conflictChunks: row.conflictChunks,
     conflictGroups: row.conflictGroups,
+    compressedChunks: row.compressedChunks,
+    compressionSavedTokens: row.compressionSavedTokens,
+    compressionRatePct: row.compressionRatePct,
     efficiencyPct: row.efficiencyPct,
     duplicateRatePct: row.duplicateRatePct,
     nearDuplicateRatePct: row.nearDuplicateRatePct,
@@ -111,6 +117,8 @@ export async function recordContextRetrievalEvent(
   const nearDuplicateChunks = result.metrics.nearDuplicateChunks;
   const conflictChunks = result.metrics.conflictChunks;
   const conflictGroups = result.metrics.conflictGroups;
+  const compressedChunks = result.metrics.compressedChunks;
+  const compressionSavedTokens = result.metrics.compressionSavedTokens;
   const riskyChunkCount = result.metrics.flaggedChunks + result.metrics.quarantinedChunks;
   const retrievedTokens = result.metrics.inputTokens;
   const usedTokens = result.metrics.outputTokens;
@@ -137,6 +145,9 @@ export async function recordContextRetrievalEvent(
     staleChunks: result.metrics.staleChunks,
     conflictChunks,
     conflictGroups,
+    compressedChunks,
+    compressionSavedTokens,
+    compressionRatePct: result.metrics.compressionRatePct,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(duplicateChunks, retrievedChunks),
     nearDuplicateRatePct: pct(nearDuplicateChunks, retrievedChunks),
@@ -191,6 +202,8 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
       staleChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.staleChunks}), 0)`,
       conflictChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.conflictChunks}), 0)`,
       conflictGroups: sql<number>`coalesce(sum(${contextRetrievalEvents.conflictGroups}), 0)`,
+      compressedChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.compressedChunks}), 0)`,
+      compressionSavedTokens: sql<number>`coalesce(sum(${contextRetrievalEvents.compressionSavedTokens}), 0)`,
     })
     .from(contextRetrievalEvents)
     .where(whereClause)
@@ -229,6 +242,11 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
     staleChunks: row?.staleChunks ?? 0,
     conflictChunks: row?.conflictChunks ?? 0,
     conflictGroups: row?.conflictGroups ?? 0,
+    compressedChunks: row?.compressedChunks ?? 0,
+    compressionSavedTokens: row?.compressionSavedTokens ?? 0,
+    compressionRatePct: retrievedTokens === 0
+      ? 0
+      : Number((((row?.compressionSavedTokens ?? 0) / retrievedTokens) * 100).toFixed(2)),
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(row?.duplicateChunks ?? 0, retrievedChunks),
     nearDuplicateRatePct: pct(row?.nearDuplicateChunks ?? 0, retrievedChunks),

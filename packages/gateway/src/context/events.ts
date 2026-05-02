@@ -23,6 +23,9 @@ export interface ContextOptimizationEvent {
   staleChunks: number;
   conflictChunks: number;
   conflictGroups: number;
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
   conflictSourceIds: string[];
   conflictDetails: Array<{
     id: string;
@@ -77,6 +80,9 @@ function eventFromRow(row: typeof contextOptimizationEvents.$inferSelect): Conte
     staleChunks: row.staleChunks,
     conflictChunks: row.conflictChunks,
     conflictGroups: row.conflictGroups,
+    compressedChunks: row.compressedChunks,
+    compressionSavedTokens: row.compressionSavedTokens,
+    compressionRatePct: row.compressionRatePct,
     conflictSourceIds: parseDuplicateSourceIds(row.conflictSourceIds),
     conflictDetails: parseConflictDetails(row.conflictDetails),
     duplicateSourceIds: parseDuplicateSourceIds(row.duplicateSourceIds),
@@ -183,6 +189,9 @@ export async function recordContextOptimizationEvent(
     staleChunks: result.metrics.staleChunks,
     conflictChunks: result.metrics.conflictChunks,
     conflictGroups: result.metrics.conflictGroups,
+    compressedChunks: result.metrics.compressedChunks,
+    compressionSavedTokens: result.metrics.compressionSavedTokens,
+    compressionRatePct: result.metrics.compressionRatePct,
     conflictSourceIds: JSON.stringify(conflictSourceIds),
     conflictDetails: JSON.stringify(conflictDetails),
     duplicateSourceIds: JSON.stringify(duplicateSourceIds),
@@ -240,6 +249,8 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       staleChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.staleChunks}), 0)`,
       conflictChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.conflictChunks}), 0)`,
       conflictGroups: sql<number>`coalesce(sum(${contextOptimizationEvents.conflictGroups}), 0)`,
+      compressedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.compressedChunks}), 0)`,
+      compressionSavedTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.compressionSavedTokens}), 0)`,
       flaggedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.flaggedChunks}), 0)`,
       quarantinedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.quarantinedChunks}), 0)`,
     })
@@ -282,6 +293,11 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
     staleChunks: row?.staleChunks ?? 0,
     conflictChunks: row?.conflictChunks ?? 0,
     conflictGroups: row?.conflictGroups ?? 0,
+    compressedChunks: row?.compressedChunks ?? 0,
+    compressionSavedTokens: row?.compressionSavedTokens ?? 0,
+    compressionRatePct: inputTokens === 0
+      ? 0
+      : Number((((row?.compressionSavedTokens ?? 0) / inputTokens) * 100).toFixed(2)),
     latestAt: latestRow?.createdAt ?? null,
   };
 }

@@ -18,6 +18,9 @@ export interface OptimizedContextChunk {
   stale?: boolean;
   conflict?: boolean;
   conflictGroupIds?: string[];
+  compressed?: boolean;
+  originalTokens?: number;
+  compressedTokens?: number;
 }
 
 export interface DroppedContextChunk {
@@ -65,6 +68,9 @@ export interface ContextOptimizationResult {
     staleChunks: number;
     conflictChunks: number;
     conflictGroups: number;
+    compressedChunks: number;
+    compressionSavedTokens: number;
+    compressionRatePct: number;
   };
 }
 
@@ -78,6 +84,8 @@ export interface ContextOptimizationOptions {
   maxContextAgeDays?: number;
   referenceTime?: Date;
   conflictMode?: "off" | "heuristic";
+  compressionMode?: "off" | "extractive";
+  maxSentencesPerChunk?: number;
 }
 
 export interface ContextConflict {
@@ -496,6 +504,115 @@ function applyConflictDetection(
   };
 }
 
+interface SentenceCandidate {
+  text: string;
+  index: number;
+  tokens: Set<string>;
+}
+
+function splitSentences(content: string): SentenceCandidate[] {
+  const normalized = content.replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  const raw = normalized.match(/[^.!?]+[.!?]?/g) ?? [normalized];
+  const sentences: SentenceCandidate[] = [];
+  for (const sentence of raw) {
+    const text = sentence.trim();
+    if (text.length < 12) continue;
+    sentences.push({
+      text,
+      index: sentences.length,
+      tokens: tokenSet(text),
+    });
+    if (sentences.length >= 64) break;
+  }
+  return sentences;
+}
+
+function sentenceScore(
+  sentence: SentenceCandidate,
+  queryTokens: Set<string>,
+  chunk: OptimizedContextChunk,
+): number {
+  let matches = 0;
+  for (const token of queryTokens) {
+    if (sentence.tokens.has(token)) matches += 1;
+  }
+  const queryScore = queryTokens.size === 0 ? 0 : matches / queryTokens.size;
+  const density = sentence.tokens.size === 0 ? 0 : matches / sentence.tokens.size;
+  const relevanceBonus = chunk.relevanceScore ? chunk.relevanceScore * 0.08 : 0;
+  const freshnessPenalty = chunk.stale ? 0.08 : 0;
+  const conflictPenalty = chunk.conflict ? 0.04 : 0;
+  const leadBonus = sentence.index === 0 ? 0.03 : 0;
+  return queryTokens.size === 0
+    ? leadBonus - freshnessPenalty - conflictPenalty
+    : queryScore * 0.8 + density * 0.2 + relevanceBonus + leadBonus - freshnessPenalty - conflictPenalty;
+}
+
+function compressChunkExtractively(
+  chunk: OptimizedContextChunk,
+  queryTokens: Set<string>,
+  maxSentences: number,
+): OptimizedContextChunk {
+  const sentences = splitSentences(chunk.content);
+  if (sentences.length <= maxSentences) return chunk;
+
+  const ranked = sentences
+    .map((sentence) => ({ sentence, score: sentenceScore(sentence, queryTokens, chunk) }))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return left.sentence.index - right.sentence.index;
+    })
+    .slice(0, maxSentences)
+    .sort((left, right) => left.sentence.index - right.sentence.index);
+
+  const compressedContent = ranked.map((item) => item.sentence.text).join(" ");
+  const compressedTokens = estimateContextTokens(compressedContent);
+  if (compressedTokens >= chunk.outputTokens) return chunk;
+
+  return {
+    ...chunk,
+    content: compressedContent,
+    outputTokens: compressedTokens,
+    compressed: true,
+    originalTokens: chunk.outputTokens,
+    compressedTokens,
+  };
+}
+
+function applyExtractiveCompression(
+  chunks: OptimizedContextChunk[],
+  options: { enabled: boolean; query?: string; maxSentences: number },
+): {
+  chunks: OptimizedContextChunk[];
+  compressedChunks: number;
+  compressionSavedTokens: number;
+  compressionRatePct: number;
+} {
+  if (!options.enabled || chunks.length === 0) {
+    return { chunks, compressedChunks: 0, compressionSavedTokens: 0, compressionRatePct: 0 };
+  }
+
+  const queryTokens = options.query ? boundedTokenSet(options.query, 32) : new Set<string>();
+  const preCompressionTokens = chunks.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
+  let compressedChunks = 0;
+  let outputTokens = 0;
+  const compressed = chunks.map((chunk) => {
+    const next = compressChunkExtractively(chunk, queryTokens, options.maxSentences);
+    if (next.compressed) compressedChunks += 1;
+    outputTokens += next.outputTokens;
+    return next;
+  });
+  const compressionSavedTokens = Math.max(0, preCompressionTokens - outputTokens);
+  return {
+    chunks: compressed,
+    compressedChunks,
+    compressionSavedTokens,
+    compressionRatePct: preCompressionTokens === 0
+      ? 0
+      : Number(((compressionSavedTokens / preCompressionTokens) * 100).toFixed(2)),
+  };
+}
+
 export function optimizeContextChunks(
   chunks: ContextChunk[],
   options: ContextOptimizationOptions = {},
@@ -507,6 +624,8 @@ export function optimizeContextChunks(
   const freshnessMode = options.freshnessMode ?? "off";
   const maxContextAgeDays = Math.max(1, Math.min(3650, options.maxContextAgeDays ?? 180));
   const conflictMode = options.conflictMode ?? "off";
+  const compressionMode = options.compressionMode ?? "off";
+  const maxSentencesPerChunk = Math.max(1, Math.min(8, Math.floor(options.maxSentencesPerChunk ?? 3)));
   const seen = new Map<string, OptimizedContextChunk>();
   const optimized: OptimizedContextChunk[] = [];
   const dropped: DroppedContextChunk[] = [];
@@ -571,7 +690,6 @@ export function optimizeContextChunks(
     optimized.push(kept);
   }
 
-  const outputTokens = optimized.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
   const ranking = rankMode === "lexical"
     ? applyLexicalRanking(optimized, options.query, minRelevanceScore)
     : { chunks: optimized, avgRelevanceScore: null, lowRelevanceChunks: 0, rerankedChunks: 0 };
@@ -581,11 +699,12 @@ export function optimizeContextChunks(
     referenceTime: options.referenceTime,
   });
   const conflict = applyConflictDetection(freshness.chunks, conflictMode === "heuristic");
+  const outputTokens = conflict.chunks.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
   const savedTokens = Math.max(0, inputTokens - outputTokens);
   const reductionPct = inputTokens === 0 ? 0 : Number(((savedTokens / inputTokens) * 100).toFixed(2));
   const nearDuplicateChunks = dropped.filter((chunk) => chunk.reason === "near_duplicate").length;
 
-  return {
+  const result: ContextOptimizationResult = {
     optimized: conflict.chunks,
     dropped,
     conflicts: conflict.conflicts,
@@ -609,6 +728,46 @@ export function optimizeContextChunks(
       staleChunks: freshness.staleChunks,
       conflictChunks: conflict.conflictChunks,
       conflictGroups: conflict.conflictGroups,
+      compressedChunks: 0,
+      compressionSavedTokens: 0,
+      compressionRatePct: 0,
+    },
+  };
+
+  return compressionMode === "extractive"
+    ? compressContextOptimizationResult(result, {
+      query: options.query,
+      maxSentencesPerChunk,
+    })
+    : result;
+}
+
+export function compressContextOptimizationResult(
+  result: ContextOptimizationResult,
+  options: { query?: string; maxSentencesPerChunk?: number } = {},
+): ContextOptimizationResult {
+  const maxSentences = Math.max(1, Math.min(8, Math.floor(options.maxSentencesPerChunk ?? 3)));
+  const compression = applyExtractiveCompression(result.optimized, {
+    enabled: true,
+    query: options.query,
+    maxSentences,
+  });
+  const outputTokens = compression.chunks.reduce((sum, chunk) => sum + chunk.outputTokens, 0);
+  const savedTokens = Math.max(0, result.metrics.inputTokens - outputTokens);
+
+  return {
+    ...result,
+    optimized: compression.chunks,
+    metrics: {
+      ...result.metrics,
+      outputTokens,
+      savedTokens,
+      reductionPct: result.metrics.inputTokens === 0
+        ? 0
+        : Number(((savedTokens / result.metrics.inputTokens) * 100).toFixed(2)),
+      compressedChunks: compression.compressedChunks,
+      compressionSavedTokens: compression.compressionSavedTokens,
+      compressionRatePct: compression.compressionRatePct,
     },
   };
 }
