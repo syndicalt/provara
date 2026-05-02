@@ -116,7 +116,9 @@ POST /v1/context/collections/{id}/documents
 POST /v1/context/collections/{id}/distill
 GET /v1/context/collections/{id}/canonical-blocks
 POST /v1/context/canonical-blocks/{id}/policy-check
+POST /v1/context/canonical-blocks/bulk-policy-check
 PATCH /v1/context/canonical-blocks/{id}/review
+PATCH /v1/context/canonical-blocks/bulk-review
 GET /v1/context/canonical-review-events
 GET /v1/context/collections/{id}/export
 ```
@@ -126,6 +128,8 @@ Collections are tenant-scoped containers for reusable context. The document inge
 Distillation converts stored blocks into canonical blocks through local normalization and hash-based coalescing. Duplicate stored blocks collapse into a single canonical block with multiple `sourceBlockIds` and `sourceDocumentIds`. Canonical blocks start in `draft`, can be marked `approved` or `rejected`, and the export endpoint returns only approved blocks for downstream retrieval/vector workflows.
 
 Before a canonical block can be approved, `POST /v1/context/canonical-blocks/{id}/policy-check` runs active Guardrails rules against the block as `retrieved_context`. The result persists `policyStatus`, `policyCheckedAt`, and per-rule evidence. `block` and retrieved-context `quarantine` decisions set `policyStatus: "failed"` and approval returns `409 policy_error`; `draft` and `rejected` transitions remain available without a passing check.
+
+Bulk review endpoints accept up to 100 `blockIds` and return per-block results. `POST /v1/context/canonical-blocks/bulk-policy-check` loads active Guardrails rules once, checks each selected block, and records pass/fail evidence independently. `PATCH /v1/context/canonical-blocks/bulk-review` updates selected blocks that pass validation and returns item-level `policy_error` or `not_found` failures without aborting the whole batch.
 
 Review updates accept an optional `note`, persist `reviewedAt`, and attach `reviewedByUserId` when the caller is a dashboard session user. Each status change also writes a tenant-scoped review event with from-status, to-status, note, actor, canonical block ID, collection ID, and timestamp.
 
@@ -168,7 +172,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, status, and update time. Creation, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section lists persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. Creation, ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
 
 The Recent Events table shows:
 
@@ -211,4 +215,4 @@ The next behavior layer is pre-approval policy checks:
 
 - PII and prompt-injection checks before approval.
 - Block approval when required policy checks fail.
-- Surface policy evidence in the review queue.
+- Add richer governance alerts for policy failures and stale review queues.

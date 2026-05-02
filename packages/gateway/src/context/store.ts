@@ -19,6 +19,7 @@ const MAX_SOURCE_CHARS = 120;
 const MAX_SOURCE_URI_CHARS = 2_000;
 const MAX_METADATA_CHARS = 20_000;
 const MAX_REVIEW_NOTE_CHARS = 2_000;
+const MAX_BULK_CANONICAL_BLOCK_IDS = 100;
 const MAX_INGEST_TEXT_CHARS = 500_000;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
@@ -362,6 +363,53 @@ export function validateReviewStatusBody(value: unknown): ValidationResult<{ rev
   const note = trimOptional(body.note, "note", MAX_REVIEW_NOTE_CHARS);
   if (note.error) return { error: note.error };
   return { value: { reviewStatus, note: note.value } };
+}
+
+function validateCanonicalBlockIds(value: unknown): ValidationResult<{ blockIds: string[] }> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { error: "body must be an object" };
+  }
+  const body = value as Record<string, unknown>;
+  if (!Array.isArray(body.blockIds)) return { error: "blockIds must be an array" };
+  if (body.blockIds.length === 0) return { error: "blockIds must contain at least one id" };
+  if (body.blockIds.length > MAX_BULK_CANONICAL_BLOCK_IDS) {
+    return { error: `blockIds must contain at most ${MAX_BULK_CANONICAL_BLOCK_IDS} ids` };
+  }
+  const blockIds: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, id] of body.blockIds.entries()) {
+    if (typeof id !== "string" || id.trim().length === 0) {
+      return { error: `blockIds[${index}] must be a non-empty string` };
+    }
+    const trimmed = id.trim();
+    if (!seen.has(trimmed)) {
+      seen.add(trimmed);
+      blockIds.push(trimmed);
+    }
+  }
+  return { value: { blockIds } };
+}
+
+export function validateBulkPolicyCheckBody(value: unknown): ValidationResult<{ blockIds: string[] }> {
+  return validateCanonicalBlockIds(value);
+}
+
+export function validateBulkReviewBody(value: unknown): ValidationResult<{
+  blockIds: string[];
+  reviewStatus: ContextCanonicalBlock["reviewStatus"];
+  note?: string;
+}> {
+  const ids = validateCanonicalBlockIds(value);
+  if (!ids.value) return { error: ids.error };
+  const review = validateReviewStatusBody(value);
+  if (!review.value) return { error: review.error };
+  return {
+    value: {
+      blockIds: ids.value.blockIds,
+      reviewStatus: review.value.reviewStatus,
+      note: review.value.note,
+    },
+  };
 }
 
 export function chunkContextText(text: string): string[] {

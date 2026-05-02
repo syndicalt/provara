@@ -33,9 +33,10 @@ Implemented as of `0.2.0`:
 - Canonical context blocks with deterministic distillation, source coalescing, review status, and approved-only export.
 - Canonical review audit events with reviewer notes, actor attribution, and dashboard draft queue visibility.
 - Canonical pre-approval policy checks with active Guardrails scans, persisted evidence, approval blocking, and dashboard status visibility.
+- Bulk canonical policy-check and review actions with dashboard row selection and per-block failures.
 
 Next planned layer:
-- Bulk review operations and richer governance alerts.
+- Richer governance alerts.
 
 ## V1: Runtime Context Optimizer
 
@@ -112,6 +113,7 @@ Capabilities:
 - Conflict detection.
 - PII and prompt-injection policy checks. Shipped as canonical pre-approval checks using active Guardrails rules.
 - Approved-only export controls.
+- Bulk review operations. Shipped as selected-row policy-check, approve, and reject actions with per-block failures.
 
 ## V2.2: Connectors
 
