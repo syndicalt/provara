@@ -33,6 +33,7 @@ All notable Provara changes are tracked here.
   - Context governance alerts for policy-check failures, stale canonical review queues, and approved-export delta thresholds in the existing Alerts workflow.
   - Connector ingestion foundation with tenant-scoped manual sources, idempotent source sync into managed documents and blocks, failed-sync status, and dashboard source visibility.
   - GitHub repository connector v1 with bounded tree/blob ingestion, path/extension/file-size filters, SHA-based idempotency, repo/path/SHA provenance, and dashboard source details.
+  - Connector credential auth foundation with encrypted tenant-scoped GitHub tokens, credential-bound source sync, no secret echo in API responses, and dashboard auth status.
   - Context Optimizer dashboard configuration controls for optimizer modes, thresholds, risk scanning, local draft persistence, and copyable API payloads.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
@@ -47,7 +48,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, context governance alerts, connector ingestion foundation, and GitHub repository connector v1 as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, context governance alerts, connector ingestion foundation, GitHub repository connector v1, and connector credential auth foundation as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
@@ -62,7 +63,7 @@ All notable Provara changes are tracked here.
 ### Upgrade Notes
 
 - Run database migrations through `0044_firewall_settings`.
-- For Context Optimizer visibility, risk reporting, quality scoring, retrieval analytics, semantic near-duplicate metrics, relevance metrics, freshness metrics, conflict metrics, compression metrics, managed collections, canonical blocks, review audit events, canonical policy checks, and connector ingestion foundation, run database migrations through `0058_context_sources`.
+- For Context Optimizer visibility, risk reporting, quality scoring, retrieval analytics, semantic near-duplicate metrics, relevance metrics, freshness metrics, conflict metrics, compression metrics, managed collections, canonical blocks, review audit events, canonical policy checks, connector ingestion foundation, and connector credentials, run database migrations through `0059_context_connector_credentials`.
 - New tables:
   - `firewall_events`
   - `firewall_settings`
@@ -72,6 +73,7 @@ All notable Provara changes are tracked here.
   - `context_collections`
   - `context_documents`
   - `context_sources`
+  - `context_connector_credentials`
   - `context_blocks`
   - `context_canonical_blocks`
   - `context_canonical_review_events`

@@ -37,6 +37,7 @@ Implemented as of `0.2.0`:
 - Context governance alerts for policy-check failures, stale draft queues, and approved-export delta thresholds.
 - Connector ingestion foundation with tenant-scoped manual sources, idempotent sync, failed-sync status, and dashboard source visibility.
 - GitHub repository connector v1 with bounded tree/blob ingestion, SHA-based idempotency, and dashboard source details.
+- Connector credential auth foundation with encrypted GitHub token storage and source binding.
 
 Next planned layer:
 - Additional external connector implementations.
@@ -133,6 +134,8 @@ Foundation shipped:
 - Bounded GitHub file selection by path, extension, file size, and file count.
 - GitHub blob SHA idempotency for incremental sync.
 - GitHub repo/path/SHA provenance on stored documents and blocks.
+- Encrypted tenant-scoped connector credentials for GitHub tokens.
+- Source-level credential binding without exposing secret values in API or dashboard responses.
 
 Candidate connectors:
 - Confluence.

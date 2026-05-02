@@ -414,6 +414,13 @@
       "when": 1777679100000,
       "tag": "0058_context_sources",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1777681200000,
+      "tag": "0059_context_connector_credentials",
+      "breakpoints": true
     }
   ]
 }

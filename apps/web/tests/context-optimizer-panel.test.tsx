@@ -238,7 +238,7 @@ describe("ContextOptimizerPanel", () => {
               lastDocumentId: "doc-2",
               documentCount: 2,
               lastError: null,
-              metadata: { github: { owner: "acme", repo: "docs", branch: "main", path: "docs" } },
+              metadata: { github: { owner: "acme", repo: "docs", branch: "main", path: "docs", credentialId: "cred-1" } },
               updatedAt: "2026-05-01T22:04:00.000Z",
             },
           ],
@@ -371,6 +371,7 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("file://refunds.md")).toBeInTheDocument();
     expect(screen.getByText("Docs repository")).toBeInTheDocument();
     expect(screen.getByText("acme/docs@main/docs")).toBeInTheDocument();
+    expect(screen.getByText("Configured")).toBeInTheDocument();
     expect(screen.getByText("Canonical")).toBeInTheDocument();
     expect(screen.getByText("Approved")).toBeInTheDocument();
     expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();

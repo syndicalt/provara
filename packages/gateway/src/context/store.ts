@@ -5,12 +5,14 @@ import {
   contextCanonicalBlocks,
   contextCanonicalReviewEvents,
   contextCollections,
+  contextConnectorCredentials,
   contextDocuments,
   contextSources,
 } from "@provara/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { tenantFilter, tenantScoped } from "../auth/tenant.js";
+import { decrypt, encrypt, hasMasterKey } from "../crypto/index.js";
 import { estimateContextTokens } from "./optimizer.js";
 
 const MAX_COLLECTION_NAME_CHARS = 120;
@@ -29,6 +31,8 @@ const MAX_GITHUB_PATH_CHARS = 1_000;
 const MAX_GITHUB_EXTENSION_CHARS = 24;
 const MAX_GITHUB_FILE_BYTES = 250_000;
 const MAX_GITHUB_FILES = 100;
+const MAX_CREDENTIAL_NAME_CHARS = 120;
+const MAX_CREDENTIAL_VALUE_CHARS = 20_000;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
 const BLOCK_INSERT_BATCH_SIZE = 50;
@@ -43,6 +47,18 @@ export interface GitHubSourceConfig {
   extensions: string[];
   maxFileBytes: number;
   maxFiles: number;
+  credentialId?: string;
+}
+
+export interface ContextConnectorCredential {
+  id: string;
+  tenantId: string | null;
+  name: string;
+  type: "github_token";
+  hasSecret: boolean;
+  lastUsedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ContextCollection {
@@ -167,6 +183,12 @@ export interface CreateContextSourceInput {
   github?: GitHubSourceConfig;
 }
 
+export interface CreateContextConnectorCredentialInput {
+  name: string;
+  type: "github_token";
+  value: string;
+}
+
 export interface ValidationResult<T> {
   value?: T;
   error?: string;
@@ -233,9 +255,23 @@ function parseGithubConfig(metadata: Record<string, unknown>): GitHubSourceConfi
   const maxFiles = typeof raw.maxFiles === "number" && Number.isFinite(raw.maxFiles)
     ? Math.min(Math.max(Math.trunc(raw.maxFiles), 1), MAX_GITHUB_FILES)
     : MAX_GITHUB_FILES;
+  const credentialId = typeof raw.credentialId === "string" && raw.credentialId.trim() ? raw.credentialId.trim() : undefined;
 
   if (!owner || !repo || !branch) throw new Error("github owner, repo, and branch are required");
-  return { owner, repo, branch, path, extensions, maxFileBytes, maxFiles };
+  return { owner, repo, branch, path, extensions, maxFileBytes, maxFiles, credentialId };
+}
+
+function credentialFromRow(row: typeof contextConnectorCredentials.$inferSelect): ContextConnectorCredential {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    name: row.name,
+    type: row.type,
+    hasSecret: true,
+    lastUsedAt: row.lastUsedAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 function collectionFromRow(row: typeof contextCollections.$inferSelect): ContextCollection {
@@ -519,6 +555,8 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
     if (branch.error) return { error: branch.error };
     const path = trimOptional(raw.path, "github.path", MAX_GITHUB_PATH_CHARS);
     if (path.error) return { error: path.error };
+    const credentialId = trimOptional(raw.credentialId, "github.credentialId", MAX_SOURCE_URI_CHARS);
+    if (credentialId.error) return { error: credentialId.error };
 
     let extensions = [".md", ".mdx", ".txt", ".rst", ".adoc"];
     if (raw.extensions !== undefined) {
@@ -555,6 +593,7 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
       extensions,
       maxFileBytes: Math.trunc(maxFileBytes),
       maxFiles: Math.trunc(maxFiles),
+      credentialId: credentialId.value,
     };
   }
 
@@ -569,6 +608,23 @@ export function validateCreateContextSourceBody(value: unknown): ValidationResul
       github,
     },
   };
+}
+
+export function validateCreateContextConnectorCredentialBody(value: unknown): ValidationResult<CreateContextConnectorCredentialInput> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { error: "body must be an object" };
+  }
+  const body = value as Record<string, unknown>;
+  const name = trimOptional(body.name, "name", MAX_CREDENTIAL_NAME_CHARS);
+  if (name.error) return { error: name.error };
+  if (!name.value) return { error: "name is required" };
+  const type = body.type === undefined ? "github_token" : body.type;
+  if (type !== "github_token") return { error: "type must be github_token" };
+  if (typeof body.value !== "string") return { error: "value is required" };
+  const credentialValue = body.value.trim();
+  if (!credentialValue) return { error: "value cannot be empty or whitespace-only" };
+  if (credentialValue.length > MAX_CREDENTIAL_VALUE_CHARS) return { error: `value must be at most ${MAX_CREDENTIAL_VALUE_CHARS} characters` };
+  return { value: { name: name.value, type, value: credentialValue } };
 }
 
 export function validateReviewStatusBody(value: unknown): ValidationResult<{ reviewStatus: ContextCanonicalBlock["reviewStatus"]; note?: string }> {
@@ -693,6 +749,56 @@ export async function listContextCollections(db: Db, tenantId: string | null): P
   return rows.map(collectionFromRow);
 }
 
+export async function createContextConnectorCredential(
+  db: Db,
+  tenantId: string | null,
+  input: CreateContextConnectorCredentialInput,
+): Promise<ContextConnectorCredential> {
+  if (!hasMasterKey()) throw new Error("PROVARA_MASTER_KEY not set");
+  const now = new Date();
+  const encrypted = encrypt(input.value);
+  const existingWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.name, input.name));
+  const existing = await db.select().from(contextConnectorCredentials).where(existingWhere).get();
+  if (existing) {
+    await db.update(contextConnectorCredentials).set({
+      type: input.type,
+      encryptedValue: encrypted.encrypted,
+      iv: encrypted.iv,
+      authTag: encrypted.authTag,
+      updatedAt: now,
+    }).where(eq(contextConnectorCredentials.id, existing.id)).run();
+    const row = await db.select().from(contextConnectorCredentials).where(eq(contextConnectorCredentials.id, existing.id)).get();
+    if (!row) throw new Error("Failed to update connector credential");
+    return credentialFromRow(row);
+  }
+
+  const id = nanoid();
+  await db.insert(contextConnectorCredentials).values({
+    id,
+    tenantId,
+    name: input.name,
+    type: input.type,
+    encryptedValue: encrypted.encrypted,
+    iv: encrypted.iv,
+    authTag: encrypted.authTag,
+    createdAt: now,
+    updatedAt: now,
+  }).run();
+  const row = await db.select().from(contextConnectorCredentials).where(eq(contextConnectorCredentials.id, id)).get();
+  if (!row) throw new Error("Failed to create connector credential");
+  return credentialFromRow(row);
+}
+
+export async function listContextConnectorCredentials(db: Db, tenantId: string | null): Promise<ContextConnectorCredential[]> {
+  const rows = await db
+    .select()
+    .from(contextConnectorCredentials)
+    .where(tenantFilter(contextConnectorCredentials.tenantId, tenantId))
+    .orderBy(desc(contextConnectorCredentials.updatedAt), asc(contextConnectorCredentials.id))
+    .all();
+  return rows.map(credentialFromRow);
+}
+
 export async function createContextSource(
   db: Db,
   tenantId: string | null,
@@ -703,6 +809,11 @@ export async function createContextSource(
   const collection = await db.select().from(contextCollections).where(collectionWhere).get();
   if (!collection) throw new Error("collection not found");
   if (collection.status !== "active") throw new Error("collection is archived");
+  if (input.github?.credentialId) {
+    const credentialWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.id, input.github.credentialId));
+    const credential = await db.select({ id: contextConnectorCredentials.id }).from(contextConnectorCredentials).where(credentialWhere).get();
+    if (!credential) throw new Error("connector credential not found");
+  }
 
   const now = new Date();
   const id = nanoid();
@@ -923,6 +1034,35 @@ function getSyncedGithubFiles(metadata: Record<string, unknown>): Record<string,
   return result;
 }
 
+async function resolveGithubToken(
+  db: Db,
+  tenantId: string | null,
+  credentialId: string | undefined,
+  fallbackToken: string | undefined,
+): Promise<string | undefined> {
+  if (!credentialId) return fallbackToken;
+  if (!hasMasterKey()) throw new Error("PROVARA_MASTER_KEY not set");
+  const credentialWhere = tenantScoped(contextConnectorCredentials.tenantId, tenantId, eq(contextConnectorCredentials.id, credentialId));
+  const credential = await db.select().from(contextConnectorCredentials).where(credentialWhere).get();
+  if (!credential) throw new Error("connector credential not found");
+  if (credential.type !== "github_token") throw new Error("connector credential must be github_token");
+  try {
+    const token = decrypt({
+      encrypted: credential.encryptedValue,
+      iv: credential.iv,
+      authTag: credential.authTag,
+    }).replace(/[^\x20-\x7E\t]/g, "").trim();
+    if (!token) throw new Error("connector credential is empty");
+    await db.update(contextConnectorCredentials).set({
+      lastUsedAt: new Date(),
+    }).where(eq(contextConnectorCredentials.id, credential.id)).run();
+    return token;
+  } catch (err) {
+    if (err instanceof Error && err.message === "connector credential is empty") throw err;
+    throw new Error("connector credential could not be decrypted");
+  }
+}
+
 async function syncGithubContextSource(
   db: Db,
   tenantId: string | null,
@@ -934,8 +1074,9 @@ async function syncGithubContextSource(
   if (!fetchFn) throw new Error("fetch is unavailable");
   const metadata = parseMetadata(sourceRow.metadata);
   const config = parseGithubConfig(metadata);
+  const githubToken = await resolveGithubToken(db, tenantId, config.credentialId, options.githubToken);
   const syncedFiles = getSyncedGithubFiles(metadata);
-  const candidates = await fetchGithubCandidates(fetchFn, config, options.githubToken);
+  const candidates = await fetchGithubCandidates(fetchFn, config, githubToken);
   const changedCandidates = candidates.filter((candidate) => syncedFiles[candidate.path] !== candidate.sha);
   const now = new Date();
 
@@ -969,7 +1110,7 @@ async function syncGithubContextSource(
   const nextSyncedFiles = { ...syncedFiles };
 
   for (const candidate of changedCandidates) {
-    const file = await fetchGithubFile(fetchFn, config, candidate, options.githubToken);
+    const file = await fetchGithubFile(fetchFn, config, candidate, githubToken);
     const result = await ingestContextDocument(db, tenantId, sourceRow.collectionId, {
       title: file.path,
       text: file.content,

@@ -622,6 +622,56 @@ paths:
         "404":
           description: Collection not found.
 
+  /v1/context/credentials:
+    get:
+      tags: [Context Optimizer]
+      summary: List connector credentials
+      description: Lists tenant-scoped connector credentials without returning secret values.
+      operationId: listContextConnectorCredentials
+      responses:
+        "200":
+          description: Connector credentials
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credentials]
+                properties:
+                  credentials:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContextConnectorCredential"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+    post:
+      tags: [Context Optimizer]
+      summary: Create or update a connector credential
+      description: Stores the credential encrypted and never returns the raw value.
+      operationId: createContextConnectorCredential
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContextConnectorCredentialRequest"
+      responses:
+        "201":
+          description: Created or updated connector credential
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [credential]
+                properties:
+                  credential:
+                    $ref: "#/components/schemas/ContextConnectorCredential"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "503":
+          description: Encryption master key is not configured.
+
   /v1/context/sources/{id}/sync:
     post:
       tags: [Context Optimizer]
@@ -3042,6 +3092,50 @@ components:
           type: object
           additionalProperties: true
 
+    CreateContextConnectorCredentialRequest:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        type:
+          type: string
+          enum: [github_token]
+        value:
+          type: string
+          minLength: 1
+          maxLength: 20000
+          description: Secret token value. Only accepted on write and never returned.
+
+    ContextConnectorCredential:
+      type: object
+      required: [id, tenantId, name, type, hasSecret, lastUsedAt, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        tenantId:
+          type: string
+          nullable: true
+        name:
+          type: string
+        type:
+          type: string
+          enum: [github_token]
+        hasSecret:
+          type: boolean
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
     GitHubContextSourceConfig:
       type: object
       required: [owner, repo]
@@ -3062,6 +3156,9 @@ components:
           type: string
           description: Optional repository path prefix to ingest.
           maxLength: 1000
+        credentialId:
+          type: string
+          description: Optional tenant-scoped connector credential id. When set, sync uses that encrypted GitHub token.
         extensions:
           type: array
           description: File extensions to ingest. Defaults to markdown/text documentation extensions.
