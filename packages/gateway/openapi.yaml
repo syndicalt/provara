@@ -708,6 +708,64 @@ paths:
         "404":
           description: Canonical block not found.
 
+  /v1/context/canonical-blocks/bulk-policy-check:
+    post:
+      tags: [Context Optimizer]
+      summary: Run pre-approval policy checks for multiple canonical blocks
+      operationId: bulkCheckContextCanonicalBlockPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkCanonicalBlockIdsRequest"
+      responses:
+        "200":
+          description: Per-block policy check results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BulkCanonicalPolicyCheckResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
+  /v1/context/canonical-blocks/bulk-review:
+    patch:
+      tags: [Context Optimizer]
+      summary: Update review status for multiple canonical blocks
+      operationId: bulkReviewContextCanonicalBlocks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkReviewContextCanonicalBlockRequest"
+      responses:
+        "200":
+          description: Per-block review results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [results]
+                properties:
+                  results:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BulkCanonicalReviewResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+
   /v1/context/canonical-review-events:
     get:
       tags: [Context Optimizer]
@@ -2990,6 +3048,71 @@ components:
         note:
           type: string
           maxLength: 2000
+
+    BulkCanonicalBlockIdsRequest:
+      type: object
+      required: [blockIds]
+      properties:
+        blockIds:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: string
+
+    BulkReviewContextCanonicalBlockRequest:
+      allOf:
+        - $ref: "#/components/schemas/BulkCanonicalBlockIdsRequest"
+        - $ref: "#/components/schemas/ReviewContextCanonicalBlockRequest"
+
+    BulkCanonicalPolicyCheckResult:
+      type: object
+      required: [id, ok]
+      properties:
+        id:
+          type: string
+        ok:
+          type: boolean
+        canonicalBlock:
+          $ref: "#/components/schemas/ContextCanonicalBlock"
+        policy:
+          type: object
+          required: [status, decision, violations]
+          properties:
+            status:
+              type: string
+              enum: [unchecked, passed, failed]
+            decision:
+              type: string
+              enum: [allow, flag, redact, block, quarantine]
+            violations:
+              type: array
+              items:
+                $ref: "#/components/schemas/ContextCanonicalPolicyDetail"
+        error:
+          $ref: "#/components/schemas/BulkCanonicalBlockError"
+
+    BulkCanonicalReviewResult:
+      type: object
+      required: [id, ok]
+      properties:
+        id:
+          type: string
+        ok:
+          type: boolean
+        canonicalBlock:
+          $ref: "#/components/schemas/ContextCanonicalBlock"
+        error:
+          $ref: "#/components/schemas/BulkCanonicalBlockError"
+
+    BulkCanonicalBlockError:
+      type: object
+      required: [message, type]
+      properties:
+        message:
+          type: string
+        type:
+          type: string
 
     ContextCanonicalBlock:
       type: object

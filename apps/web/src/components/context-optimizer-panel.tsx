@@ -203,6 +203,16 @@ export interface ContextCanonicalBlock {
   updatedAt: string;
 }
 
+interface BulkCanonicalResult {
+  id: string;
+  ok: boolean;
+  canonicalBlock?: ContextCanonicalBlock;
+  error?: {
+    message: string;
+    type: string;
+  };
+}
+
 interface GateState {
   message: string;
   upgradeUrl?: string;
@@ -576,6 +586,9 @@ async function readJson<T>(res: Response): Promise<T | null> {
 }
 
 export function ContextOptimizerPanel() {
+  const [selectedCanonicalIds, setSelectedCanonicalIds] = useState<string[]>([]);
+  const [bulkAction, setBulkAction] = useState<"policy" | "approve" | "reject" | null>(null);
+  const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>({
     summary: null,
     events: [],
@@ -720,6 +733,95 @@ export function ContextOptimizerPanel() {
   const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
   const collectionRows = useMemo(() => state.collections, [state.collections]);
   const canonicalRows = useMemo(() => state.canonicalBlocks, [state.canonicalBlocks]);
+  const visibleCanonicalRows = useMemo(() => canonicalRows.slice(0, 10), [canonicalRows]);
+  const selectedCanonicalSet = useMemo(() => new Set(selectedCanonicalIds), [selectedCanonicalIds]);
+  const selectedVisibleCount = visibleCanonicalRows.filter((block) => selectedCanonicalSet.has(block.id)).length;
+  const allVisibleSelected = visibleCanonicalRows.length > 0 && selectedVisibleCount === visibleCanonicalRows.length;
+  const bulkDisabled = selectedCanonicalIds.length === 0 || bulkAction !== null;
+
+  function toggleCanonicalSelection(id: string, checked: boolean) {
+    setSelectedCanonicalIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return Array.from(next);
+    });
+  }
+
+  function toggleVisibleCanonicalSelection(checked: boolean) {
+    setSelectedCanonicalIds((prev) => {
+      const next = new Set(prev);
+      for (const block of visibleCanonicalRows) {
+        if (checked) {
+          next.add(block.id);
+        } else {
+          next.delete(block.id);
+        }
+      }
+      return Array.from(next);
+    });
+  }
+
+  async function runBulkPolicyCheck() {
+    if (selectedCanonicalIds.length === 0) return;
+    setBulkAction("policy");
+    setBulkMessage(null);
+    try {
+      const res = await gatewayFetchRaw("/v1/context/canonical-blocks/bulk-policy-check", {
+        method: "POST",
+        body: JSON.stringify({ blockIds: selectedCanonicalIds }),
+      });
+      if (!res.ok) throw new Error("Failed to run bulk policy checks");
+      const body = await res.json() as { results: BulkCanonicalResult[] };
+      const updates = new Map(body.results.filter((result) => result.ok && result.canonicalBlock).map((result) => [result.id, result.canonicalBlock as ContextCanonicalBlock]));
+      setState((prev) => ({
+        ...prev,
+        canonicalBlocks: prev.canonicalBlocks.map((block) => updates.get(block.id) ?? block),
+      }));
+      const failed = body.results.filter((result) => !result.ok).length;
+      setBulkMessage(`Policy checks complete: ${body.results.length - failed} updated, ${failed} failed.`);
+    } catch (err) {
+      setBulkMessage(err instanceof Error ? err.message : "Failed to run bulk policy checks");
+    } finally {
+      setBulkAction(null);
+    }
+  }
+
+  async function runBulkReview(reviewStatus: "approved" | "rejected") {
+    if (selectedCanonicalIds.length === 0) return;
+    setBulkAction(reviewStatus === "approved" ? "approve" : "reject");
+    setBulkMessage(null);
+    try {
+      const res = await gatewayFetchRaw("/v1/context/canonical-blocks/bulk-review", {
+        method: "PATCH",
+        body: JSON.stringify({
+          blockIds: selectedCanonicalIds,
+          reviewStatus,
+          note: reviewStatus === "approved" ? "Bulk approved." : "Bulk rejected.",
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to run bulk review");
+      const body = await res.json() as { results: BulkCanonicalResult[] };
+      const reviewedIds = new Set(body.results.filter((result) => result.ok).map((result) => result.id));
+      setState((prev) => ({
+        ...prev,
+        collections: prev.collections.map((collection, index) => index === 0 && reviewStatus === "approved"
+          ? { ...collection, approvedBlockCount: collection.approvedBlockCount + reviewedIds.size }
+          : collection),
+        canonicalBlocks: prev.canonicalBlocks.filter((block) => !reviewedIds.has(block.id)),
+      }));
+      setSelectedCanonicalIds((prev) => prev.filter((id) => !reviewedIds.has(id)));
+      const failed = body.results.filter((result) => !result.ok).length;
+      setBulkMessage(`Bulk ${reviewStatus}: ${reviewedIds.size} updated, ${failed} failed.`);
+    } catch (err) {
+      setBulkMessage(err instanceof Error ? err.message : "Failed to run bulk review");
+    } finally {
+      setBulkAction(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -855,10 +957,46 @@ export function ContextOptimizerPanel() {
       </section>
 
       <section>
-        <div className="mb-3">
-          <h2 className="text-lg font-semibold text-zinc-100">Canonical Review Queue</h2>
-          <p className="mt-1 text-sm text-zinc-500">Draft canonical blocks awaiting approval.</p>
+        <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-zinc-100">Canonical Review Queue</h2>
+            <p className="mt-1 text-sm text-zinc-500">Draft canonical blocks awaiting approval.</p>
+          </div>
+          {canonicalRows.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-zinc-500">{selectedCanonicalIds.length} selected</span>
+              <button
+                type="button"
+                className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={bulkDisabled}
+                onClick={() => void runBulkPolicyCheck()}
+              >
+                {bulkAction === "policy" ? "Checking..." : "Run Policy Check"}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-xs font-medium text-emerald-100 hover:bg-emerald-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={bulkDisabled}
+                onClick={() => void runBulkReview("approved")}
+              >
+                {bulkAction === "approve" ? "Approving..." : "Approve"}
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-red-900 bg-red-950/30 px-3 py-2 text-xs font-medium text-red-100 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={bulkDisabled}
+                onClick={() => void runBulkReview("rejected")}
+              >
+                {bulkAction === "reject" ? "Rejecting..." : "Reject"}
+              </button>
+            </div>
+          )}
         </div>
+        {bulkMessage && (
+          <div className="mb-3 rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-300">
+            {bulkMessage}
+          </div>
+        )}
 
         {state.loading ? (
           <LoadingRows />
@@ -872,6 +1010,15 @@ export function ContextOptimizerPanel() {
               <table className="min-w-full divide-y divide-zinc-800 text-sm">
                 <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
                   <tr>
+                    <th className="px-4 py-3 text-left font-medium">
+                      <input
+                        aria-label="Select visible canonical blocks"
+                        type="checkbox"
+                        className="h-4 w-4 rounded border-zinc-700 bg-zinc-950"
+                        checked={allVisibleSelected}
+                        onChange={(event) => toggleVisibleCanonicalSelection(event.target.checked)}
+                      />
+                    </th>
                     <th className="px-4 py-3 text-left font-medium">Content</th>
                     <th className="px-4 py-3 text-right font-medium">Sources</th>
                     <th className="px-4 py-3 text-right font-medium">Tokens</th>
@@ -882,8 +1029,17 @@ export function ContextOptimizerPanel() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800">
-                  {canonicalRows.slice(0, 10).map((block) => (
+                  {visibleCanonicalRows.map((block) => (
                     <tr key={block.id}>
+                      <td className="px-4 py-3 align-top">
+                        <input
+                          aria-label={`Select canonical block ${block.id}`}
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-zinc-700 bg-zinc-950"
+                          checked={selectedCanonicalSet.has(block.id)}
+                          onChange={(event) => toggleCanonicalSelection(block.id, event.target.checked)}
+                        />
+                      </td>
                       <td className="max-w-3xl px-4 py-3 text-zinc-300">
                         <div className="line-clamp-2">{block.content}</div>
                         {block.reviewNote && <div className="mt-1 text-xs text-zinc-500">{block.reviewNote}</div>}

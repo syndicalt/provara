@@ -39,6 +39,8 @@ import {
   listContextCollections,
   recordContextCanonicalPolicyCheck,
   updateContextCanonicalBlockReview,
+  validateBulkPolicyCheckBody,
+  validateBulkReviewBody,
   validateCreateCollectionBody,
   validateIngestDocumentBody,
   validateReviewStatusBody,
@@ -768,6 +770,52 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     }
   });
 
+  app.post("/canonical-blocks/bulk-policy-check", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateBulkPolicyCheckBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid bulk policy-check body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    await ensureBuiltInRules(db, tenantId);
+    const rules = await loadRules(db, tenantId);
+    const results = [];
+    for (const blockId of parsed.value.blockIds) {
+      try {
+        const block = await getContextCanonicalBlock(db, tenantId, blockId);
+        const scan = scanContent(block.content, rules, "retrieved_context");
+        const canonicalBlock = await recordContextCanonicalPolicyCheck(db, tenantId, blockId, scan);
+        results.push({
+          id: blockId,
+          ok: true,
+          canonicalBlock,
+          policy: {
+            status: canonicalBlock.policyStatus,
+            decision: scan.decision,
+            violations: scan.violations,
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to check canonical block policy";
+        const notFound = message.includes("not found");
+        results.push({
+          id: blockId,
+          ok: false,
+          error: {
+            message,
+            type: notFound ? "not_found" : "store_error",
+          },
+        });
+      }
+    }
+
+    return c.json({ results });
+  });
+
   app.patch("/canonical-blocks/:id/review", async (c) => {
     const tenantId = getTenantId(c.req.raw);
     const blockId = c.req.param("id");
@@ -795,6 +843,43 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
         notFound ? 404 : policyError ? 409 : 500,
       );
     }
+  });
+
+  app.patch("/canonical-blocks/bulk-review", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const body = await c.req.json<unknown>().catch(() => null);
+    const parsed = validateBulkReviewBody(body);
+    if (!parsed.value) {
+      return c.json(
+        { error: { message: parsed.error || "invalid bulk review body", type: "validation_error" } },
+        400,
+      );
+    }
+
+    const results = [];
+    for (const blockId of parsed.value.blockIds) {
+      try {
+        const canonicalBlock = await updateContextCanonicalBlockReview(db, tenantId, blockId, parsed.value.reviewStatus, {
+          note: parsed.value.note,
+          actorUserId: getSessionUserId(c.req.raw),
+        });
+        results.push({ id: blockId, ok: true, canonicalBlock });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update canonical block";
+        const notFound = message.includes("not found");
+        const policyError = message.includes("policy check");
+        results.push({
+          id: blockId,
+          ok: false,
+          error: {
+            message,
+            type: notFound ? "not_found" : policyError ? "policy_error" : "store_error",
+          },
+        });
+      }
+    }
+
+    return c.json({ results });
   });
 
   app.get("/canonical-review-events", async (c) => {

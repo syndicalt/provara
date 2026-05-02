@@ -208,6 +208,43 @@ describe("ContextOptimizerPanel", () => {
           ],
         }));
       }
+      if (path === "/v1/context/canonical-blocks/bulk-policy-check") {
+        return Promise.resolve(jsonResponse({
+          results: [
+            {
+              id: "canonical-1",
+              ok: true,
+              canonicalBlock: {
+                id: "canonical-1",
+                collectionId: "collection-1",
+                content: "Refunds require a receipt within 30 days.",
+                tokenCount: 8,
+                sourceCount: 2,
+                reviewStatus: "draft",
+                reviewNote: null,
+                reviewedByUserId: null,
+                reviewedAt: null,
+                policyStatus: "passed",
+                policyCheckedAt: "2026-05-01T22:06:00.000Z",
+                policyDetails: [{ decision: "allow", ruleId: null, ruleName: null, action: null, matchedSnippet: null }],
+                updatedAt: "2026-05-01T22:06:00.000Z",
+              },
+              policy: { status: "passed", decision: "allow", violations: [] },
+            },
+          ],
+        }));
+      }
+      if (path === "/v1/context/canonical-blocks/bulk-review") {
+        return Promise.resolve(jsonResponse({
+          results: [
+            {
+              id: "canonical-1",
+              ok: true,
+              canonicalBlock: { id: "canonical-1", reviewStatus: "approved" },
+            },
+          ],
+        }));
+      }
       return Promise.resolve(jsonResponse({
         events: [
           {
@@ -298,6 +335,14 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Canonical Review Queue")).toBeInTheDocument();
     expect(screen.getByText("Refunds require a receipt within 30 days.")).toBeInTheDocument();
     expect(screen.getByText("Prompt injection firewall: ignore previous instructions")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Select canonical block canonical-1"));
+    fireEvent.click(screen.getByText("Run Policy Check"));
+    expect(await screen.findByText("Policy checks complete: 1 updated, 0 failed.")).toBeInTheDocument();
+    expect(screen.getByText("passed")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Approve"));
+    expect(await screen.findByText("Bulk approved: 1 updated, 0 failed.")).toBeInTheDocument();
+    expect(screen.getByText("No draft canonical blocks in the first managed collection.")).toBeInTheDocument();
   });
 
   it("updates and persists optimizer payload controls", async () => {
