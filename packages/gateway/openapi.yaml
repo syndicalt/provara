@@ -3075,7 +3075,7 @@ components:
           maxLength: 200
         type:
           type: string
-          enum: [manual, github_repository, file_upload, s3_bucket]
+          enum: [manual, github_repository, file_upload, s3_bucket, confluence_space]
         externalId:
           type: string
           maxLength: 2000
@@ -3092,6 +3092,8 @@ components:
           $ref: "#/components/schemas/FileUploadContextSourceConfig"
         s3:
           $ref: "#/components/schemas/S3ContextSourceConfig"
+        confluence:
+          $ref: "#/components/schemas/ConfluenceContextSourceConfig"
         metadata:
           type: object
           additionalProperties: true
@@ -3145,6 +3147,44 @@ components:
           maximum: 100
           default: 100
 
+    ConfluenceContextSourceConfig:
+      type: object
+      required: [baseUrl, spaceKey, credentialId]
+      properties:
+        baseUrl:
+          type: string
+          format: uri
+          description: HTTPS Confluence Cloud site URL, with or without the /wiki suffix.
+          maxLength: 300
+        spaceKey:
+          type: string
+          minLength: 1
+          maxLength: 120
+        credentialId:
+          type: string
+          description: Tenant-scoped confluence_api_token connector credential id.
+        labels:
+          type: array
+          description: Optional Confluence labels to include in the page search.
+          maxItems: 20
+          items:
+            type: string
+            maxLength: 80
+        titleContains:
+          type: string
+          description: Optional Confluence title search filter.
+          maxLength: 120
+        maxPageBytes:
+          type: integer
+          minimum: 1
+          maximum: 250000
+          default: 250000
+        maxPages:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 100
+
     CreateContextConnectorCredentialRequest:
       type: object
       required: [name, value]
@@ -3155,12 +3195,12 @@ components:
           maxLength: 120
         type:
           type: string
-          enum: [github_token, aws_access_key]
+          enum: [github_token, aws_access_key, confluence_api_token]
         value:
           type: string
           minLength: 1
           maxLength: 20000
-          description: Secret token value. For aws_access_key, pass a JSON string with accessKeyId, secretAccessKey, and optional sessionToken. Only accepted on write and never returned.
+          description: Secret token value. For aws_access_key, pass a JSON string with accessKeyId, secretAccessKey, and optional sessionToken. For confluence_api_token, pass a JSON string with email and apiToken. Only accepted on write and never returned.
 
     ContextConnectorCredential:
       type: object
@@ -3175,7 +3215,7 @@ components:
           type: string
         type:
           type: string
-          enum: [github_token, aws_access_key]
+          enum: [github_token, aws_access_key, confluence_api_token]
         hasSecret:
           type: boolean
         lastUsedAt:
@@ -3312,7 +3352,7 @@ components:
           type: string
         type:
           type: string
-          enum: [manual, github_repository, file_upload, s3_bucket]
+          enum: [manual, github_repository, file_upload, s3_bucket, confluence_space]
         externalId:
           type: string
           nullable: true

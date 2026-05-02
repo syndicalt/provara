@@ -472,7 +472,7 @@ export const contextSources = sqliteTable("context_sources", {
     .notNull()
     .references(() => contextCollections.id),
   name: text("name").notNull(),
-  type: text("type", { enum: ["manual", "github_repository", "file_upload", "s3_bucket"] }).notNull().default("manual"),
+  type: text("type", { enum: ["manual", "github_repository", "file_upload", "s3_bucket", "confluence_space"] }).notNull().default("manual"),
   externalId: text("external_id"),
   sourceUri: text("source_uri"),
   content: text("content").notNull().default(""),
@@ -499,7 +499,7 @@ export const contextConnectorCredentials = sqliteTable("context_connector_creden
   id: text("id").primaryKey(),
   tenantId: text("tenant_id"),
   name: text("name").notNull(),
-  type: text("type", { enum: ["github_token", "aws_access_key"] }).notNull(),
+  type: text("type", { enum: ["github_token", "aws_access_key", "confluence_api_token"] }).notNull(),
   encryptedValue: text("encrypted_value").notNull(),
   iv: text("iv").notNull(),
   authTag: text("auth_tag").notNull(),

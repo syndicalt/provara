@@ -202,6 +202,16 @@ describe("ContextOptimizerPanel", () => {
               createdAt: "2026-05-01T20:00:00.000Z",
               updatedAt: "2026-05-01T22:04:00.000Z",
             },
+            {
+              id: "cred-confluence",
+              tenantId: "tenant-pro",
+              name: "Confluence Docs",
+              type: "confluence_api_token",
+              hasSecret: true,
+              lastUsedAt: null,
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T22:04:00.000Z",
+            },
           ],
         }));
       }
@@ -296,6 +306,21 @@ describe("ContextOptimizerPanel", () => {
               lastError: null,
               metadata: { s3: { bucket: "acme-docs", region: "us-east-1", prefix: "docs", credentialId: "cred-aws" } },
               updatedAt: "2026-05-01T22:06:00.000Z",
+            },
+            {
+              id: "source-5",
+              collectionId: "collection-1",
+              name: "Support space",
+              type: "confluence_space",
+              externalId: "confluence:https://acme.atlassian.net:SUP:policy:",
+              sourceUri: "https://acme.atlassian.net/wiki/spaces/SUP",
+              syncStatus: "synced",
+              lastSyncedAt: "2026-05-01T22:07:00.000Z",
+              lastDocumentId: "doc-confluence",
+              documentCount: 2,
+              lastError: null,
+              metadata: { confluence: { baseUrl: "https://acme.atlassian.net", spaceKey: "SUP", labels: ["policy"], credentialId: "cred-confluence" } },
+              updatedAt: "2026-05-01T22:07:00.000Z",
             },
           ],
         }));
@@ -572,6 +597,29 @@ describe("ContextOptimizerPanel", () => {
             },
           }));
         }
+        if (parsed.type === "confluence_api_token") {
+          const value = JSON.parse(String(parsed.value)) as Record<string, unknown>;
+          expect(parsed).toMatchObject({
+            name: "Confluence token",
+            type: "confluence_api_token",
+          });
+          expect(value).toMatchObject({
+            email: "docs@example.com",
+            apiToken: "conf_secret_123",
+          });
+          return Promise.resolve(jsonResponse({
+            credential: {
+              id: "cred-confluence-new",
+              tenantId: "tenant-pro",
+              name: "Confluence token",
+              type: "confluence_api_token",
+              hasSecret: true,
+              lastUsedAt: null,
+              createdAt: "2026-05-01T22:10:00.000Z",
+              updatedAt: "2026-05-01T22:10:00.000Z",
+            },
+          }));
+        }
         expect(parsed).toMatchObject({
           name: "Docs token",
           type: "github_token",
@@ -651,6 +699,38 @@ describe("ContextOptimizerPanel", () => {
               documentCount: 0,
               lastError: null,
               metadata: { s3: { bucket: "acme-docs", region: "us-east-1", prefix: "docs", credentialId: "cred-aws-new" } },
+              updatedAt: "2026-05-01T22:10:00.000Z",
+            },
+          }));
+        }
+        if (parsed.type === "confluence_space") {
+          expect(parsed).toMatchObject({
+            name: "Support space",
+            type: "confluence_space",
+            confluence: {
+              baseUrl: "https://acme.atlassian.net",
+              spaceKey: "SUP",
+              labels: ["policy"],
+              titleContains: "Refund",
+              credentialId: "cred-confluence-new",
+              maxPages: 25,
+              maxPageBytes: 125000,
+            },
+          });
+          return Promise.resolve(jsonResponse({
+            source: {
+              id: "source-confluence",
+              collectionId: "collection-1",
+              name: "Support space",
+              type: "confluence_space",
+              externalId: "confluence:https://acme.atlassian.net:SUP:policy:Refund",
+              sourceUri: "https://acme.atlassian.net/wiki/spaces/SUP",
+              syncStatus: "pending",
+              lastSyncedAt: null,
+              lastDocumentId: null,
+              documentCount: 0,
+              lastError: null,
+              metadata: { confluence: { baseUrl: "https://acme.atlassian.net", spaceKey: "SUP", labels: ["policy"], titleContains: "Refund", credentialId: "cred-confluence-new" } },
               updatedAt: "2026-05-01T22:10:00.000Z",
             },
           }));
@@ -815,6 +895,15 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("AWS token").length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toContain("aws_secret_123");
 
+    fireEvent.change(screen.getByLabelText("Confluence Credential Name"), { target: { value: "Confluence token" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "docs@example.com" } });
+    fireEvent.change(screen.getByLabelText("API Token"), { target: { value: "conf_secret_123" } });
+    fireEvent.click(screen.getByText("Save Confluence Credential"));
+
+    expect(await screen.findByText("Confluence credential saved.")).toBeInTheDocument();
+    expect(screen.getAllByText("Confluence token").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("conf_secret_123");
+
     const upload = new File(["Uploaded guide content for context."], "guide.md", { type: "text/markdown" });
     fireEvent.change(screen.getByLabelText("File"), { target: { files: [upload] } });
     expect(await screen.findByText("File loaded.")).toBeInTheDocument();
@@ -837,6 +926,18 @@ describe("ContextOptimizerPanel", () => {
 
     expect(await screen.findByText("S3 source created.")).toBeInTheDocument();
     expect(screen.getAllByText("s3://acme-docs/docs (us-east-1)").length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByLabelText("Confluence Source Name"), { target: { value: "Support space" } });
+    fireEvent.change(screen.getByLabelText("Base URL"), { target: { value: "https://acme.atlassian.net" } });
+    fireEvent.change(screen.getByLabelText("Space Key"), { target: { value: "SUP" } });
+    fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "policy" } });
+    fireEvent.change(screen.getByLabelText("Title Filter"), { target: { value: "Refund" } });
+    fireEvent.change(screen.getByLabelText("Max Pages"), { target: { value: "25" } });
+    fireEvent.change(screen.getByLabelText("Confluence Max Bytes"), { target: { value: "125000" } });
+    fireEvent.click(screen.getByText("Create Confluence Source"));
+
+    expect(await screen.findByText("Confluence source created.")).toBeInTheDocument();
+    expect(screen.getAllByText("https://acme.atlassian.net/wiki/spaces/SUP (policy)").length).toBeGreaterThan(0);
 
     fireEvent.change(screen.getByLabelText("GitHub Source Name"), { target: { value: "Docs repo" } });
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });

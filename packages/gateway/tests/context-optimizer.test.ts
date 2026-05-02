@@ -2176,6 +2176,205 @@ describe("managed context collections", () => {
     expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
   });
 
+  it("creates and idempotently syncs Confluence space sources with API token credentials", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const confluenceFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/wiki/rest/api/content/search");
+      expect(url.searchParams.get("cql")).toContain("space=\"SUP\"");
+      expect(url.searchParams.get("cql")).toContain("label=\"policy\"");
+      expect(url.searchParams.get("cql")).toContain("title~\"Refund\"");
+      expect((init?.headers as Record<string, string> | undefined)?.Authorization).toContain("Basic ");
+      return githubJson({
+        results: [
+          {
+            id: "123",
+            type: "page",
+            title: "Refund Policy",
+            version: { number: 7 },
+            body: { storage: { value: "<h1>Refund Policy</h1><p>Refunds are available within 30 days.</p>" } },
+            _links: { webui: "/wiki/spaces/SUP/pages/123/Refund+Policy" },
+          },
+          {
+            id: "456",
+            type: "page",
+            title: "Escalation Guide",
+            version: { number: 2 },
+            body: { storage: { value: "<p>Escalate enterprise account issues to support leadership.</p>" } },
+            _links: { webui: "/wiki/spaces/SUP/pages/456/Escalation+Guide" },
+          },
+        ],
+      });
+    });
+    const app = buildApp(db, undefined, { githubFetch: confluenceFetch });
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Confluence Docs",
+        type: "confluence_api_token",
+        value: JSON.stringify({ email: "docs@example.com", apiToken: "conf-secret-token" }),
+      }),
+    });
+    expect(credentialRes.status).toBe(201);
+    const credentialBody = await credentialRes.json() as { credential: { id: string; type: string; hasSecret: boolean; value?: string } };
+    expect(credentialBody.credential).toMatchObject({ type: "confluence_api_token", hasSecret: true });
+    expect(credentialBody.credential.value).toBeUndefined();
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Confluence KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Support space",
+        type: "confluence_space",
+        confluence: {
+          baseUrl: "https://acme.atlassian.net/wiki",
+          spaceKey: "SUP",
+          labels: ["policy"],
+          titleContains: "Refund",
+          credentialId: credentialBody.credential.id,
+          maxPages: 10,
+          maxPageBytes: 10_000,
+        },
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as { source: { id: string; type: string; metadata: Record<string, unknown> } };
+    expect(sourceBody.source.type).toBe("confluence_space");
+    expect(sourceBody.source.metadata.confluence).toMatchObject({ baseUrl: "https://acme.atlassian.net", spaceKey: "SUP", labels: ["policy"] });
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+    const syncBody = await syncRes.json() as {
+      synced: boolean;
+      source: { syncStatus: string; documentCount: number; metadata: Record<string, unknown> };
+      collection: { documentCount: number; blockCount: number };
+      document: { source: string; sourceUri: string };
+      blocks: Array<{ source: string; content: string; metadata: Record<string, unknown> }>;
+    };
+    expect(syncBody.synced).toBe(true);
+    expect(syncBody.source).toMatchObject({ syncStatus: "synced", documentCount: 2 });
+    expect(syncBody.collection).toMatchObject({ documentCount: 2, blockCount: 2 });
+    expect(syncBody.document.source).toBe("source:confluence_space");
+    expect(syncBody.document.sourceUri).toContain("/wiki/spaces/SUP/pages/123");
+    expect(syncBody.blocks[0]).toMatchObject({
+      source: "source:confluence_space",
+      metadata: expect.objectContaining({ contextSourceId: sourceBody.source.id, confluenceSpaceKey: "SUP", confluencePageVersion: "2" }),
+    });
+    const storedBlocks = await db.select().from(contextBlocks).all();
+    expect(storedBlocks.map((block) => block.content).join("\n")).toContain("Refunds are available within 30 days.");
+    expect(syncBody.source.metadata.confluenceSyncedPages).toMatchObject({ "123": "7", "456": "2" });
+    const credentialRow = await db.select().from(contextConnectorCredentials).where(eq(contextConnectorCredentials.id, credentialBody.credential.id)).get();
+    expect(credentialRow?.lastUsedAt).toBeInstanceOf(Date);
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
+
+    const syncAgainRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncAgainRes.status).toBe(200);
+    const syncAgainBody = await syncAgainRes.json() as { synced: boolean; source: { documentCount: number }; document: unknown; blocks: unknown[] };
+    expect(syncAgainBody).toMatchObject({ synced: false, source: { documentCount: 2 }, document: null, blocks: [] });
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(2);
+  });
+
+  it("does not allow a Confluence source to bind another tenant's API token", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({
+        name: "Other Confluence",
+        type: "confluence_api_token",
+        value: JSON.stringify({ email: "other@example.com", apiToken: "other-secret" }),
+      }),
+    });
+    const credentialBody = await credentialRes.json() as { credential: { id: string } };
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Confluence Tenant Guard KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Blocked space",
+        type: "confluence_space",
+        confluence: {
+          baseUrl: "https://acme.atlassian.net",
+          spaceKey: "SUP",
+          credentialId: credentialBody.credential.id,
+        },
+      }),
+    });
+    expect(sourceRes.status).toBe(404);
+  });
+
+  it("persists failed Confluence source sync status without writing documents", async () => {
+    process.env.PROVARA_MASTER_KEY = "test-master-key";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const confluenceFetch = vi.fn(async () => githubJson({ message: "access denied" }, 403));
+    const app = buildApp(db, undefined, { githubFetch: confluenceFetch });
+    const credentialRes = await app.request("/v1/context/credentials", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Confluence Docs",
+        type: "confluence_api_token",
+        value: JSON.stringify({ email: "docs@example.com", apiToken: "conf-secret-token" }),
+      }),
+    });
+    const credentialBody = await credentialRes.json() as { credential: { id: string } };
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Confluence Failure KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const sourceRes = await app.request(`/v1/context/collections/${collectionBody.collection.id}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Broken space",
+        type: "confluence_space",
+        confluence: {
+          baseUrl: "https://acme.atlassian.net",
+          spaceKey: "SUP",
+          credentialId: credentialBody.credential.id,
+        },
+      }),
+    });
+    const sourceBody = await sourceRes.json() as { source: { id: string } };
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(500);
+    const rows = await db.select().from(contextSources).all();
+    expect(rows).toEqual([
+      expect.objectContaining({ type: "confluence_space", syncStatus: "failed", documentCount: 0 }),
+    ]);
+    expect(rows[0]?.lastError).toContain("Confluence request failed (403)");
+    expect(await db.select().from(contextDocuments).all()).toHaveLength(0);
+  });
+
   it("creates and idempotently syncs GitHub repository sources", async () => {
     await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
     const githubFetch = vi.fn(async (input: RequestInfo | URL) => {

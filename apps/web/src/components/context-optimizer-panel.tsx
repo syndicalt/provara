@@ -207,7 +207,7 @@ export interface ContextSource {
   id: string;
   collectionId: string;
   name: string;
-  type: "manual" | "github_repository" | "file_upload" | "s3_bucket";
+  type: "manual" | "github_repository" | "file_upload" | "s3_bucket" | "confluence_space";
   externalId: string | null;
   sourceUri: string | null;
   syncStatus: "pending" | "synced" | "failed";
@@ -223,7 +223,7 @@ export interface ContextConnectorCredential {
   id: string;
   tenantId: string;
   name: string;
-  type: "github_token" | "aws_access_key";
+  type: "github_token" | "aws_access_key" | "confluence_api_token";
   hasSecret: boolean;
   lastUsedAt: string | null;
   createdAt: string;
@@ -327,6 +327,7 @@ function formatContextSourceType(type: ContextSource["type"]): string {
   if (type === "github_repository") return "GitHub";
   if (type === "file_upload") return "File Upload";
   if (type === "s3_bucket") return "S3";
+  if (type === "confluence_space") return "Confluence";
   return "Manual";
 }
 
@@ -359,12 +360,25 @@ function formatContextSourceDetail(source: ContextSource): string {
     const prefix = typeof s3.prefix === "string" && s3.prefix ? `/${s3.prefix}` : "";
     if (bucket) return `s3://${bucket}${prefix}${region ? ` (${region})` : ""}`;
   }
+  if (source.type === "confluence_space") {
+    const confluence = typeof source.metadata.confluence === "object" && source.metadata.confluence !== null && !Array.isArray(source.metadata.confluence)
+      ? source.metadata.confluence as Record<string, unknown>
+      : {};
+    const baseUrl = typeof confluence.baseUrl === "string" ? confluence.baseUrl : "";
+    const spaceKey = typeof confluence.spaceKey === "string" ? confluence.spaceKey : "";
+    const labels = Array.isArray(confluence.labels) ? confluence.labels.filter((label): label is string => typeof label === "string") : [];
+    if (baseUrl && spaceKey) return `${baseUrl}/wiki/spaces/${spaceKey}${labels.length > 0 ? ` (${labels.join(", ")})` : ""}`;
+  }
   return source.sourceUri || source.externalId || source.id;
 }
 
 function contextSourceHasAuth(source: ContextSource): boolean {
-  if (source.type !== "github_repository" && source.type !== "s3_bucket") return false;
-  const credentialMetadata = source.type === "github_repository" ? source.metadata.github : source.metadata.s3;
+  if (source.type !== "github_repository" && source.type !== "s3_bucket" && source.type !== "confluence_space") return false;
+  const credentialMetadata = source.type === "github_repository"
+    ? source.metadata.github
+    : source.type === "s3_bucket"
+      ? source.metadata.s3
+      : source.metadata.confluence;
   const connector = typeof credentialMetadata === "object" && credentialMetadata !== null && !Array.isArray(credentialMetadata)
     ? credentialMetadata as Record<string, unknown>
     : {};
@@ -677,6 +691,9 @@ export function ContextOptimizerPanel() {
   const [awsCredentialDraft, setAwsCredentialDraft] = useState({ name: "", accessKeyId: "", secretAccessKey: "", sessionToken: "" });
   const [awsCredentialSubmitting, setAwsCredentialSubmitting] = useState(false);
   const [awsCredentialMessage, setAwsCredentialMessage] = useState<string | null>(null);
+  const [confluenceCredentialDraft, setConfluenceCredentialDraft] = useState({ name: "", email: "", apiToken: "" });
+  const [confluenceCredentialSubmitting, setConfluenceCredentialSubmitting] = useState(false);
+  const [confluenceCredentialMessage, setConfluenceCredentialMessage] = useState<string | null>(null);
   const [sourceDraft, setSourceDraft] = useState({
     name: "",
     owner: "",
@@ -702,6 +719,18 @@ export function ContextOptimizerPanel() {
   });
   const [s3Submitting, setS3Submitting] = useState(false);
   const [s3Message, setS3Message] = useState<string | null>(null);
+  const [confluenceDraft, setConfluenceDraft] = useState({
+    name: "",
+    baseUrl: "",
+    spaceKey: "",
+    labels: "",
+    titleContains: "",
+    maxPages: "100",
+    maxPageBytes: "250000",
+    credentialId: "",
+  });
+  const [confluenceSubmitting, setConfluenceSubmitting] = useState(false);
+  const [confluenceMessage, setConfluenceMessage] = useState<string | null>(null);
   const [fileDraft, setFileDraft] = useState({
     name: "",
     filename: "",
@@ -881,6 +910,7 @@ export function ContextOptimizerPanel() {
   const credentialRows = useMemo(() => state.credentials, [state.credentials]);
   const githubCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "github_token"), [credentialRows]);
   const awsCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "aws_access_key"), [credentialRows]);
+  const confluenceCredentialRows = useMemo(() => credentialRows.filter((credential) => credential.type === "confluence_api_token"), [credentialRows]);
   const canonicalRows = useMemo(() => state.canonicalBlocks, [state.canonicalBlocks]);
   const firstCollection = collectionRows[0] ?? null;
   const visibleCanonicalRows = useMemo(() => canonicalRows.slice(0, 10), [canonicalRows]);
@@ -983,6 +1013,41 @@ export function ContextOptimizerPanel() {
     }
   }
 
+  async function createConfluenceCredential() {
+    if (!confluenceCredentialDraft.name.trim() || !confluenceCredentialDraft.email.trim() || !confluenceCredentialDraft.apiToken.trim()) return;
+    setConfluenceCredentialSubmitting(true);
+    setConfluenceCredentialMessage(null);
+    try {
+      const res = await gatewayFetchRaw("/v1/context/credentials", {
+        method: "POST",
+        body: JSON.stringify({
+          name: confluenceCredentialDraft.name.trim(),
+          type: "confluence_api_token",
+          value: JSON.stringify({
+            email: confluenceCredentialDraft.email.trim(),
+            apiToken: confluenceCredentialDraft.apiToken,
+          }),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save Confluence credential");
+      const body = await res.json() as { credential: ContextConnectorCredential };
+      setState((prev) => ({
+        ...prev,
+        credentials: [
+          body.credential,
+          ...prev.credentials.filter((credential) => credential.id !== body.credential.id),
+        ],
+      }));
+      setConfluenceCredentialDraft({ name: "", email: "", apiToken: "" });
+      setConfluenceDraft((prev) => ({ ...prev, credentialId: body.credential.id }));
+      setConfluenceCredentialMessage("Confluence credential saved.");
+    } catch (err) {
+      setConfluenceCredentialMessage(err instanceof Error ? err.message : "Failed to save Confluence credential");
+    } finally {
+      setConfluenceCredentialSubmitting(false);
+    }
+  }
+
   async function createGitHubSource() {
     if (!firstCollection || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()) return;
     setSourceSubmitting(true);
@@ -1065,6 +1130,45 @@ export function ContextOptimizerPanel() {
       setS3Message(err instanceof Error ? err.message : "Failed to create S3 source");
     } finally {
       setS3Submitting(false);
+    }
+  }
+
+  async function createConfluenceSource() {
+    if (!firstCollection || !confluenceDraft.name.trim() || !confluenceDraft.baseUrl.trim() || !confluenceDraft.spaceKey.trim() || !confluenceDraft.credentialId) return;
+    setConfluenceSubmitting(true);
+    setConfluenceMessage(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: confluenceDraft.name.trim(),
+          type: "confluence_space",
+          confluence: {
+            baseUrl: confluenceDraft.baseUrl.trim(),
+            spaceKey: confluenceDraft.spaceKey.trim(),
+            labels: parseCsv(confluenceDraft.labels),
+            titleContains: confluenceDraft.titleContains.trim() || undefined,
+            credentialId: confluenceDraft.credentialId,
+            maxPages: Number(confluenceDraft.maxPages) || 100,
+            maxPageBytes: Number(confluenceDraft.maxPageBytes) || 250000,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create Confluence source");
+      const body = await res.json() as { source: ContextSource };
+      setState((prev) => ({
+        ...prev,
+        sources: [
+          body.source,
+          ...prev.sources.filter((source) => source.id !== body.source.id),
+        ],
+      }));
+      setConfluenceDraft((prev) => ({ ...prev, name: "", spaceKey: "", labels: "", titleContains: "" }));
+      setConfluenceMessage("Confluence source created.");
+    } catch (err) {
+      setConfluenceMessage(err instanceof Error ? err.message : "Failed to create Confluence source");
+    } finally {
+      setConfluenceSubmitting(false);
     }
   }
 
@@ -1337,7 +1441,7 @@ export function ContextOptimizerPanel() {
       <section>
         <div className="mb-3">
           <h2 className="text-lg font-semibold text-zinc-100">Connector Management</h2>
-          <p className="mt-1 text-sm text-zinc-500">Credential metadata, S3 buckets, GitHub repository sources, file upload sources, and manual source sync controls.</p>
+          <p className="mt-1 text-sm text-zinc-500">Credential metadata, Confluence spaces, S3 buckets, GitHub repository sources, file upload sources, and manual source sync controls.</p>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -1473,6 +1577,53 @@ export function ContextOptimizerPanel() {
                 {awsCredentialSubmitting ? "Saving..." : "Save AWS Credential"}
               </button>
               {awsCredentialMessage && <span className="text-xs text-zinc-400">{awsCredentialMessage}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">Confluence API Token Credential</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-confluence-credential-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Confluence Credential Name</label>
+                <input
+                  id="context-confluence-credential-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceCredentialDraft.name}
+                  onChange={(event) => setConfluenceCredentialDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-confluence-email" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Email</label>
+                <input
+                  id="context-confluence-email"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceCredentialDraft.email}
+                  onChange={(event) => setConfluenceCredentialDraft((prev) => ({ ...prev, email: event.target.value }))}
+                />
+              </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="context-confluence-api-token" className="text-xs font-medium uppercase tracking-wider text-zinc-500">API Token</label>
+                <input
+                  id="context-confluence-api-token"
+                  type="password"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceCredentialDraft.apiToken}
+                  onChange={(event) => setConfluenceCredentialDraft((prev) => ({ ...prev, apiToken: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={confluenceCredentialSubmitting || !confluenceCredentialDraft.name.trim() || !confluenceCredentialDraft.email.trim() || !confluenceCredentialDraft.apiToken.trim()}
+                onClick={() => void createConfluenceCredential()}
+              >
+                {confluenceCredentialSubmitting ? "Saving..." : "Save Confluence Credential"}
+              </button>
+              {confluenceCredentialMessage && <span className="text-xs text-zinc-400">{confluenceCredentialMessage}</span>}
             </div>
           </div>
 
@@ -1616,6 +1767,106 @@ export function ContextOptimizerPanel() {
                 {s3Submitting ? "Creating..." : "Create S3 Source"}
               </button>
               {s3Message && <span className="text-xs text-zinc-400">{s3Message}</span>}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">Confluence Source</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-confluence-source-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Confluence Source Name</label>
+                <input
+                  id="context-confluence-source-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceDraft.name}
+                  onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-confluence-credential" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Confluence Credential</label>
+                <select
+                  id="context-confluence-credential"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceDraft.credentialId}
+                  onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, credentialId: event.target.value }))}
+                >
+                  <option value="">Select credential</option>
+                  {confluenceCredentialRows.map((credential) => (
+                    <option key={credential.id} value={credential.id}>{credential.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="context-confluence-base-url" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Base URL</label>
+                <input
+                  id="context-confluence-base-url"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceDraft.baseUrl}
+                  onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, baseUrl: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-confluence-space-key" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Space Key</label>
+                <input
+                  id="context-confluence-space-key"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceDraft.spaceKey}
+                  onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, spaceKey: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-confluence-labels" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Labels</label>
+                <input
+                  id="context-confluence-labels"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceDraft.labels}
+                  onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, labels: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-confluence-title-filter" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Title Filter</label>
+                <input
+                  id="context-confluence-title-filter"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={confluenceDraft.titleContains}
+                  onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, titleContains: event.target.value }))}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="context-confluence-max-pages" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Max Pages</label>
+                  <input
+                    id="context-confluence-max-pages"
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                    value={confluenceDraft.maxPages}
+                    onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, maxPages: event.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="context-confluence-max-bytes" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Confluence Max Bytes</label>
+                  <input
+                    id="context-confluence-max-bytes"
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                    value={confluenceDraft.maxPageBytes}
+                    onChange={(event) => setConfluenceDraft((prev) => ({ ...prev, maxPageBytes: event.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={confluenceSubmitting || !firstCollection || !confluenceDraft.name.trim() || !confluenceDraft.baseUrl.trim() || !confluenceDraft.spaceKey.trim() || !confluenceDraft.credentialId}
+                onClick={() => void createConfluenceSource()}
+              >
+                {confluenceSubmitting ? "Creating..." : "Create Confluence Source"}
+              </button>
+              {confluenceMessage && <span className="text-xs text-zinc-400">{confluenceMessage}</span>}
             </div>
           </div>
 
