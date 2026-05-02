@@ -4,6 +4,24 @@ import { alertRules, alertLogs, requests, costLogs } from "@provara/db";
 import { eq, and, sql, gte, desc } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { getTenantId, tenantFilter } from "../auth/tenant.js";
+import {
+  CONTEXT_APPROVED_EXPORT_DELTA_METRIC,
+  CONTEXT_STALE_DRAFTS_METRIC,
+  CONTEXT_POLICY_FAILURES_METRIC,
+  countApprovedContextDelta,
+  countStaleCanonicalDrafts,
+  ensureContextGovernanceAlertRules,
+} from "../context/governance-alerts.js";
+
+type AlertMetric =
+  | "spend"
+  | "latency_p95"
+  | "latency_avg"
+  | "error_rate"
+  | "request_count"
+  | typeof CONTEXT_POLICY_FAILURES_METRIC
+  | typeof CONTEXT_STALE_DRAFTS_METRIC
+  | typeof CONTEXT_APPROVED_EXPORT_DELTA_METRIC;
 
 /**
  * Validate a webhook URL before storing/invoking it. Guards against SSRF:
@@ -69,6 +87,7 @@ export function createAlertRoutes(db: Db) {
   // List alert rules
   app.get("/rules", async (c) => {
     const tenantId = getTenantId(c.req.raw);
+    await ensureContextGovernanceAlertRules(db, tenantId);
     const rules = await db
       .select()
       .from(alertRules)
@@ -90,7 +109,7 @@ export function createAlertRoutes(db: Db) {
       webhookUrl?: string;
     }>();
 
-    if (!body.name || !body.metric || !body.threshold) {
+    if (!body.name || !body.metric || body.threshold === undefined || !Number.isFinite(body.threshold)) {
       return c.json({ error: { message: "name, metric, and threshold are required", type: "validation_error" } }, 400);
     }
 
@@ -104,7 +123,7 @@ export function createAlertRoutes(db: Db) {
       id,
       tenantId,
       name: body.name,
-      metric: body.metric as "spend" | "latency_p95" | "latency_avg" | "error_rate" | "request_count",
+      metric: body.metric as AlertMetric,
       condition: (body.condition || "gt") as "gt" | "lt" | "gte" | "lte",
       threshold: body.threshold,
       window: (body.window || "1h") as "1h" | "6h" | "24h" | "7d",
@@ -199,6 +218,7 @@ export function createAlertRoutes(db: Db) {
   // Evaluate all rules (called on a schedule or manually)
   app.post("/evaluate", async (c) => {
     const tenantId = getTenantId(c.req.raw);
+    await ensureContextGovernanceAlertRules(db, tenantId);
     const rules = await db
       .select()
       .from(alertRules)
@@ -292,6 +312,10 @@ async function evaluateMetric(db: Db, metric: string, window: string, tenantId: 
   const costTenantCondition = tenantFilter(costLogs.tenantId, tenantId);
 
   switch (metric) {
+    case CONTEXT_STALE_DRAFTS_METRIC:
+      return countStaleCanonicalDrafts(db, tenantId, since);
+    case CONTEXT_APPROVED_EXPORT_DELTA_METRIC:
+      return countApprovedContextDelta(db, tenantId, since);
     case "spend": {
       const conditions = [gte(costLogs.createdAt, since)];
       if (costTenantCondition) conditions.push(costTenantCondition);

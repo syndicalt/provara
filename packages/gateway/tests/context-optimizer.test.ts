@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Db } from "@provara/db";
 import {
+  alertLogs,
+  alertRules,
   contextBlocks,
   contextCanonicalBlocks,
   contextCanonicalReviewEvents,
@@ -1938,6 +1940,24 @@ describe("managed context collections", () => {
 
     const rows = await db.select().from(contextCanonicalBlocks).all();
     expect(rows[0]).toMatchObject({ reviewStatus: "draft", policyStatus: "failed" });
+
+    const rules = await db.select().from(alertRules).all();
+    expect(rules).toEqual([
+      expect.objectContaining({
+        tenantId: "tenant-pro",
+        name: "Context policy failures",
+        metric: "context_policy_failures",
+      }),
+    ]);
+    const alerts = await db.select().from(alertLogs).all();
+    expect(alerts).toEqual([
+      expect.objectContaining({
+        ruleName: expect.stringContaining(blockId),
+        metric: "context_policy_failures",
+        value: 1,
+        threshold: 0,
+      }),
+    ]);
   });
 
   it("bulk checks and reviews canonical blocks with per-item failures", async () => {
@@ -2006,6 +2026,14 @@ describe("managed context collections", () => {
     };
     expect(reviewBody.results.filter((result) => result.ok)).toHaveLength(2);
     expect(reviewBody.results.filter((result) => result.error?.type === "policy_error")).toHaveLength(1);
+
+    const policyFailureAlerts = await db.select().from(alertLogs).all();
+    expect(policyFailureAlerts).toEqual([
+      expect.objectContaining({
+        metric: "context_policy_failures",
+        ruleName: expect.stringContaining("quarantine"),
+      }),
+    ]);
 
     const auditRows = await db.select().from(contextCanonicalReviewEvents).all();
     expect(auditRows).toHaveLength(2);

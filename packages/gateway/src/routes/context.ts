@@ -46,6 +46,7 @@ import {
   validateReviewStatusBody,
 } from "../context/store.js";
 import { getSessionUserId, getTenantId } from "../auth/tenant.js";
+import { recordContextPolicyFailureAlert } from "../context/governance-alerts.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Provider } from "../providers/types.js";
@@ -752,6 +753,13 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
       const rules = await loadRules(db, tenantId);
       const scan = scanContent(block.content, rules, "retrieved_context");
       const canonicalBlock = await recordContextCanonicalPolicyCheck(db, tenantId, blockId, scan);
+      if (canonicalBlock.policyStatus === "failed") {
+        await recordContextPolicyFailureAlert(db, tenantId, {
+          blockId,
+          decision: scan.decision,
+          violationCount: scan.violations.length,
+        }).catch(() => {});
+      }
       return c.json({
         canonicalBlock,
         policy: {
@@ -789,6 +797,13 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
         const block = await getContextCanonicalBlock(db, tenantId, blockId);
         const scan = scanContent(block.content, rules, "retrieved_context");
         const canonicalBlock = await recordContextCanonicalPolicyCheck(db, tenantId, blockId, scan);
+        if (canonicalBlock.policyStatus === "failed") {
+          await recordContextPolicyFailureAlert(db, tenantId, {
+            blockId,
+            decision: scan.decision,
+            violationCount: scan.violations.length,
+          }).catch(() => {});
+        }
         results.push({
           id: blockId,
           ok: true,

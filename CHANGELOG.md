@@ -30,6 +30,7 @@ All notable Provara changes are tracked here.
   - Canonical block governance with reviewer notes, reviewed-by metadata, reviewed timestamps, tenant-scoped review audit events, and a dashboard draft review queue.
   - Canonical pre-approval policy checks that run active Guardrails rules before approval, persist policy evidence, block risky approvals, and surface policy status in the dashboard review queue.
   - Bulk canonical policy-check and review actions with per-block results, tenant isolation, audit events, and dashboard row selection.
+  - Context governance alerts for policy-check failures, stale canonical review queues, and approved-export delta thresholds in the existing Alerts workflow.
   - Context Optimizer dashboard configuration controls for optimizer modes, thresholds, risk scanning, local draft persistence, and copyable API payloads.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
@@ -44,7 +45,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, and bulk review actions as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, and context governance alerts as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.

@@ -33,6 +33,9 @@ const METRICS = [
   { value: "latency_avg", label: "Avg Latency (ms)", unit: "ms" },
   { value: "latency_p95", label: "P95 Latency (ms)", unit: "ms" },
   { value: "request_count", label: "Request Count", unit: "" },
+  { value: "context_policy_failures", label: "Context Policy Failures", unit: "" },
+  { value: "context_stale_drafts", label: "Stale Context Drafts", unit: "" },
+  { value: "context_approved_export_delta", label: "Approved Context Export Delta", unit: "" },
 ];
 
 const CONDITIONS = [
