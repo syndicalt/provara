@@ -19,16 +19,18 @@ Implemented as of `0.2.0`:
 - Raw-context vs optimized-context judge scoring through `POST /v1/context/evaluate`.
 - `context_quality_events` with quality deltas, regression flags, source IDs, judge metadata, and dashboard visibility.
 - `context_retrieval_events` with retrieval efficiency, unused context, duplicate rate, risky context rate, source IDs, and dashboard visibility.
+- Optional semantic near-duplicate detection with separate near-duplicate event, summary, retrieval, and dashboard metrics.
 
 Next planned layer:
-- Semantic optimization for near duplicates, relevance scoring, reranking, stale context, and conflicting context.
+- Retrieval quality scoring for relevance, reranking, stale context, and conflicting context.
 
 ## V1: Runtime Context Optimizer
 
 Optimize already-retrieved chunks at request time.
 
 Core capabilities:
-- Exact duplicate removal. Near-duplicate and semantic duplicate removal remain future work.
+- Exact duplicate removal.
+- Optional semantic near-duplicate removal through deterministic token similarity.
 - Token savings estimation.
 - Source and citation preservation.
 - Prompt Injection Firewall risk scanning for retrieved context.
@@ -49,6 +51,7 @@ Capabilities:
 - Duplicate-rate reporting.
 - Quarantined context reporting.
 - Retrieval efficiency and unused-context reporting. Shipped in V1.2.
+- Semantic near-duplicate reporting. Shipped in V1.2.
 - Request-detail integration.
 - Dashboard cards for saved tokens, dropped chunks, reduction, and risk flags.
 

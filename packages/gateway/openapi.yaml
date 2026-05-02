@@ -409,6 +409,8 @@ paths:
               ragContext:
                 summary: Dedupe retrieved chunks before model context assembly
                 value:
+                  dedupeMode: semantic
+                  semanticThreshold: 0.72
                   scanRisk: true
                   chunks:
                     - id: doc-1:chunk-4
@@ -2088,6 +2090,17 @@ components:
         scanRisk:
           type: boolean
           description: When true, scan retained chunks with active guardrail rules for retrieved-context risk.
+        dedupeMode:
+          type: string
+          enum: [exact, semantic]
+          default: exact
+          description: Exact mode removes normalized text duplicates. Semantic mode also removes deterministic near duplicates.
+        semanticThreshold:
+          type: number
+          minimum: 0.5
+          maximum: 1
+          default: 0.72
+          description: Similarity threshold used when dedupeMode is semantic.
 
     OptimizedContextChunk:
       allOf:
@@ -2112,9 +2125,12 @@ components:
           type: string
         reason:
           type: string
-          enum: [duplicate]
+          enum: [duplicate, near_duplicate]
         duplicateOf:
           type: string
+        similarity:
+          type: number
+          description: Similarity score for near-duplicate drops.
         inputTokens:
           type: integer
 
@@ -2156,11 +2172,12 @@ components:
             $ref: "#/components/schemas/RiskyContextChunk"
         metrics:
           type: object
-          required: [inputChunks, outputChunks, droppedChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct]
+          required: [inputChunks, outputChunks, droppedChunks, nearDuplicateChunks, flaggedChunks, quarantinedChunks, inputTokens, outputTokens, savedTokens, reductionPct]
           properties:
             inputChunks: { type: integer }
             outputChunks: { type: integer }
             droppedChunks: { type: integer }
+            nearDuplicateChunks: { type: integer }
             flaggedChunks: { type: integer }
             quarantinedChunks: { type: integer }
             inputTokens: { type: integer }
@@ -2177,11 +2194,13 @@ components:
         - inputChunks
         - outputChunks
         - droppedChunks
+        - nearDuplicateChunks
         - inputTokens
         - outputTokens
         - savedTokens
         - reductionPct
         - duplicateSourceIds
+        - nearDuplicateSourceIds
         - riskScanned
         - flaggedChunks
         - quarantinedChunks
@@ -2200,6 +2219,8 @@ components:
           type: integer
         droppedChunks:
           type: integer
+        nearDuplicateChunks:
+          type: integer
         inputTokens:
           type: integer
         outputTokens:
@@ -2209,6 +2230,10 @@ components:
         reductionPct:
           type: number
         duplicateSourceIds:
+          type: array
+          items:
+            type: string
+        nearDuplicateSourceIds:
           type: array
           items:
             type: string
@@ -2250,6 +2275,7 @@ components:
         - inputChunks
         - outputChunks
         - droppedChunks
+        - nearDuplicateChunks
         - inputTokens
         - outputTokens
         - savedTokens
@@ -2265,6 +2291,8 @@ components:
         outputChunks:
           type: integer
         droppedChunks:
+          type: integer
+        nearDuplicateChunks:
           type: integer
         inputTokens:
           type: integer
@@ -2420,12 +2448,14 @@ components:
         - usedChunks
         - unusedChunks
         - duplicateChunks
+        - nearDuplicateChunks
         - riskyChunks
         - retrievedTokens
         - usedTokens
         - unusedTokens
         - efficiencyPct
         - duplicateRatePct
+        - nearDuplicateRatePct
         - riskyRatePct
         - usedSourceIds
         - unusedSourceIds
@@ -2448,6 +2478,8 @@ components:
           type: integer
         duplicateChunks:
           type: integer
+        nearDuplicateChunks:
+          type: integer
         riskyChunks:
           type: integer
         retrievedTokens:
@@ -2459,6 +2491,8 @@ components:
         efficiencyPct:
           type: number
         duplicateRatePct:
+          type: number
+        nearDuplicateRatePct:
           type: number
         riskyRatePct:
           type: number
@@ -2486,12 +2520,14 @@ components:
         - usedChunks
         - unusedChunks
         - duplicateChunks
+        - nearDuplicateChunks
         - riskyChunks
         - retrievedTokens
         - usedTokens
         - unusedTokens
         - efficiencyPct
         - duplicateRatePct
+        - nearDuplicateRatePct
         - riskyRatePct
         - latestAt
       properties:
@@ -2505,6 +2541,8 @@ components:
           type: integer
         duplicateChunks:
           type: integer
+        nearDuplicateChunks:
+          type: integer
         riskyChunks:
           type: integer
         retrievedTokens:
@@ -2516,6 +2554,8 @@ components:
         efficiencyPct:
           type: number
         duplicateRatePct:
+          type: number
+        nearDuplicateRatePct:
           type: number
         riskyRatePct:
           type: number

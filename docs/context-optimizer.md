@@ -7,6 +7,7 @@ Context Optimizer is Provara's runtime visibility and optimization layer for ret
 The shipped V1 implementation is intentionally narrow:
 
 - Exact duplicate detection after whitespace normalization and case folding.
+- Optional semantic near-duplicate detection with deterministic token similarity.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
 - Optional risk scanning with active Guardrails rules for retrieved context.
@@ -16,7 +17,7 @@ The shipped V1 implementation is intentionally narrow:
 - Tenant-scoped optimization events for reporting.
 - Dashboard visibility at `/dashboard/context`.
 
-It does not yet perform semantic deduplication, reranking, abstractive compression, or persistent review workflows. Those belong to later roadmap phases.
+It does not yet perform embedding-backed semantic deduplication, reranking, abstractive compression, or persistent review workflows. Those belong to later roadmap phases.
 
 ## API
 
@@ -30,6 +31,8 @@ The request accepts already-retrieved context chunks:
 
 ```json
 {
+  "dedupeMode": "semantic",
+  "semanticThreshold": 0.72,
   "scanRisk": true,
   "chunks": [
     {
@@ -50,12 +53,14 @@ The request accepts already-retrieved context chunks:
 The response includes:
 
 - `optimization.optimized`: chunks retained for model context.
-- `optimization.dropped`: duplicate chunks removed from model context.
+- `optimization.dropped`: exact duplicate and near-duplicate chunks removed from model context.
 - `optimization.flagged`: risky chunks removed from model context but marked for operator review.
 - `optimization.quarantined`: risky chunks removed from model context before provider routing.
 - `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, and reduction percentage.
 - `event`: the persisted visibility record for the optimization call.
 - `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, and risky context rate.
+
+`dedupeMode` defaults to `exact` for backwards compatibility. Set `dedupeMode` to `semantic` to also remove near duplicates using deterministic token overlap scoring. `semanticThreshold` defaults to `0.72` and accepts values from `0.5` to `1`.
 
 `scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 
@@ -114,9 +119,10 @@ The Recent Events table shows:
 - Event time.
 - Input chunks to output chunks.
 - Dropped chunk count.
+- Semantic near-duplicate count.
 - Risk scan result, including flagged and quarantined counts.
 - Saved tokens and reduction percentage.
-- Duplicate source IDs that were removed.
+- Exact duplicate and near-duplicate source IDs that were removed.
 - Risky source IDs that were flagged or quarantined.
 
 The Quality Loop section shows:
@@ -131,8 +137,9 @@ The Retrieval Analytics section shows:
 - Retrieval efficiency: used context divided by retrieved context.
 - Unused context count and token estimate.
 - Duplicate rate.
+- Semantic near-duplicate rate.
 - Risky context rate.
-- Recent retrieval events with used/retrieved chunks, duplicate/risky counts, and unused source IDs.
+- Recent retrieval events with used/retrieved chunks, duplicate/semantic/risky counts, and unused source IDs.
 
 ## Demo Mode
 
@@ -140,8 +147,7 @@ The public demo tenant (`t_demo`) seeds recent Context Optimizer events. This ke
 
 ## Next Roadmap Step
 
-The next behavior layer is semantic optimization:
+The next behavior layer is retrieval quality:
 
-- Near-duplicate and semantic duplicate detection.
 - Relevance scoring and reranking.
 - Stale and conflicting context detection.

@@ -11,11 +11,13 @@ export interface ContextOptimizationEvent {
   inputChunks: number;
   outputChunks: number;
   droppedChunks: number;
+  nearDuplicateChunks: number;
   inputTokens: number;
   outputTokens: number;
   savedTokens: number;
   reductionPct: number;
   duplicateSourceIds: string[];
+  nearDuplicateSourceIds: string[];
   riskScanned: boolean;
   flaggedChunks: number;
   quarantinedChunks: number;
@@ -46,11 +48,13 @@ function eventFromRow(row: typeof contextOptimizationEvents.$inferSelect): Conte
     inputChunks: row.inputChunks,
     outputChunks: row.outputChunks,
     droppedChunks: row.droppedChunks,
+    nearDuplicateChunks: row.nearDuplicateChunks,
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
     savedTokens: row.savedTokens,
     reductionPct: row.reductionPct,
     duplicateSourceIds: parseDuplicateSourceIds(row.duplicateSourceIds),
+    nearDuplicateSourceIds: parseDuplicateSourceIds(row.nearDuplicateSourceIds),
     riskScanned: row.riskScanned,
     flaggedChunks: row.flaggedChunks,
     quarantinedChunks: row.quarantinedChunks,
@@ -84,7 +88,12 @@ export async function recordContextOptimizationEvent(
   result: ContextOptimizationResult,
   options: { riskScanned?: boolean } = {},
 ): Promise<ContextOptimizationEvent> {
-  const duplicateSourceIds = result.dropped.map((chunk) => chunk.id);
+  const duplicateSourceIds = result.dropped
+    .filter((chunk) => chunk.reason === "duplicate")
+    .map((chunk) => chunk.id);
+  const nearDuplicateSourceIds = result.dropped
+    .filter((chunk) => chunk.reason === "near_duplicate")
+    .map((chunk) => chunk.id);
   const riskyChunks = [...result.flagged, ...result.quarantined];
   const riskDetails = riskyChunks.map((chunk) => ({
     id: chunk.id,
@@ -101,11 +110,13 @@ export async function recordContextOptimizationEvent(
     inputChunks: result.metrics.inputChunks,
     outputChunks: result.metrics.outputChunks,
     droppedChunks: result.metrics.droppedChunks,
+    nearDuplicateChunks: result.metrics.nearDuplicateChunks,
     inputTokens: result.metrics.inputTokens,
     outputTokens: result.metrics.outputTokens,
     savedTokens: result.metrics.savedTokens,
     reductionPct: result.metrics.reductionPct,
     duplicateSourceIds: JSON.stringify(duplicateSourceIds),
+    nearDuplicateSourceIds: JSON.stringify(nearDuplicateSourceIds),
     riskScanned: options.riskScanned ?? false,
     flaggedChunks: result.metrics.flaggedChunks,
     quarantinedChunks: result.metrics.quarantinedChunks,
@@ -148,6 +159,7 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
       inputChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.inputChunks}), 0)`,
       outputChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.outputChunks}), 0)`,
       droppedChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.droppedChunks}), 0)`,
+      nearDuplicateChunks: sql<number>`coalesce(sum(${contextOptimizationEvents.nearDuplicateChunks}), 0)`,
       inputTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.inputTokens}), 0)`,
       outputTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.outputTokens}), 0)`,
       savedTokens: sql<number>`coalesce(sum(${contextOptimizationEvents.savedTokens}), 0)`,
@@ -175,6 +187,7 @@ export async function summarizeContextOptimizationEvents(db: Db, tenantId: strin
     inputChunks: row?.inputChunks ?? 0,
     outputChunks: row?.outputChunks ?? 0,
     droppedChunks: row?.droppedChunks ?? 0,
+    nearDuplicateChunks: row?.nearDuplicateChunks ?? 0,
     flaggedChunks: row?.flaggedChunks ?? 0,
     quarantinedChunks: row?.quarantinedChunks ?? 0,
     inputTokens,

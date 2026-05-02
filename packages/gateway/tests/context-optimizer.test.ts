@@ -93,6 +93,40 @@ describe("context optimizer core", () => {
     expect(result.metrics.savedTokens).toBeGreaterThan(0);
     expect(result.metrics.reductionPct).toBeGreaterThan(0);
   });
+
+  it("drops semantic near-duplicate chunks when semantic mode is enabled", () => {
+    const result = optimizeContextChunks([
+      {
+        id: "refunds-a",
+        content: "Paid accounts can request refunds during the 30 day window.",
+      },
+      {
+        id: "refunds-b",
+        content: "Refunds for paid accounts are available within 30 days.",
+      },
+      {
+        id: "security",
+        content: "Enterprise plans include audit logs and SAML single sign on.",
+      },
+    ], { dedupeMode: "semantic", semanticThreshold: 0.6 });
+
+    expect(result.optimized.map((chunk) => chunk.id)).toEqual(["refunds-a", "security"]);
+    expect(result.dropped).toEqual([
+      expect.objectContaining({
+        id: "refunds-b",
+        reason: "near_duplicate",
+        duplicateOf: "refunds-a",
+        similarity: expect.any(Number),
+      }),
+    ]);
+    expect(result.optimized[0].sourceIds).toEqual(["refunds-a", "refunds-b"]);
+    expect(result.metrics).toMatchObject({
+      inputChunks: 3,
+      outputChunks: 2,
+      droppedChunks: 1,
+      nearDuplicateChunks: 1,
+    });
+  });
 });
 
 describe("POST /v1/context/optimize", () => {
@@ -157,8 +191,10 @@ describe("POST /v1/context/optimize", () => {
       event: {
         tenantId: string;
         droppedChunks: number;
+        nearDuplicateChunks: number;
         savedTokens: number;
         duplicateSourceIds: string[];
+        nearDuplicateSourceIds: string[];
       };
       retrieval: {
         retrievedChunks: number;
@@ -185,7 +221,9 @@ describe("POST /v1/context/optimize", () => {
     expect(body.event).toMatchObject({
       tenantId: "tenant-pro",
       droppedChunks: 1,
+      nearDuplicateChunks: 0,
       duplicateSourceIds: ["b"],
+      nearDuplicateSourceIds: [],
     });
     expect(body.retrieval).toMatchObject({
       retrievedChunks: 3,
@@ -215,6 +253,74 @@ describe("POST /v1/context/optimize", () => {
       duplicateChunks: 1,
       riskyChunks: 0,
     });
+  });
+
+  it("records near-duplicate analytics for semantic mode", async () => {
+    process.env.PROVARA_CLOUD = "true";
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    const app = buildApp(db);
+
+    const res = await app.request("/v1/context/optimize", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-test-tenant": "tenant-pro",
+      },
+      body: JSON.stringify({
+        dedupeMode: "semantic",
+        semanticThreshold: 0.6,
+        chunks: [
+          { id: "refunds-a", content: "Paid accounts can request refunds during the 30 day window." },
+          { id: "refunds-b", content: "Refunds for paid accounts are available within 30 days." },
+          { id: "security", content: "Enterprise plans include audit logs and SAML single sign on." },
+        ],
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as {
+      optimization: {
+        dropped: Array<{ id: string; reason: string; duplicateOf: string; similarity?: number }>;
+        metrics: { droppedChunks: number; nearDuplicateChunks: number };
+      };
+      event: {
+        droppedChunks: number;
+        nearDuplicateChunks: number;
+        duplicateSourceIds: string[];
+        nearDuplicateSourceIds: string[];
+      };
+      retrieval: {
+        duplicateChunks: number;
+        nearDuplicateChunks: number;
+        duplicateRatePct: number;
+        nearDuplicateRatePct: number;
+      };
+    };
+
+    expect(body.optimization.dropped).toEqual([
+      expect.objectContaining({
+        id: "refunds-b",
+        reason: "near_duplicate",
+        duplicateOf: "refunds-a",
+        similarity: expect.any(Number),
+      }),
+    ]);
+    expect(body.optimization.metrics).toMatchObject({
+      droppedChunks: 1,
+      nearDuplicateChunks: 1,
+    });
+    expect(body.event).toMatchObject({
+      droppedChunks: 1,
+      nearDuplicateChunks: 1,
+      duplicateSourceIds: [],
+      nearDuplicateSourceIds: ["refunds-b"],
+    });
+    expect(body.retrieval).toMatchObject({
+      duplicateChunks: 1,
+      nearDuplicateChunks: 1,
+    });
+    expect(body.retrieval.duplicateRatePct).toBeGreaterThan(0);
+    expect(body.retrieval.nearDuplicateRatePct).toBeGreaterThan(0);
   });
 
   it("quarantines risky retrieved context when risk scanning is enabled", async () => {
@@ -429,6 +535,7 @@ describe("POST /v1/context/optimize", () => {
         usedChunks: number;
         unusedChunks: number;
         duplicateChunks: number;
+        nearDuplicateChunks: number;
         riskyChunks: number;
         efficiencyPct: number;
         duplicateRatePct: number;
@@ -441,6 +548,7 @@ describe("POST /v1/context/optimize", () => {
       usedChunks: 2,
       unusedChunks: 1,
       duplicateChunks: 1,
+      nearDuplicateChunks: 0,
       riskyChunks: 0,
     });
     expect(retrievalSummaryBody.summary.efficiencyPct).toBeGreaterThan(0);

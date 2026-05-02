@@ -3,6 +3,7 @@ import type { Db } from "@provara/db";
 import {
   optimizeContextChunks,
   type ContextChunk,
+  type ContextOptimizationOptions,
   type ContextOptimizationResult,
   type OptimizedContextChunk,
   type RiskyContextChunk,
@@ -72,6 +73,27 @@ function validateScanRisk(value: unknown): { scanRisk?: boolean; error?: string 
   if (value === undefined) return { scanRisk: false };
   if (typeof value !== "boolean") return { error: "scanRisk must be a boolean" };
   return { scanRisk: value };
+}
+
+function validateDedupeOptions(value: Record<string, unknown>): { options?: ContextOptimizationOptions; error?: string } {
+  const mode = value.dedupeMode;
+  if (mode !== undefined && mode !== "exact" && mode !== "semantic") {
+    return { error: "dedupeMode must be either exact or semantic" };
+  }
+  const threshold = value.semanticThreshold;
+  if (
+    threshold !== undefined &&
+    (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0.5 || threshold > 1)
+  ) {
+    return { error: "semanticThreshold must be a number between 0.5 and 1" };
+  }
+
+  return {
+    options: {
+      dedupeMode: mode === "semantic" ? "semantic" : "exact",
+      semanticThreshold: typeof threshold === "number" ? threshold : undefined,
+    },
+  };
 }
 
 function validateStringArray(value: unknown, field: string): { values?: string[]; error?: string } {
@@ -200,7 +222,7 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
 
   app.post("/optimize", async (c) => {
     const tenantId = getTenantId(c.req.raw);
-    const body = await c.req.json<{ chunks?: unknown; scanRisk?: unknown }>().catch(() => null);
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null);
     if (!body) {
       return c.json(
         { error: { message: "Invalid JSON body", type: "validation_error" } },
@@ -224,7 +246,15 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry) {
       );
     }
 
-    const baseOptimization = optimizeContextChunks(parsed.chunks);
+    const dedupe = validateDedupeOptions(body);
+    if (!dedupe.options) {
+      return c.json(
+        { error: { message: dedupe.error || "invalid dedupe options", type: "validation_error" } },
+        400,
+      );
+    }
+
+    const baseOptimization = optimizeContextChunks(parsed.chunks, dedupe.options);
     const optimization = scanRisk.scanRisk
       ? await applyRiskScan(db, tenantId, baseOptimization)
       : baseOptimization;

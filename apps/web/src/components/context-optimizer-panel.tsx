@@ -8,6 +8,7 @@ export interface ContextOptimizationSummary {
   inputChunks: number;
   outputChunks: number;
   droppedChunks: number;
+  nearDuplicateChunks: number;
   inputTokens: number;
   outputTokens: number;
   savedTokens: number;
@@ -23,11 +24,13 @@ export interface ContextOptimizationEvent {
   inputChunks: number;
   outputChunks: number;
   droppedChunks: number;
+  nearDuplicateChunks: number;
   inputTokens: number;
   outputTokens: number;
   savedTokens: number;
   reductionPct: number;
   duplicateSourceIds: string[];
+  nearDuplicateSourceIds: string[];
   riskScanned: boolean;
   flaggedChunks: number;
   quarantinedChunks: number;
@@ -73,12 +76,14 @@ export interface ContextRetrievalSummary {
   usedChunks: number;
   unusedChunks: number;
   duplicateChunks: number;
+  nearDuplicateChunks: number;
   riskyChunks: number;
   retrievedTokens: number;
   usedTokens: number;
   unusedTokens: number;
   efficiencyPct: number;
   duplicateRatePct: number;
+  nearDuplicateRatePct: number;
   riskyRatePct: number;
   latestAt: string | null;
 }
@@ -91,12 +96,14 @@ export interface ContextRetrievalEvent {
   usedChunks: number;
   unusedChunks: number;
   duplicateChunks: number;
+  nearDuplicateChunks: number;
   riskyChunks: number;
   retrievedTokens: number;
   usedTokens: number;
   unusedTokens: number;
   efficiencyPct: number;
   duplicateRatePct: number;
+  nearDuplicateRatePct: number;
   riskyRatePct: number;
   usedSourceIds: string[];
   unusedSourceIds: string[];
@@ -387,7 +394,7 @@ export function ContextOptimizerPanel() {
           <h2 className="text-lg font-semibold text-zinc-100">Retrieval Analytics</h2>
           <p className="mt-1 text-sm text-zinc-500">Context usage and retrieval health.</p>
         </div>
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <StatTile
             label="Retrieval Efficiency"
             value={formatPercent(retrievalSummary?.efficiencyPct ?? 0)}
@@ -403,8 +410,14 @@ export function ContextOptimizerPanel() {
           <StatTile
             label="Duplicate Rate"
             value={formatPercent(retrievalSummary?.duplicateRatePct ?? 0)}
-            detail={`${formatInteger(retrievalSummary?.duplicateChunks ?? 0)} duplicate chunks`}
+            detail={`${formatInteger(retrievalSummary?.duplicateChunks ?? 0)} total duplicate chunks`}
             tone={riskTone(retrievalSummary?.duplicateChunks ?? 0)}
+          />
+          <StatTile
+            label="Semantic Rate"
+            value={formatPercent(retrievalSummary?.nearDuplicateRatePct ?? 0)}
+            detail={`${formatInteger(retrievalSummary?.nearDuplicateChunks ?? 0)} near-duplicate chunks`}
+            tone={riskTone(retrievalSummary?.nearDuplicateChunks ?? 0)}
           />
           <StatTile
             label="Risky Context Rate"
@@ -437,6 +450,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Chunks</th>
                     <th className="px-4 py-3 text-right font-medium">Efficiency</th>
                     <th className="px-4 py-3 text-right font-medium">Duplicates</th>
+                    <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Risky</th>
                     <th className="px-4 py-3 text-left font-medium">Unused IDs</th>
                   </tr>
@@ -454,6 +468,10 @@ export function ContextOptimizerPanel() {
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                         {formatInteger(event.duplicateChunks)}
                         <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.duplicateRatePct)}</span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(event.nearDuplicateChunks)}
+                        <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.nearDuplicateRatePct)}</span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-amber-300">
                         {formatInteger(event.riskyChunks)}
@@ -602,6 +620,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-left font-medium">Time</th>
                     <th className="px-4 py-3 text-right font-medium">Chunks</th>
                     <th className="px-4 py-3 text-right font-medium">Dropped</th>
+                    <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Risk</th>
                     <th className="px-4 py-3 text-right font-medium">Saved</th>
                     <th className="px-4 py-3 text-left font-medium">Duplicate IDs</th>
@@ -620,6 +639,9 @@ export function ContextOptimizerPanel() {
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
                           {formatInteger(event.droppedChunks)}
                         </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                          {formatInteger(event.nearDuplicateChunks)}
+                        </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
                           {event.riskScanned ? (
                             <span className={riskyChunks > 0 ? "text-amber-300" : "text-zinc-400"}>
@@ -637,7 +659,7 @@ export function ContextOptimizerPanel() {
                           <span className="ml-2 text-xs text-zinc-500">{formatPercent(event.reductionPct)}</span>
                         </td>
                         <td className="px-4 py-3">
-                          {event.duplicateSourceIds.length === 0 ? (
+                          {[...event.duplicateSourceIds, ...event.nearDuplicateSourceIds].length === 0 ? (
                             <span className="text-zinc-600">None</span>
                           ) : (
                             <div className="flex max-w-xl flex-wrap gap-1">
@@ -646,9 +668,14 @@ export function ContextOptimizerPanel() {
                                   {id}
                                 </span>
                               ))}
-                              {event.duplicateSourceIds.length > 6 && (
+                              {event.nearDuplicateSourceIds.slice(0, Math.max(0, 6 - event.duplicateSourceIds.length)).map((id) => (
+                                <span key={id} className="rounded border border-cyan-800/80 bg-cyan-950/20 px-2 py-0.5 font-mono text-xs text-cyan-200">
+                                  {id}
+                                </span>
+                              ))}
+                              {event.duplicateSourceIds.length + event.nearDuplicateSourceIds.length > 6 && (
                                 <span className="rounded border border-zinc-700 bg-zinc-950 px-2 py-0.5 text-xs text-zinc-500">
-                                  +{event.duplicateSourceIds.length - 6}
+                                  +{event.duplicateSourceIds.length + event.nearDuplicateSourceIds.length - 6}
                                 </span>
                               )}
                             </div>
