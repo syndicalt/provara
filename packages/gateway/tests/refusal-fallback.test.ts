@@ -74,7 +74,7 @@ describe("model refusal fallback", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "",
+        model: "gpt-4.1-nano",
         messages: [{ role: "user", content: "stream this" }],
         routing_hint: "general",
         stream: true,

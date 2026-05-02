@@ -21,6 +21,8 @@ export interface ContextRetrievalEvent {
   avgRelevanceScore: number | null;
   lowRelevanceChunks: number;
   rerankedChunks: number;
+  avgFreshnessScore: number | null;
+  staleChunks: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -67,6 +69,8 @@ function eventFromRow(row: typeof contextRetrievalEvents.$inferSelect): ContextR
     avgRelevanceScore: row.avgRelevanceScore,
     lowRelevanceChunks: row.lowRelevanceChunks,
     rerankedChunks: row.rerankedChunks,
+    avgFreshnessScore: row.avgFreshnessScore,
+    staleChunks: row.staleChunks,
     efficiencyPct: row.efficiencyPct,
     duplicateRatePct: row.duplicateRatePct,
     nearDuplicateRatePct: row.nearDuplicateRatePct,
@@ -118,6 +122,8 @@ export async function recordContextRetrievalEvent(
     avgRelevanceScore: result.metrics.avgRelevanceScore,
     lowRelevanceChunks: result.metrics.lowRelevanceChunks,
     rerankedChunks: result.metrics.rerankedChunks,
+    avgFreshnessScore: result.metrics.avgFreshnessScore,
+    staleChunks: result.metrics.staleChunks,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(duplicateChunks, retrievedChunks),
     nearDuplicateRatePct: pct(nearDuplicateChunks, retrievedChunks),
@@ -166,6 +172,8 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
       avgRelevanceScore: sql<number | null>`avg(${contextRetrievalEvents.avgRelevanceScore})`,
       lowRelevanceChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.lowRelevanceChunks}), 0)`,
       rerankedChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.rerankedChunks}), 0)`,
+      avgFreshnessScore: sql<number | null>`avg(${contextRetrievalEvents.avgFreshnessScore})`,
+      staleChunks: sql<number>`coalesce(sum(${contextRetrievalEvents.staleChunks}), 0)`,
     })
     .from(contextRetrievalEvents)
     .where(whereClause)
@@ -198,6 +206,10 @@ export async function summarizeContextRetrievalEvents(db: Db, tenantId: string |
       : Number(row.avgRelevanceScore.toFixed(4)),
     lowRelevanceChunks: row?.lowRelevanceChunks ?? 0,
     rerankedChunks: row?.rerankedChunks ?? 0,
+    avgFreshnessScore: row?.avgFreshnessScore === null || row?.avgFreshnessScore === undefined
+      ? null
+      : Number(row.avgFreshnessScore.toFixed(4)),
+    staleChunks: row?.staleChunks ?? 0,
     efficiencyPct: pct(usedTokens, retrievedTokens),
     duplicateRatePct: pct(row?.duplicateChunks ?? 0, retrievedChunks),
     nearDuplicateRatePct: pct(row?.nearDuplicateChunks ?? 0, retrievedChunks),

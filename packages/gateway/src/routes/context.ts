@@ -103,6 +103,34 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
   ) {
     return { error: "minRelevanceScore must be a number between 0 and 1" };
   }
+  const freshnessMode = value.freshnessMode;
+  if (freshnessMode !== undefined && freshnessMode !== "off" && freshnessMode !== "metadata") {
+    return { error: "freshnessMode must be either off or metadata" };
+  }
+  const maxContextAgeDays = value.maxContextAgeDays;
+  if (
+    maxContextAgeDays !== undefined &&
+    (
+      typeof maxContextAgeDays !== "number" ||
+      !Number.isFinite(maxContextAgeDays) ||
+      maxContextAgeDays < 1 ||
+      maxContextAgeDays > 3650
+    )
+  ) {
+    return { error: "maxContextAgeDays must be a number between 1 and 3650" };
+  }
+  const referenceTime = value.referenceTime;
+  let parsedReferenceTime: Date | undefined;
+  if (referenceTime !== undefined) {
+    if (typeof referenceTime !== "string" || referenceTime.length > 64) {
+      return { error: "referenceTime must be an ISO timestamp string" };
+    }
+    const millis = Date.parse(referenceTime);
+    if (!Number.isFinite(millis)) {
+      return { error: "referenceTime must be an ISO timestamp string" };
+    }
+    parsedReferenceTime = new Date(millis);
+  }
 
   return {
     options: {
@@ -111,6 +139,9 @@ function validateDedupeOptions(value: Record<string, unknown>): { options?: Cont
       rankMode: rankMode === "lexical" ? "lexical" : "none",
       query: typeof query === "string" ? query : undefined,
       minRelevanceScore: typeof minRelevanceScore === "number" ? minRelevanceScore : undefined,
+      freshnessMode: freshnessMode === "metadata" ? "metadata" : "off",
+      maxContextAgeDays: typeof maxContextAgeDays === "number" ? maxContextAgeDays : undefined,
+      referenceTime: parsedReferenceTime,
     },
   };
 }
@@ -184,6 +215,12 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
   const avgRelevanceScore = relevanceScores.length === 0
     ? null
     : Number((relevanceScores.reduce((sum, score) => sum + score, 0) / relevanceScores.length).toFixed(4));
+  const freshnessScores = result.optimized
+    .map((chunk) => chunk.freshnessScore)
+    .filter((score): score is number => typeof score === "number");
+  const avgFreshnessScore = freshnessScores.length === 0
+    ? null
+    : Number((freshnessScores.reduce((sum, score) => sum + score, 0) / freshnessScores.length).toFixed(4));
   return {
     ...result,
     metrics: {
@@ -200,6 +237,8 @@ function recalculateMetrics(result: ContextOptimizationResult): ContextOptimizat
       lowRelevanceChunks: relevanceScores.length === 0
         ? 0
         : result.optimized.filter((chunk) => (chunk.relevanceScore ?? 0) < 0.2).length,
+      avgFreshnessScore,
+      staleChunks: result.optimized.filter((chunk) => chunk.stale).length,
     },
   };
 }

@@ -14,6 +14,8 @@ export interface OptimizedContextChunk {
   inputTokens: number;
   outputTokens: number;
   relevanceScore?: number;
+  freshnessScore?: number;
+  stale?: boolean;
 }
 
 export interface DroppedContextChunk {
@@ -56,6 +58,8 @@ export interface ContextOptimizationResult {
     avgRelevanceScore: number | null;
     lowRelevanceChunks: number;
     rerankedChunks: number;
+    avgFreshnessScore: number | null;
+    staleChunks: number;
   };
 }
 
@@ -65,6 +69,9 @@ export interface ContextOptimizationOptions {
   rankMode?: "none" | "lexical";
   query?: string;
   minRelevanceScore?: number;
+  freshnessMode?: "off" | "metadata";
+  maxContextAgeDays?: number;
+  referenceTime?: Date;
 }
 
 export function estimateContextTokens(text: string): number {
@@ -177,6 +184,79 @@ function applyLexicalRanking(
   };
 }
 
+const DAY_MS = 86_400_000;
+
+function readMetadataDate(metadata: Record<string, unknown> | undefined, keys: string[]): number | null {
+  if (!metadata) return null;
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const millis = value > 10_000_000_000 ? value : value * 1000;
+      if (millis > 0) return millis;
+    }
+    if (typeof value === "string" && value.length > 0 && value.length <= 64) {
+      const millis = Date.parse(value);
+      if (Number.isFinite(millis)) return millis;
+    }
+  }
+  return null;
+}
+
+function scoreFreshness(
+  chunk: OptimizedContextChunk,
+  referenceMs: number,
+  maxAgeDays: number,
+): { freshnessScore: number; stale: boolean } | null {
+  const expiresAt = readMetadataDate(chunk.metadata, ["expiresAt", "expires_at", "validUntil", "valid_until"]);
+  if (expiresAt !== null && expiresAt < referenceMs) {
+    return { freshnessScore: 0, stale: true };
+  }
+
+  const updatedAt = readMetadataDate(chunk.metadata, [
+    "updatedAt",
+    "updated_at",
+    "lastModified",
+    "last_modified",
+    "publishedAt",
+    "published_at",
+    "createdAt",
+    "created_at",
+  ]);
+  if (updatedAt === null) return null;
+
+  const ageDays = Math.max(0, (referenceMs - updatedAt) / DAY_MS);
+  const freshnessScore = Number(Math.max(0, 1 - (ageDays / maxAgeDays)).toFixed(4));
+  return { freshnessScore, stale: ageDays > maxAgeDays };
+}
+
+function applyFreshnessScoring(
+  chunks: OptimizedContextChunk[],
+  options: { enabled: boolean; maxAgeDays: number; referenceTime?: Date },
+): { chunks: OptimizedContextChunk[]; avgFreshnessScore: number | null; staleChunks: number } {
+  if (!options.enabled || chunks.length === 0) {
+    return { chunks, avgFreshnessScore: null, staleChunks: 0 };
+  }
+
+  const referenceMs = options.referenceTime?.getTime() ?? Date.now();
+  let scoredCount = 0;
+  let total = 0;
+  let staleChunks = 0;
+  const scoredChunks = chunks.map((chunk) => {
+    const freshness = scoreFreshness(chunk, referenceMs, options.maxAgeDays);
+    if (!freshness) return chunk;
+    scoredCount += 1;
+    total += freshness.freshnessScore;
+    if (freshness.stale) staleChunks += 1;
+    return { ...chunk, freshnessScore: freshness.freshnessScore, stale: freshness.stale };
+  });
+
+  return {
+    chunks: scoredChunks,
+    avgFreshnessScore: scoredCount === 0 ? null : Number((total / scoredCount).toFixed(4)),
+    staleChunks,
+  };
+}
+
 export function optimizeContextChunks(
   chunks: ContextChunk[],
   options: ContextOptimizationOptions = {},
@@ -185,6 +265,8 @@ export function optimizeContextChunks(
   const semanticThreshold = Math.max(0.5, Math.min(1, options.semanticThreshold ?? 0.72));
   const rankMode = options.rankMode ?? "none";
   const minRelevanceScore = Math.max(0, Math.min(1, options.minRelevanceScore ?? 0.2));
+  const freshnessMode = options.freshnessMode ?? "off";
+  const maxContextAgeDays = Math.max(1, Math.min(3650, options.maxContextAgeDays ?? 180));
   const seen = new Map<string, OptimizedContextChunk>();
   const optimized: OptimizedContextChunk[] = [];
   const dropped: DroppedContextChunk[] = [];
@@ -253,12 +335,17 @@ export function optimizeContextChunks(
   const ranking = rankMode === "lexical"
     ? applyLexicalRanking(optimized, options.query, minRelevanceScore)
     : { chunks: optimized, avgRelevanceScore: null, lowRelevanceChunks: 0, rerankedChunks: 0 };
+  const freshness = applyFreshnessScoring(ranking.chunks, {
+    enabled: freshnessMode === "metadata",
+    maxAgeDays: maxContextAgeDays,
+    referenceTime: options.referenceTime,
+  });
   const savedTokens = Math.max(0, inputTokens - outputTokens);
   const reductionPct = inputTokens === 0 ? 0 : Number(((savedTokens / inputTokens) * 100).toFixed(2));
   const nearDuplicateChunks = dropped.filter((chunk) => chunk.reason === "near_duplicate").length;
 
   return {
-    optimized: ranking.chunks,
+    optimized: freshness.chunks,
     dropped,
     flagged: [],
     quarantined: [],
@@ -276,6 +363,8 @@ export function optimizeContextChunks(
       avgRelevanceScore: ranking.avgRelevanceScore,
       lowRelevanceChunks: ranking.lowRelevanceChunks,
       rerankedChunks: ranking.rerankedChunks,
+      avgFreshnessScore: freshness.avgFreshnessScore,
+      staleChunks: freshness.staleChunks,
     },
   };
 }

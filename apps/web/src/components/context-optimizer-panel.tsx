@@ -16,6 +16,8 @@ export interface ContextOptimizationSummary {
   avgRelevanceScore: number | null;
   lowRelevanceChunks: number;
   rerankedChunks: number;
+  avgFreshnessScore: number | null;
+  staleChunks: number;
   flaggedChunks: number;
   quarantinedChunks: number;
   latestAt: string | null;
@@ -35,6 +37,8 @@ export interface ContextOptimizationEvent {
   avgRelevanceScore: number | null;
   lowRelevanceChunks: number;
   rerankedChunks: number;
+  avgFreshnessScore: number | null;
+  staleChunks: number;
   duplicateSourceIds: string[];
   nearDuplicateSourceIds: string[];
   riskScanned: boolean;
@@ -90,6 +94,8 @@ export interface ContextRetrievalSummary {
   avgRelevanceScore: number | null;
   lowRelevanceChunks: number;
   rerankedChunks: number;
+  avgFreshnessScore: number | null;
+  staleChunks: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -113,6 +119,8 @@ export interface ContextRetrievalEvent {
   avgRelevanceScore: number | null;
   lowRelevanceChunks: number;
   rerankedChunks: number;
+  avgFreshnessScore: number | null;
+  staleChunks: number;
   efficiencyPct: number;
   duplicateRatePct: number;
   nearDuplicateRatePct: number;
@@ -430,6 +438,12 @@ export function ContextOptimizerPanel() {
             detail={`${formatInteger(retrievalSummary?.lowRelevanceChunks ?? 0)} low, ${formatInteger(retrievalSummary?.rerankedChunks ?? 0)} reranked`}
             tone={metricTone(retrievalSummary?.avgRelevanceScore ?? 0)}
           />
+          <StatTile
+            label="Freshness"
+            value={formatRelevance(retrievalSummary?.avgFreshnessScore)}
+            detail={`${formatInteger(retrievalSummary?.staleChunks ?? 0)} stale chunks`}
+            tone={riskTone(retrievalSummary?.staleChunks ?? 0)}
+          />
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
           <StatTile
@@ -475,6 +489,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Chunks</th>
                     <th className="px-4 py-3 text-right font-medium">Efficiency</th>
                     <th className="px-4 py-3 text-right font-medium">Relevance</th>
+                    <th className="px-4 py-3 text-right font-medium">Freshness</th>
                     <th className="px-4 py-3 text-right font-medium">Duplicates</th>
                     <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Risky</th>
@@ -495,6 +510,12 @@ export function ContextOptimizerPanel() {
                         {formatRelevance(event.avgRelevanceScore)}
                         <span className="ml-2 text-xs text-zinc-500">
                           {formatInteger(event.lowRelevanceChunks)} low
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatRelevance(event.avgFreshnessScore)}
+                        <span className="ml-2 text-xs text-zinc-500">
+                          {formatInteger(event.staleChunks)} stale
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
@@ -654,6 +675,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Dropped</th>
                     <th className="px-4 py-3 text-right font-medium">Semantic</th>
                     <th className="px-4 py-3 text-right font-medium">Relevance</th>
+                    <th className="px-4 py-3 text-right font-medium">Freshness</th>
                     <th className="px-4 py-3 text-right font-medium">Risk</th>
                     <th className="px-4 py-3 text-right font-medium">Saved</th>
                     <th className="px-4 py-3 text-left font-medium">Duplicate IDs</th>
@@ -679,6 +701,12 @@ export function ContextOptimizerPanel() {
                           {formatRelevance(event.avgRelevanceScore)}
                           <span className="ml-2 text-xs text-zinc-500">
                             {formatInteger(event.rerankedChunks)}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                          {formatRelevance(event.avgFreshnessScore)}
+                          <span className="ml-2 text-xs text-zinc-500">
+                            {formatInteger(event.staleChunks)}
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">

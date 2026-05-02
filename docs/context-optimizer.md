@@ -9,6 +9,7 @@ The shipped V1 implementation is intentionally narrow:
 - Exact duplicate detection after whitespace normalization and case folding.
 - Optional semantic near-duplicate detection with deterministic token similarity.
 - Optional lexical relevance scoring and reranking for retained chunks.
+- Optional stale-context detection from bounded freshness metadata.
 - Source ID preservation when duplicate chunks are dropped.
 - Estimated token savings based on input and output context size.
 - Optional risk scanning with active Guardrails rules for retrieved context.
@@ -37,13 +38,18 @@ The request accepts already-retrieved context chunks:
   "rankMode": "lexical",
   "query": "What is the refund window?",
   "minRelevanceScore": 0.2,
+  "freshnessMode": "metadata",
+  "maxContextAgeDays": 180,
   "scanRisk": true,
   "chunks": [
     {
       "id": "doc-1:chunk-4",
       "content": "Refunds are available within 30 days.",
       "source": "help-center",
-      "metadata": { "url": "https://example.com/refunds" }
+      "metadata": {
+        "url": "https://example.com/refunds",
+        "updatedAt": "2026-04-01T00:00:00.000Z"
+      }
     },
     {
       "id": "doc-2:chunk-9",
@@ -56,17 +62,19 @@ The request accepts already-retrieved context chunks:
 
 The response includes:
 
-- `optimization.optimized`: chunks retained for model context, optionally reranked and scored.
+- `optimization.optimized`: chunks retained for model context, optionally reranked and scored for relevance/freshness.
 - `optimization.dropped`: exact duplicate and near-duplicate chunks removed from model context.
 - `optimization.flagged`: risky chunks removed from model context but marked for operator review.
 - `optimization.quarantined`: risky chunks removed from model context before provider routing.
-- `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, reduction percentage, and relevance metrics.
+- `optimization.metrics`: input/output chunk counts, estimated tokens, saved tokens, reduction percentage, relevance metrics, and freshness metrics.
 - `event`: the persisted visibility record for the optimization call.
 - `retrieval`: the persisted retrieval analytics record with efficiency, unused context, duplicate rate, and risky context rate.
 
 `dedupeMode` defaults to `exact` for backwards compatibility. Set `dedupeMode` to `semantic` to also remove near duplicates using deterministic token overlap scoring. `semanticThreshold` defaults to `0.72` and accepts values from `0.5` to `1`.
 
 `rankMode` defaults to `none`. Set `rankMode` to `lexical` and provide `query` to score retained chunks with deterministic token matching and stable reranking. Provara caps query tokens internally, stores aggregate relevance metrics only, and does not persist the query text. `minRelevanceScore` defaults to `0.2` and controls the low-relevance chunk count.
+
+`freshnessMode` defaults to `off`. Set `freshnessMode` to `metadata` to score retained chunks from bounded freshness metadata. Provara checks common fields such as `updatedAt`, `lastModified`, `publishedAt`, and `expiresAt`, stores aggregate freshness metrics only, and does not persist the full metadata payload. `maxContextAgeDays` defaults to `180`.
 
 `scanRisk` defaults to `false` for backwards compatibility. When enabled, Provara uses active Guardrails rules against the `retrieved_context` surface after duplicate removal. `flag` and `redact` actions become flagged context; `block` actions become quarantined context.
 
@@ -127,6 +135,7 @@ The Recent Events table shows:
 - Dropped chunk count.
 - Semantic near-duplicate count.
 - Average relevance score and reranked chunk count.
+- Average freshness score and stale chunk count.
 - Risk scan result, including flagged and quarantined counts.
 - Saved tokens and reduction percentage.
 - Exact duplicate and near-duplicate source IDs that were removed.
@@ -146,8 +155,9 @@ The Retrieval Analytics section shows:
 - Duplicate rate.
 - Semantic near-duplicate rate.
 - Average relevance score, low-relevance chunk count, and reranked chunk count.
+- Average freshness score and stale context count.
 - Risky context rate.
-- Recent retrieval events with used/retrieved chunks, relevance, duplicate/semantic/risky counts, and unused source IDs.
+- Recent retrieval events with used/retrieved chunks, relevance, freshness, duplicate/semantic/risky counts, and unused source IDs.
 
 ## Demo Mode
 

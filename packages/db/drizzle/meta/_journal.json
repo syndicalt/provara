@@ -358,6 +358,13 @@
       "when": 1777662300000,
       "tag": "0050_context_relevance_metrics",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1777664400000,
+      "tag": "0051_context_freshness_metrics",
+      "breakpoints": true
     }
   ]
 }
