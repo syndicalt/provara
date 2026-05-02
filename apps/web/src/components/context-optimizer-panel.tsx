@@ -219,6 +219,17 @@ export interface ContextSource {
   updatedAt: string;
 }
 
+export interface ContextConnectorCredential {
+  id: string;
+  tenantId: string;
+  name: string;
+  type: "github_token";
+  hasSecret: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface BulkCanonicalResult {
   id: string;
   ok: boolean;
@@ -243,6 +254,7 @@ interface LoadState {
   retrievalEvents: ContextRetrievalEvent[];
   collections: ContextCollection[];
   sources: ContextSource[];
+  credentials: ContextConnectorCredential[];
   canonicalBlocks: ContextCanonicalBlock[];
   loading: boolean;
   error: string | null;
@@ -335,6 +347,10 @@ function contextSourceHasAuth(source: ContextSource): boolean {
     ? source.metadata.github as Record<string, unknown>
     : {};
   return typeof github.credentialId === "string" && github.credentialId.length > 0;
+}
+
+function parseCsv(value: string): string[] {
+  return value.split(",").map((part) => part.trim()).filter(Boolean);
 }
 
 function metricTone(value: number): string {
@@ -633,6 +649,24 @@ export function ContextOptimizerPanel() {
   const [selectedCanonicalIds, setSelectedCanonicalIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<"policy" | "approve" | "reject" | null>(null);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [credentialDraft, setCredentialDraft] = useState({ name: "", value: "" });
+  const [credentialSubmitting, setCredentialSubmitting] = useState(false);
+  const [credentialMessage, setCredentialMessage] = useState<string | null>(null);
+  const [sourceDraft, setSourceDraft] = useState({
+    name: "",
+    owner: "",
+    repo: "",
+    branch: "main",
+    path: "",
+    extensions: ".md,.mdx,.txt,.rst,.adoc",
+    maxFiles: "100",
+    maxFileBytes: "250000",
+    credentialId: "",
+  });
+  const [sourceSubmitting, setSourceSubmitting] = useState(false);
+  const [sourceMessage, setSourceMessage] = useState<string | null>(null);
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [state, setState] = useState<LoadState>({
     summary: null,
     events: [],
@@ -642,6 +676,7 @@ export function ContextOptimizerPanel() {
     retrievalEvents: [],
     collections: [],
     sources: [],
+    credentials: [],
     canonicalBlocks: [],
     loading: true,
     error: null,
@@ -663,6 +698,7 @@ export function ContextOptimizerPanel() {
           retrievalSummaryRes,
           retrievalEventsRes,
           collectionsRes,
+          credentialsRes,
         ] = await Promise.all([
           gatewayFetchRaw("/v1/context/summary"),
           gatewayFetchRaw("/v1/context/events?limit=25"),
@@ -671,6 +707,7 @@ export function ContextOptimizerPanel() {
           gatewayFetchRaw("/v1/context/retrieval/summary"),
           gatewayFetchRaw("/v1/context/retrieval/events?limit=10"),
           gatewayFetchRaw("/v1/context/collections"),
+          gatewayFetchRaw("/v1/context/credentials"),
         ]);
 
         const responses = [
@@ -681,6 +718,7 @@ export function ContextOptimizerPanel() {
           retrievalSummaryRes,
           retrievalEventsRes,
           collectionsRes,
+          credentialsRes,
         ];
         if (
           responses.some((res) => res.status === 402)
@@ -698,6 +736,7 @@ export function ContextOptimizerPanel() {
               retrievalEvents: [],
               collections: [],
               sources: [],
+              credentials: [],
               canonicalBlocks: [],
               loading: false,
               error: null,
@@ -721,6 +760,7 @@ export function ContextOptimizerPanel() {
         const retrievalSummaryBody = await retrievalSummaryRes.json() as { summary: ContextRetrievalSummary };
         const retrievalEventsBody = await retrievalEventsRes.json() as { events: ContextRetrievalEvent[] };
         const collectionsBody = await collectionsRes.json() as { collections: ContextCollection[] };
+        const credentialsBody = await credentialsRes.json() as { credentials?: ContextConnectorCredential[] };
         let canonicalBlocks: ContextCanonicalBlock[] = [];
         let sources: ContextSource[] = [];
         const firstCollection = collectionsBody.collections[0];
@@ -751,6 +791,7 @@ export function ContextOptimizerPanel() {
             retrievalEvents: retrievalEventsBody.events,
             collections: collectionsBody.collections,
             sources,
+            credentials: credentialsBody.credentials ?? [],
             canonicalBlocks,
             loading: false,
             error: null,
@@ -768,6 +809,7 @@ export function ContextOptimizerPanel() {
             retrievalEvents: [],
             collections: [],
             sources: [],
+            credentials: [],
             canonicalBlocks: [],
             loading: false,
             error: err instanceof Error ? err.message : "Failed to load Context Optimizer data",
@@ -791,7 +833,9 @@ export function ContextOptimizerPanel() {
   const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
   const collectionRows = useMemo(() => state.collections, [state.collections]);
   const sourceRows = useMemo(() => state.sources, [state.sources]);
+  const credentialRows = useMemo(() => state.credentials, [state.credentials]);
   const canonicalRows = useMemo(() => state.canonicalBlocks, [state.canonicalBlocks]);
+  const firstCollection = collectionRows[0] ?? null;
   const visibleCanonicalRows = useMemo(() => canonicalRows.slice(0, 10), [canonicalRows]);
   const selectedCanonicalSet = useMemo(() => new Set(selectedCanonicalIds), [selectedCanonicalIds]);
   const selectedVisibleCount = visibleCanonicalRows.filter((block) => selectedCanonicalSet.has(block.id)).length;
@@ -822,6 +866,106 @@ export function ContextOptimizerPanel() {
       }
       return Array.from(next);
     });
+  }
+
+  async function createCredential() {
+    if (!credentialDraft.name.trim() || !credentialDraft.value.trim()) return;
+    setCredentialSubmitting(true);
+    setCredentialMessage(null);
+    try {
+      const res = await gatewayFetchRaw("/v1/context/credentials", {
+        method: "POST",
+        body: JSON.stringify({
+          name: credentialDraft.name.trim(),
+          type: "github_token",
+          value: credentialDraft.value,
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save credential");
+      const body = await res.json() as { credential: ContextConnectorCredential };
+      setState((prev) => ({
+        ...prev,
+        credentials: [
+          body.credential,
+          ...prev.credentials.filter((credential) => credential.id !== body.credential.id),
+        ],
+      }));
+      setCredentialDraft({ name: "", value: "" });
+      setSourceDraft((prev) => ({ ...prev, credentialId: body.credential.id }));
+      setCredentialMessage("Credential saved.");
+    } catch (err) {
+      setCredentialMessage(err instanceof Error ? err.message : "Failed to save credential");
+    } finally {
+      setCredentialSubmitting(false);
+    }
+  }
+
+  async function createGitHubSource() {
+    if (!firstCollection || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()) return;
+    setSourceSubmitting(true);
+    setSourceMessage(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: sourceDraft.name.trim(),
+          type: "github_repository",
+          github: {
+            owner: sourceDraft.owner.trim(),
+            repo: sourceDraft.repo.trim(),
+            branch: sourceDraft.branch.trim() || "main",
+            path: sourceDraft.path.trim() || undefined,
+            credentialId: sourceDraft.credentialId || undefined,
+            extensions: parseCsv(sourceDraft.extensions),
+            maxFiles: Number(sourceDraft.maxFiles) || 100,
+            maxFileBytes: Number(sourceDraft.maxFileBytes) || 250000,
+          },
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to create GitHub source");
+      const body = await res.json() as { source: ContextSource };
+      setState((prev) => ({
+        ...prev,
+        sources: [
+          body.source,
+          ...prev.sources.filter((source) => source.id !== body.source.id),
+        ],
+      }));
+      setSourceDraft((prev) => ({
+        ...prev,
+        name: "",
+        owner: "",
+        repo: "",
+        path: "",
+      }));
+      setSourceMessage("GitHub source created.");
+    } catch (err) {
+      setSourceMessage(err instanceof Error ? err.message : "Failed to create GitHub source");
+    } finally {
+      setSourceSubmitting(false);
+    }
+  }
+
+  async function syncSource(sourceId: string) {
+    setSyncingSourceId(sourceId);
+    setSyncMessage(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/context/sources/${sourceId}/sync`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to sync source");
+      const body = await res.json() as { source: ContextSource; collection?: ContextCollection; synced?: boolean };
+      setState((prev) => ({
+        ...prev,
+        sources: prev.sources.map((source) => source.id === body.source.id ? body.source : source),
+        collections: body.collection
+          ? prev.collections.map((collection) => collection.id === body.collection?.id ? body.collection as ContextCollection : collection)
+          : prev.collections,
+      }));
+      setSyncMessage(body.synced === false ? "Sync complete: no changes." : "Sync complete.");
+    } catch (err) {
+      setSyncMessage(err instanceof Error ? err.message : "Failed to sync source");
+    } finally {
+      setSyncingSourceId(null);
+    }
   }
 
   async function runBulkPolicyCheck() {
@@ -1017,8 +1161,204 @@ export function ContextOptimizerPanel() {
 
       <section>
         <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Connector Management</h2>
+          <p className="mt-1 text-sm text-zinc-500">Credential metadata, GitHub repository sources, and manual source sync controls.</p>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">GitHub Token Credentials</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-credential-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  Credential Name
+                </label>
+                <input
+                  id="context-credential-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={credentialDraft.name}
+                  onChange={(event) => setCredentialDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-credential-value" className="text-xs font-medium uppercase tracking-wider text-zinc-500">
+                  Token
+                </label>
+                <input
+                  id="context-credential-value"
+                  type="password"
+                  autoComplete="off"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={credentialDraft.value}
+                  onChange={(event) => setCredentialDraft((prev) => ({ ...prev, value: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={credentialSubmitting || !credentialDraft.name.trim() || !credentialDraft.value.trim()}
+                onClick={() => void createCredential()}
+              >
+                {credentialSubmitting ? "Saving..." : "Save Credential"}
+              </button>
+              {credentialMessage && <span className="text-xs text-zinc-400">{credentialMessage}</span>}
+            </div>
+
+            <div className="mt-4 overflow-hidden rounded-md border border-zinc-800">
+              {credentialRows.length === 0 ? (
+                <div className="p-4 text-sm text-zinc-500">No connector credentials yet.</div>
+              ) : (
+                <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                  <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium">Name</th>
+                      <th className="px-3 py-2 text-left font-medium">Secret</th>
+                      <th className="px-3 py-2 text-left font-medium">Last Used</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800">
+                    {credentialRows.map((credential) => (
+                      <tr key={credential.id}>
+                        <td className="px-3 py-2">
+                          <div className="font-medium text-zinc-200">{credential.name}</div>
+                          <div className="mt-0.5 text-xs text-zinc-500">{credential.type}</div>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2">
+                          <span className={`rounded border px-2 py-0.5 text-xs ${
+                            credential.hasSecret
+                              ? "border-emerald-900/70 bg-emerald-950/20 text-emerald-200"
+                              : "border-zinc-800 bg-zinc-950/50 text-zinc-400"
+                          }`}>
+                            {credential.hasSecret ? "Stored" : "Missing"}
+                          </span>
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 text-zinc-400">{formatTimestamp(credential.lastUsedAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <h3 className="text-sm font-semibold text-zinc-100">GitHub Source</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="context-source-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Source Name</label>
+                <input
+                  id="context-source-name"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.name}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, name: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-source-credential" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Credential</label>
+                <select
+                  id="context-source-credential"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.credentialId}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, credentialId: event.target.value }))}
+                >
+                  <option value="">No credential</option>
+                  {credentialRows.map((credential) => (
+                    <option key={credential.id} value={credential.id}>{credential.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="context-source-owner" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Owner</label>
+                <input
+                  id="context-source-owner"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.owner}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, owner: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-source-repo" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Repository</label>
+                <input
+                  id="context-source-repo"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.repo}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, repo: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-source-branch" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Branch</label>
+                <input
+                  id="context-source-branch"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.branch}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, branch: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-source-path" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Path</label>
+                <input
+                  id="context-source-path"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.path}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, path: event.target.value }))}
+                />
+              </div>
+              <div>
+                <label htmlFor="context-source-extensions" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Extensions</label>
+                <input
+                  id="context-source-extensions"
+                  className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                  value={sourceDraft.extensions}
+                  onChange={(event) => setSourceDraft((prev) => ({ ...prev, extensions: event.target.value }))}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="context-source-max-files" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Max Files</label>
+                  <input
+                    id="context-source-max-files"
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                    value={sourceDraft.maxFiles}
+                    onChange={(event) => setSourceDraft((prev) => ({ ...prev, maxFiles: event.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="context-source-max-bytes" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Max Bytes</label>
+                  <input
+                    id="context-source-max-bytes"
+                    type="number"
+                    min="1"
+                    className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                    value={sourceDraft.maxFileBytes}
+                    onChange={(event) => setSourceDraft((prev) => ({ ...prev, maxFileBytes: event.target.value }))}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <button
+                type="button"
+                className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={sourceSubmitting || !firstCollection || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()}
+                onClick={() => void createGitHubSource()}
+              >
+                {sourceSubmitting ? "Creating..." : "Create Source"}
+              </button>
+              {sourceMessage && <span className="text-xs text-zinc-400">{sourceMessage}</span>}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3">
           <h2 className="text-lg font-semibold text-zinc-100">Collection Sources</h2>
           <p className="mt-1 text-sm text-zinc-500">Manual connector sources and sync status for the first managed collection.</p>
+          {syncMessage && <p className="mt-1 text-xs text-zinc-400">{syncMessage}</p>}
         </div>
 
         {state.loading ? (
@@ -1040,6 +1380,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Documents</th>
                     <th className="px-4 py-3 text-left font-medium">Last Synced</th>
                     <th className="px-4 py-3 text-left font-medium">Updated</th>
+                    <th className="px-4 py-3 text-right font-medium">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800">
@@ -1081,6 +1422,16 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
                         {formatTimestamp(source.updatedAt)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={syncingSourceId !== null}
+                          onClick={() => void syncSource(source.id)}
+                        >
+                          {syncingSourceId === source.id ? "Syncing..." : "Sync"}
+                        </button>
                       </td>
                     </tr>
                   ))}

@@ -179,6 +179,22 @@ describe("ContextOptimizerPanel", () => {
           ],
         }));
       }
+      if (path === "/v1/context/credentials") {
+        return Promise.resolve(jsonResponse({
+          credentials: [
+            {
+              id: "cred-1",
+              tenantId: "tenant-pro",
+              name: "GitHub Docs",
+              type: "github_token",
+              hasSecret: true,
+              lastUsedAt: "2026-05-01T22:04:00.000Z",
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T22:04:00.000Z",
+            },
+          ],
+        }));
+      }
       if (path === "/v1/context/collections/collection-1/canonical-blocks?reviewStatus=draft") {
         return Promise.resolve(jsonResponse({
           canonicalBlocks: [
@@ -366,6 +382,11 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getByText("Managed Collections")).toBeInTheDocument();
     expect(screen.getByText("Support KB")).toBeInTheDocument();
     expect(screen.getByText("Approved support context")).toBeInTheDocument();
+    expect(screen.getByText("Connector Management")).toBeInTheDocument();
+    expect(screen.getByText("GitHub Token Credentials")).toBeInTheDocument();
+    expect(screen.getByText("GitHub Source")).toBeInTheDocument();
+    expect(screen.getAllByText("GitHub Docs").length).toBeGreaterThan(0);
+    expect(screen.getByText("Stored")).toBeInTheDocument();
     expect(screen.getByText("Collection Sources")).toBeInTheDocument();
     expect(screen.getByText("Refund source")).toBeInTheDocument();
     expect(screen.getByText("file://refunds.md")).toBeInTheDocument();
@@ -385,6 +406,224 @@ describe("ContextOptimizerPanel", () => {
     fireEvent.click(screen.getByText("Approve"));
     expect(await screen.findByText("Bulk approved: 1 updated, 0 failed.")).toBeInTheDocument();
     expect(screen.getByText("No draft canonical blocks in the first managed collection.")).toBeInTheDocument();
+  });
+
+  it("creates GitHub credentials, creates sources, and syncs source rows without rendering secrets", async () => {
+    mockedFetch.mockImplementation((path, init) => {
+      if (path === "/v1/context/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            inputChunks: 0,
+            outputChunks: 0,
+            droppedChunks: 0,
+            nearDuplicateChunks: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            savedTokens: 0,
+            reductionPct: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            flaggedChunks: 0,
+            quarantinedChunks: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            regressedCount: 0,
+            avgRawScore: null,
+            avgOptimizedScore: null,
+            avgDelta: null,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            retrievedChunks: 0,
+            usedChunks: 0,
+            unusedChunks: 0,
+            duplicateChunks: 0,
+            nearDuplicateChunks: 0,
+            riskyChunks: 0,
+            retrievedTokens: 0,
+            usedTokens: 0,
+            unusedTokens: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            efficiencyPct: 0,
+            duplicateRatePct: 0,
+            nearDuplicateRatePct: 0,
+            riskyRatePct: 0,
+            conflictRatePct: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({
+          collections: [
+            {
+              id: "collection-1",
+              tenantId: "tenant-pro",
+              name: "Support KB",
+              description: "Approved support context",
+              status: "active",
+              documentCount: 0,
+              blockCount: 0,
+              canonicalBlockCount: 0,
+              approvedBlockCount: 0,
+              tokenCount: 0,
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T20:00:00.000Z",
+            },
+          ],
+        }));
+      }
+      if (path === "/v1/context/credentials" && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          name: "Docs token",
+          type: "github_token",
+          value: "ghp_secret_token_123",
+        });
+        return Promise.resolve(jsonResponse({
+          credential: {
+            id: "cred-new",
+            tenantId: "tenant-pro",
+            name: "Docs token",
+            type: "github_token",
+            hasSecret: true,
+            lastUsedAt: null,
+            createdAt: "2026-05-01T22:10:00.000Z",
+            updatedAt: "2026-05-01T22:10:00.000Z",
+          },
+        }));
+      }
+      if (path === "/v1/context/credentials") {
+        return Promise.resolve(jsonResponse({ credentials: [] }));
+      }
+      if (path === "/v1/context/collections/collection-1/sources" && init?.method === "POST") {
+        expect(JSON.parse(String(init.body))).toMatchObject({
+          name: "Docs repo",
+          type: "github_repository",
+          github: {
+            owner: "acme",
+            repo: "docs",
+            branch: "main",
+            path: "docs",
+            credentialId: "cred-new",
+            extensions: [".md", ".mdx"],
+            maxFiles: 50,
+            maxFileBytes: 125000,
+          },
+        });
+        return Promise.resolve(jsonResponse({
+          source: {
+            id: "source-new",
+            collectionId: "collection-1",
+            name: "Docs repo",
+            type: "github_repository",
+            externalId: "github:acme/docs:main:docs",
+            sourceUri: "https://github.com/acme/docs/tree/main",
+            syncStatus: "pending",
+            lastSyncedAt: null,
+            lastDocumentId: null,
+            documentCount: 0,
+            lastError: null,
+            metadata: { github: { owner: "acme", repo: "docs", branch: "main", path: "docs", credentialId: "cred-new" } },
+            updatedAt: "2026-05-01T22:11:00.000Z",
+          },
+        }));
+      }
+      if (path === "/v1/context/collections/collection-1/sources") {
+        return Promise.resolve(jsonResponse({ sources: [] }));
+      }
+      if (path === "/v1/context/sources/source-new/sync") {
+        return Promise.resolve(jsonResponse({
+          synced: true,
+          collection: {
+            id: "collection-1",
+            tenantId: "tenant-pro",
+            name: "Support KB",
+            description: "Approved support context",
+            status: "active",
+            documentCount: 1,
+            blockCount: 3,
+            canonicalBlockCount: 1,
+            approvedBlockCount: 0,
+            tokenCount: 250,
+            createdAt: "2026-05-01T20:00:00.000Z",
+            updatedAt: "2026-05-01T22:12:00.000Z",
+          },
+          source: {
+            id: "source-new",
+            collectionId: "collection-1",
+            name: "Docs repo",
+            type: "github_repository",
+            externalId: "github:acme/docs:main:docs",
+            sourceUri: "https://github.com/acme/docs/tree/main",
+            syncStatus: "synced",
+            lastSyncedAt: "2026-05-01T22:12:00.000Z",
+            lastDocumentId: "doc-new",
+            documentCount: 1,
+            lastError: null,
+            metadata: { github: { owner: "acme", repo: "docs", branch: "main", path: "docs", credentialId: "cred-new" } },
+            updatedAt: "2026-05-01T22:12:00.000Z",
+          },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ events: [] }));
+    });
+
+    render(<ContextOptimizerPanel />);
+
+    expect(await screen.findByText("Connector Management")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Credential Name"), { target: { value: "Docs token" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "ghp_secret_token_123" } });
+    fireEvent.click(screen.getByText("Save Credential"));
+
+    expect(await screen.findByText("Credential saved.")).toBeInTheDocument();
+    expect(screen.getAllByText("Docs token").length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("ghp_secret_token_123");
+
+    fireEvent.change(screen.getByLabelText("Source Name"), { target: { value: "Docs repo" } });
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "docs" } });
+    fireEvent.change(screen.getByLabelText("Path"), { target: { value: "docs" } });
+    fireEvent.change(screen.getByLabelText("Extensions"), { target: { value: ".md,.mdx" } });
+    fireEvent.change(screen.getByLabelText("Max Files"), { target: { value: "50" } });
+    fireEvent.change(screen.getByLabelText("Max Bytes"), { target: { value: "125000" } });
+    fireEvent.click(screen.getByText("Create Source"));
+
+    expect(await screen.findByText("GitHub source created.")).toBeInTheDocument();
+    expect(screen.getByText("acme/docs@main/docs")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sync" }));
+    expect(await screen.findByText("Sync complete.")).toBeInTheDocument();
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+    expect(screen.getByText("synced")).toBeInTheDocument();
   });
 
   it("updates and persists optimizer payload controls", async () => {

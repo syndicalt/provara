@@ -38,6 +38,7 @@ Implemented as of `0.2.0`:
 - Connector ingestion foundation with tenant-scoped manual sources, idempotent sync, failed-sync status, and dashboard source visibility.
 - GitHub repository connector v1 with bounded tree/blob ingestion, SHA-based idempotency, and dashboard source details.
 - Connector credential auth foundation with encrypted GitHub token storage and source binding.
+- Dashboard connector management for GitHub credential creation, GitHub source creation, and manual source sync.
 
 Next planned layer:
 - Additional external connector implementations.
@@ -136,6 +137,7 @@ Foundation shipped:
 - GitHub repo/path/SHA provenance on stored documents and blocks.
 - Encrypted tenant-scoped connector credentials for GitHub tokens.
 - Source-level credential binding without exposing secret values in API or dashboard responses.
+- Dashboard controls for creating GitHub credentials and repository sources, plus manual sync from source rows.
 
 Candidate connectors:
 - Confluence.

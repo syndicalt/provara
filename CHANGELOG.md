@@ -34,6 +34,7 @@ All notable Provara changes are tracked here.
   - Connector ingestion foundation with tenant-scoped manual sources, idempotent source sync into managed documents and blocks, failed-sync status, and dashboard source visibility.
   - GitHub repository connector v1 with bounded tree/blob ingestion, path/extension/file-size filters, SHA-based idempotency, repo/path/SHA provenance, and dashboard source details.
   - Connector credential auth foundation with encrypted tenant-scoped GitHub tokens, credential-bound source sync, no secret echo in API responses, and dashboard auth status.
+  - Context dashboard connector management for creating GitHub credentials, creating GitHub repository sources, and manually syncing source rows without rendering secrets.
   - Context Optimizer dashboard configuration controls for optimizer modes, thresholds, risk scanning, local draft persistence, and copyable API payloads.
 - Prompt Injection Firewall preset for built-in instruction override, system prompt extraction, role takeover, and delimiter-injection signatures.
 - Source-aware firewall scan API: `POST /v1/admin/guardrails/scan` supports `user_input`, `retrieved_context`, `tool_output`, and `model_output`.
@@ -48,7 +49,7 @@ All notable Provara changes are tracked here.
 
 ### Changed
 
-- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, context governance alerts, connector ingestion foundation, GitHub repository connector v1, and connector credential auth foundation as shipped checkpoints.
+- Context Optimizer roadmap now marks V1 runtime optimization, V1.1 dashboard visibility, risk-aware optimization, V1.2 quality scoring, retrieval analytics, semantic near-duplicate detection, lexical relevance reranking, embedding relevance reranking, stale-context detection, conflicting-context detection, scored contradiction bands, extractive and abstractive compression, dashboard configuration controls, managed context collections, canonical block distillation, canonical review audit trails, canonical policy checks, bulk review actions, context governance alerts, connector ingestion foundation, GitHub repository connector v1, connector credential auth foundation, and dashboard connector management as shipped checkpoints.
 - Guardrails documentation now treats Prompt Injection Firewalling as a first-class guardrails capability.
 - The Guardrails dashboard custom-rule creation button now lives beside the Custom Rules table.
 - Streaming tool-call responses can buffer tool-call deltas until alignment checks pass.
