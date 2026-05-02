@@ -181,6 +181,19 @@ export interface ContextCollection {
   updatedAt: string;
 }
 
+export interface ContextCanonicalBlock {
+  id: string;
+  collectionId: string;
+  content: string;
+  tokenCount: number;
+  sourceCount: number;
+  reviewStatus: "draft" | "approved" | "rejected";
+  reviewNote: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  updatedAt: string;
+}
+
 interface GateState {
   message: string;
   upgradeUrl?: string;
@@ -194,6 +207,7 @@ interface LoadState {
   retrievalSummary: ContextRetrievalSummary | null;
   retrievalEvents: ContextRetrievalEvent[];
   collections: ContextCollection[];
+  canonicalBlocks: ContextCanonicalBlock[];
   loading: boolean;
   error: string | null;
   gate: GateState | null;
@@ -561,6 +575,7 @@ export function ContextOptimizerPanel() {
     retrievalSummary: null,
     retrievalEvents: [],
     collections: [],
+    canonicalBlocks: [],
     loading: true,
     error: null,
     gate: null,
@@ -615,6 +630,7 @@ export function ContextOptimizerPanel() {
               retrievalSummary: null,
               retrievalEvents: [],
               collections: [],
+              canonicalBlocks: [],
               loading: false,
               error: null,
               gate: {
@@ -637,6 +653,15 @@ export function ContextOptimizerPanel() {
         const retrievalSummaryBody = await retrievalSummaryRes.json() as { summary: ContextRetrievalSummary };
         const retrievalEventsBody = await retrievalEventsRes.json() as { events: ContextRetrievalEvent[] };
         const collectionsBody = await collectionsRes.json() as { collections: ContextCollection[] };
+        let canonicalBlocks: ContextCanonicalBlock[] = [];
+        const firstCollection = collectionsBody.collections[0];
+        if (firstCollection && firstCollection.canonicalBlockCount > 0) {
+          const canonicalRes = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/canonical-blocks?reviewStatus=draft`);
+          if (canonicalRes.ok) {
+            const canonicalBody = await canonicalRes.json() as { canonicalBlocks: ContextCanonicalBlock[] };
+            canonicalBlocks = canonicalBody.canonicalBlocks;
+          }
+        }
 
         if (!cancelled) {
           setState({
@@ -647,6 +672,7 @@ export function ContextOptimizerPanel() {
             retrievalSummary: retrievalSummaryBody.summary,
             retrievalEvents: retrievalEventsBody.events,
             collections: collectionsBody.collections,
+            canonicalBlocks,
             loading: false,
             error: null,
             gate: null,
@@ -662,6 +688,7 @@ export function ContextOptimizerPanel() {
             retrievalSummary: null,
             retrievalEvents: [],
             collections: [],
+            canonicalBlocks: [],
             loading: false,
             error: err instanceof Error ? err.message : "Failed to load Context Optimizer data",
             gate: null,
@@ -683,6 +710,7 @@ export function ContextOptimizerPanel() {
   const retrievalSummary = state.retrievalSummary;
   const retrievalRows = useMemo(() => state.retrievalEvents, [state.retrievalEvents]);
   const collectionRows = useMemo(() => state.collections, [state.collections]);
+  const canonicalRows = useMemo(() => state.canonicalBlocks, [state.canonicalBlocks]);
 
   return (
     <div className="space-y-6">
@@ -807,6 +835,61 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
                         {formatTimestamp(collection.updatedAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-semibold text-zinc-100">Canonical Review Queue</h2>
+          <p className="mt-1 text-sm text-zinc-500">Draft canonical blocks awaiting approval.</p>
+        </div>
+
+        {state.loading ? (
+          <LoadingRows />
+        ) : canonicalRows.length === 0 ? (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-8 text-center text-sm text-zinc-400">
+            No draft canonical blocks in the first managed collection.
+          </div>
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-800 text-sm">
+                <thead className="bg-zinc-950/60 text-xs uppercase tracking-wider text-zinc-500">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Content</th>
+                    <th className="px-4 py-3 text-right font-medium">Sources</th>
+                    <th className="px-4 py-3 text-right font-medium">Tokens</th>
+                    <th className="px-4 py-3 text-left font-medium">Status</th>
+                    <th className="px-4 py-3 text-left font-medium">Updated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-800">
+                  {canonicalRows.slice(0, 10).map((block) => (
+                    <tr key={block.id}>
+                      <td className="max-w-3xl px-4 py-3 text-zinc-300">
+                        <div className="line-clamp-2">{block.content}</div>
+                        {block.reviewNote && <div className="mt-1 text-xs text-zinc-500">{block.reviewNote}</div>}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(block.sourceCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-zinc-300">
+                        {formatInteger(block.tokenCount)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3">
+                        <span className="rounded border border-amber-900/70 bg-amber-950/20 px-2 py-0.5 text-xs capitalize text-amber-200">
+                          {block.reviewStatus}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
+                        {formatTimestamp(block.updatedAt)}
                       </td>
                     </tr>
                   ))}

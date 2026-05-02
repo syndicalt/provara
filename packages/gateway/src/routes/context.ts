@@ -34,13 +34,14 @@ import {
   exportApprovedContextBlocks,
   ingestContextDocument,
   listContextCanonicalBlocks,
+  listContextCanonicalReviewEvents,
   listContextCollections,
   updateContextCanonicalBlockReview,
   validateCreateCollectionBody,
   validateIngestDocumentBody,
   validateReviewStatusBody,
 } from "../context/store.js";
-import { getTenantId } from "../auth/tenant.js";
+import { getSessionUserId, getTenantId } from "../auth/tenant.js";
 import { ensureBuiltInRules, loadRules, scanContent } from "../guardrails/engine.js";
 import type { ProviderRegistry } from "../providers/index.js";
 import type { Provider } from "../providers/types.js";
@@ -750,7 +751,10 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
     }
 
     try {
-      const canonicalBlock = await updateContextCanonicalBlockReview(db, tenantId, blockId, parsed.value.reviewStatus);
+      const canonicalBlock = await updateContextCanonicalBlockReview(db, tenantId, blockId, parsed.value.reviewStatus, {
+        note: parsed.value.note,
+        actorUserId: getSessionUserId(c.req.raw),
+      });
       return c.json({ canonicalBlock });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update canonical block";
@@ -760,6 +764,15 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
         notFound ? 404 : 500,
       );
     }
+  });
+
+  app.get("/canonical-review-events", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const rawLimit = Number(c.req.query("limit") ?? 25);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 25;
+    const collectionId = c.req.query("collectionId") || undefined;
+    const events = await listContextCanonicalReviewEvents(db, tenantId, { collectionId, limit });
+    return c.json({ events });
   });
 
   app.get("/collections/:id/export", async (c) => {

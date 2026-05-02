@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Db } from "@provara/db";
-import { contextBlocks, contextCanonicalBlocks, contextCollections, contextDocuments } from "@provara/db";
+import {
+  contextBlocks,
+  contextCanonicalBlocks,
+  contextCanonicalReviewEvents,
+  contextCollections,
+  contextDocuments,
+} from "@provara/db";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { tenantFilter, tenantScoped } from "../auth/tenant.js";
@@ -12,6 +18,7 @@ const MAX_DOCUMENT_TITLE_CHARS = 200;
 const MAX_SOURCE_CHARS = 120;
 const MAX_SOURCE_URI_CHARS = 2_000;
 const MAX_METADATA_CHARS = 20_000;
+const MAX_REVIEW_NOTE_CHARS = 2_000;
 const MAX_INGEST_TEXT_CHARS = 500_000;
 const TARGET_BLOCK_CHARS = 1_800;
 const MIN_BOUNDARY_CHARS = 900;
@@ -43,9 +50,24 @@ export interface ContextCanonicalBlock {
   sourceDocumentIds: string[];
   sourceCount: number;
   reviewStatus: "draft" | "approved" | "rejected";
+  reviewNote: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: Date | null;
   metadata: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ContextCanonicalReviewEvent {
+  id: string;
+  tenantId: string | null;
+  collectionId: string;
+  canonicalBlockId: string;
+  fromStatus: ContextCanonicalBlock["reviewStatus"];
+  toStatus: ContextCanonicalBlock["reviewStatus"];
+  note: string | null;
+  actorUserId: string | null;
+  createdAt: Date;
 }
 
 export interface ContextDocument {
@@ -142,9 +164,26 @@ function canonicalBlockFromRow(row: typeof contextCanonicalBlocks.$inferSelect):
     sourceDocumentIds: parseStringArray(row.sourceDocumentIds),
     sourceCount: row.sourceCount,
     reviewStatus: row.reviewStatus,
+    reviewNote: row.reviewNote,
+    reviewedByUserId: row.reviewedByUserId,
+    reviewedAt: row.reviewedAt,
     metadata: parseMetadata(row.metadata),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function reviewEventFromRow(row: typeof contextCanonicalReviewEvents.$inferSelect): ContextCanonicalReviewEvent {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    collectionId: row.collectionId,
+    canonicalBlockId: row.canonicalBlockId,
+    fromStatus: row.fromStatus,
+    toStatus: row.toStatus,
+    note: row.note,
+    actorUserId: row.actorUserId,
+    createdAt: row.createdAt,
   };
 }
 
@@ -266,15 +305,18 @@ export function validateIngestDocumentBody(value: unknown): ValidationResult<Ing
   };
 }
 
-export function validateReviewStatusBody(value: unknown): ValidationResult<{ reviewStatus: ContextCanonicalBlock["reviewStatus"] }> {
+export function validateReviewStatusBody(value: unknown): ValidationResult<{ reviewStatus: ContextCanonicalBlock["reviewStatus"]; note?: string }> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return { error: "body must be an object" };
   }
-  const reviewStatus = (value as Record<string, unknown>).reviewStatus;
+  const body = value as Record<string, unknown>;
+  const reviewStatus = body.reviewStatus;
   if (reviewStatus !== "draft" && reviewStatus !== "approved" && reviewStatus !== "rejected") {
     return { error: "reviewStatus must be draft, approved, or rejected" };
   }
-  return { value: { reviewStatus } };
+  const note = trimOptional(body.note, "note", MAX_REVIEW_NOTE_CHARS);
+  if (note.error) return { error: note.error };
+  return { value: { reviewStatus, note: note.value } };
 }
 
 export function chunkContextText(text: string): string[] {
@@ -532,6 +574,7 @@ export async function updateContextCanonicalBlockReview(
   tenantId: string | null,
   blockId: string,
   reviewStatus: ContextCanonicalBlock["reviewStatus"],
+  options: { note?: string; actorUserId?: string | null } = {},
 ): Promise<ContextCanonicalBlock> {
   const existing = await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.id, blockId)).get();
   if (!existing) throw new Error("canonical block not found");
@@ -540,15 +583,52 @@ export async function updateContextCanonicalBlockReview(
   if (!collection) throw new Error("canonical block not found");
 
   const now = new Date();
+  const reviewNote = options.note ?? null;
+  const actorUserId = options.actorUserId ?? null;
   await db.update(contextCanonicalBlocks).set({
     reviewStatus,
+    reviewNote,
+    reviewedByUserId: actorUserId,
+    reviewedAt: now,
     updatedAt: now,
   }).where(eq(contextCanonicalBlocks.id, blockId)).run();
+  await db.insert(contextCanonicalReviewEvents).values({
+    id: nanoid(),
+    tenantId,
+    collectionId: existing.collectionId,
+    canonicalBlockId: blockId,
+    fromStatus: existing.reviewStatus,
+    toStatus: reviewStatus,
+    note: reviewNote,
+    actorUserId,
+    createdAt: now,
+  }).run();
   await refreshCollectionCanonicalCounts(db, existing.collectionId, now);
 
   const row = await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.id, blockId)).get();
   if (!row) throw new Error("Failed to update canonical block review status");
   return canonicalBlockFromRow(row);
+}
+
+export async function listContextCanonicalReviewEvents(
+  db: Db,
+  tenantId: string | null,
+  options: { collectionId?: string; limit?: number } = {},
+): Promise<ContextCanonicalReviewEvent[]> {
+  const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 25)));
+  const conditions = [];
+  const tenantClause = tenantFilter(contextCanonicalReviewEvents.tenantId, tenantId);
+  if (tenantClause) conditions.push(tenantClause);
+  if (options.collectionId) conditions.push(eq(contextCanonicalReviewEvents.collectionId, options.collectionId));
+
+  const rows = await db
+    .select()
+    .from(contextCanonicalReviewEvents)
+    .where(conditions.length === 0 ? undefined : and(...conditions))
+    .orderBy(desc(contextCanonicalReviewEvents.createdAt))
+    .limit(limit)
+    .all();
+  return rows.map(reviewEventFromRow);
 }
 
 export async function exportApprovedContextBlocks(

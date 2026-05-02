@@ -502,6 +502,9 @@ export const contextCanonicalBlocks = sqliteTable("context_canonical_blocks", {
   sourceDocumentIds: text("source_document_ids").notNull().default("[]"),
   sourceCount: integer("source_count").notNull().default(0),
   reviewStatus: text("review_status", { enum: ["draft", "approved", "rejected"] }).notNull().default("draft"),
+  reviewNote: text("review_note"),
+  reviewedByUserId: text("reviewed_by_user_id"),
+  reviewedAt: integer("reviewed_at", { mode: "timestamp" }),
   metadata: text("metadata").notNull().default("{}"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -513,6 +516,27 @@ export const contextCanonicalBlocks = sqliteTable("context_canonical_blocks", {
   index("context_canonical_blocks_tenant_collection_idx").on(table.tenantId, table.collectionId),
   index("context_canonical_blocks_review_idx").on(table.tenantId, table.collectionId, table.reviewStatus),
   uniqueIndex("context_canonical_blocks_collection_hash_idx").on(table.collectionId, table.contentHash),
+]);
+
+export const contextCanonicalReviewEvents = sqliteTable("context_canonical_review_events", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id"),
+  collectionId: text("collection_id")
+    .notNull()
+    .references(() => contextCollections.id),
+  canonicalBlockId: text("canonical_block_id")
+    .notNull()
+    .references(() => contextCanonicalBlocks.id),
+  fromStatus: text("from_status", { enum: ["draft", "approved", "rejected"] }).notNull(),
+  toStatus: text("to_status", { enum: ["draft", "approved", "rejected"] }).notNull(),
+  note: text("note"),
+  actorUserId: text("actor_user_id"),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+}, (table) => [
+  index("context_canonical_review_events_tenant_created_idx").on(table.tenantId, table.createdAt),
+  index("context_canonical_review_events_block_idx").on(table.canonicalBlockId, table.createdAt),
 ]);
 
 export const alertRules = sqliteTable("alert_rules", {
