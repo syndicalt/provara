@@ -1659,6 +1659,99 @@ describe("managed context collections", () => {
     ]);
   });
 
+  it("deletes a collection and clears associated context rows", async () => {
+    await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
+    await grantIntelligenceAccess(db, "tenant-other", { tier: "pro" });
+    const app = buildApp(db);
+
+    const collectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({ name: "Disposable KB" }),
+    });
+    const collectionBody = await collectionRes.json() as { collection: { id: string } };
+    const collectionId = collectionBody.collection.id;
+
+    const otherCollectionRes = await app.request("/v1/context/collections", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-other" },
+      body: JSON.stringify({ name: "Other KB" }),
+    });
+    const otherCollectionBody = await otherCollectionRes.json() as { collection: { id: string } };
+
+    const sourceRes = await app.request(`/v1/context/collections/${collectionId}/sources`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro" },
+      body: JSON.stringify({
+        name: "Refund source",
+        type: "manual",
+        sourceUri: "file://refunds.md",
+        content: "Refunds require a receipt and must be requested within 30 days.",
+      }),
+    });
+    expect(sourceRes.status).toBe(201);
+    const sourceBody = await sourceRes.json() as { source: { id: string } };
+
+    const syncRes = await app.request(`/v1/context/sources/${sourceBody.source.id}/sync`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(syncRes.status).toBe(200);
+
+    const distillRes = await app.request(`/v1/context/collections/${collectionId}/distill`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(distillRes.status).toBe(200);
+    const distillBody = await distillRes.json() as { canonicalBlocks: Array<{ id: string }> };
+    const canonicalBlockId = distillBody.canonicalBlocks[0]?.id;
+    expect(canonicalBlockId).toEqual(expect.any(String));
+
+    const policyRes = await app.request(`/v1/context/canonical-blocks/${canonicalBlockId}/policy-check`, {
+      method: "POST",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(policyRes.status).toBe(200);
+    const reviewRes = await app.request(`/v1/context/canonical-blocks/${canonicalBlockId}/review`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "x-test-tenant": "tenant-pro", "x-test-user": "reviewer" },
+      body: JSON.stringify({ reviewStatus: "approved", note: "Ready." }),
+    });
+    expect(reviewRes.status).toBe(200);
+
+    const crossTenantDeleteRes = await app.request(`/v1/context/collections/${collectionId}`, {
+      method: "DELETE",
+      headers: { "x-test-tenant": "tenant-other" },
+    });
+    expect(crossTenantDeleteRes.status).toBe(404);
+
+    const deleteRes = await app.request(`/v1/context/collections/${collectionId}`, {
+      method: "DELETE",
+      headers: { "x-test-tenant": "tenant-pro" },
+    });
+    expect(deleteRes.status).toBe(200);
+    const deleteBody = await deleteRes.json() as {
+      collection: { id: string; name: string };
+      deleted: { sources: number; documents: number; blocks: number; canonicalBlocks: number; reviewEvents: number };
+    };
+    expect(deleteBody.collection).toMatchObject({ id: collectionId, name: "Disposable KB" });
+    expect(deleteBody.deleted).toMatchObject({
+      sources: 1,
+      documents: 1,
+      blocks: 1,
+      canonicalBlocks: 1,
+      reviewEvents: 1,
+    });
+
+    expect(await db.select().from(contextSources).where(eq(contextSources.collectionId, collectionId)).all()).toHaveLength(0);
+    expect(await db.select().from(contextDocuments).where(eq(contextDocuments.collectionId, collectionId)).all()).toHaveLength(0);
+    expect(await db.select().from(contextBlocks).where(eq(contextBlocks.collectionId, collectionId)).all()).toHaveLength(0);
+    expect(await db.select().from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.collectionId, collectionId)).all()).toHaveLength(0);
+    expect(await db.select().from(contextCanonicalReviewEvents).where(eq(contextCanonicalReviewEvents.collectionId, collectionId)).all()).toHaveLength(0);
+    expect(await db.select().from(contextCollections).where(eq(contextCollections.id, collectionId)).all()).toHaveLength(0);
+    expect(await db.select().from(contextCollections).where(eq(contextCollections.id, otherCollectionBody.collection.id)).all()).toHaveLength(1);
+  });
+
   it("ingests text into deterministic blocks with provenance metadata", async () => {
     await grantIntelligenceAccess(db, "tenant-pro", { tier: "pro" });
     const app = buildApp(db);

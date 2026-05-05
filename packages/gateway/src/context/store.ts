@@ -131,6 +131,17 @@ export interface ContextCollection {
   updatedAt: Date;
 }
 
+export interface DeleteContextCollectionResult {
+  collection: ContextCollection;
+  deleted: {
+    sources: number;
+    documents: number;
+    blocks: number;
+    canonicalBlocks: number;
+    reviewEvents: number;
+  };
+}
+
 export interface ContextCanonicalBlock {
   id: string;
   tenantId: string | null;
@@ -1114,6 +1125,41 @@ export async function listContextCollections(db: Db, tenantId: string | null): P
     .orderBy(desc(contextCollections.updatedAt))
     .all();
   return rows.map(collectionFromRow);
+}
+
+export async function deleteContextCollection(
+  db: Db,
+  tenantId: string | null,
+  collectionId: string,
+): Promise<DeleteContextCollectionResult> {
+  const collectionWhere = tenantScoped(contextCollections.tenantId, tenantId, eq(contextCollections.id, collectionId));
+  const collectionRow = await db.select().from(contextCollections).where(collectionWhere).get();
+  if (!collectionRow) throw new Error("collection not found");
+  const collection = collectionFromRow(collectionRow);
+
+  const sourceCount = await db.select({ count: sql<number>`count(*)` }).from(contextSources).where(eq(contextSources.collectionId, collectionId)).get();
+  const documentCount = await db.select({ count: sql<number>`count(*)` }).from(contextDocuments).where(eq(contextDocuments.collectionId, collectionId)).get();
+  const blockCount = await db.select({ count: sql<number>`count(*)` }).from(contextBlocks).where(eq(contextBlocks.collectionId, collectionId)).get();
+  const canonicalBlockCount = await db.select({ count: sql<number>`count(*)` }).from(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.collectionId, collectionId)).get();
+  const reviewEventCount = await db.select({ count: sql<number>`count(*)` }).from(contextCanonicalReviewEvents).where(eq(contextCanonicalReviewEvents.collectionId, collectionId)).get();
+
+  await db.delete(contextCanonicalReviewEvents).where(eq(contextCanonicalReviewEvents.collectionId, collectionId)).run();
+  await db.delete(contextCanonicalBlocks).where(eq(contextCanonicalBlocks.collectionId, collectionId)).run();
+  await db.delete(contextBlocks).where(eq(contextBlocks.collectionId, collectionId)).run();
+  await db.delete(contextSources).where(eq(contextSources.collectionId, collectionId)).run();
+  await db.delete(contextDocuments).where(eq(contextDocuments.collectionId, collectionId)).run();
+  await db.delete(contextCollections).where(eq(contextCollections.id, collectionId)).run();
+
+  return {
+    collection,
+    deleted: {
+      sources: Number(sourceCount?.count ?? 0),
+      documents: Number(documentCount?.count ?? 0),
+      blocks: Number(blockCount?.count ?? 0),
+      canonicalBlocks: Number(canonicalBlockCount?.count ?? 0),
+      reviewEvents: Number(reviewEventCount?.count ?? 0),
+    },
+  };
 }
 
 export async function createContextConnectorCredential(
