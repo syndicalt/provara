@@ -22,6 +22,9 @@ export function PublicNav() {
             <Link href="/models" className="hover:text-zinc-100 transition-colors">
               Models
             </Link>
+            <Link href="/docs/context-optimizer" className="hover:text-zinc-100 transition-colors">
+              Docs
+            </Link>
             {!loading && (
               user ? (
                 <Link

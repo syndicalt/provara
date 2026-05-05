@@ -97,3 +97,24 @@ test("/docs/api: no horizontal scroll at common widths", async ({ page }) => {
     expect(hasHorizontalScroll, `horizontal scroll at ${width}px`).toBe(false);
   }
 });
+
+test("/docs/context-optimizer: human docs render with key workflow sections", async ({ page }) => {
+  await page.goto("/docs/context-optimizer");
+
+  await expect(page.getByRole("heading", { name: "Context Optimizer" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connectors", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dashboard Workflow" })).toBeVisible();
+  await expect(page.getByText("create a managed collection first")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open API Reference" })).toHaveAttribute("href", "/docs/api#tag/Context-Optimizer");
+});
+
+test("/docs/context-optimizer: no horizontal scroll at common widths", async ({ page }) => {
+  for (const width of [375, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/docs/context-optimizer");
+    const hasHorizontalScroll = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    expect(hasHorizontalScroll, `horizontal scroll at ${width}px`).toBe(false);
+  }
+});
