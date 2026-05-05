@@ -104,7 +104,7 @@ test("/docs/context-optimizer: human docs render with key workflow sections", as
   await expect(page.getByRole("heading", { name: "Context Optimizer" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Connectors", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Dashboard Workflow" })).toBeVisible();
-  await expect(page.getByText("create a managed collection first")).toBeVisible();
+  await expect(page.getByText("auto-create a default managed collection")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open API Reference" })).toHaveAttribute("href", "/docs/api#tag/Context-Optimizer");
 });
 

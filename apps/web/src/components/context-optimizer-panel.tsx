@@ -323,6 +323,16 @@ function formatTimestamp(value: string | null): string {
   return date.toLocaleString();
 }
 
+function formatDeletedCollectionMessage(deleted: { sources: number; documents: number; blocks: number; canonicalBlocks: number }): string {
+  const parts = [
+    `${formatInteger(deleted.sources)} ${deleted.sources === 1 ? "source" : "sources"}`,
+    `${formatInteger(deleted.documents)} ${deleted.documents === 1 ? "document" : "documents"}`,
+    `${formatInteger(deleted.blocks)} ${deleted.blocks === 1 ? "block" : "blocks"}`,
+    `${formatInteger(deleted.canonicalBlocks)} ${deleted.canonicalBlocks === 1 ? "canonical block" : "canonical blocks"}`,
+  ];
+  return `Collection deleted. Removed ${parts.join(", ")}.`;
+}
+
 function formatContextSourceType(type: ContextSource["type"]): string {
   if (type === "github_repository") return "GitHub";
   if (type === "file_upload") return "File Upload";
@@ -695,6 +705,7 @@ export function ContextOptimizerPanel() {
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
   const [collectionDraft, setCollectionDraft] = useState({ name: "", description: "" });
   const [collectionSubmitting, setCollectionSubmitting] = useState(false);
+  const [collectionDeletingId, setCollectionDeletingId] = useState<string | null>(null);
   const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [credentialDraft, setCredentialDraft] = useState({ name: "", value: "" });
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
@@ -988,6 +999,59 @@ export function ContextOptimizerPanel() {
     }
   }
 
+  async function ensureSourceCollection(): Promise<ContextCollection> {
+    if (firstCollection) return firstCollection;
+
+    const res = await gatewayFetchRaw("/v1/context/collections", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Default Context Collection",
+        description: "Auto-created for connector sources.",
+      }),
+    });
+    if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to create collection"));
+    const body = await res.json() as { collection: ContextCollection };
+    setState((prev) => ({
+      ...prev,
+      collections: [
+        body.collection,
+        ...prev.collections.filter((collection) => collection.id !== body.collection.id),
+      ],
+    }));
+    setCollectionMessage("Collection created.");
+    return body.collection;
+  }
+
+  async function deleteCollection(collection: ContextCollection) {
+    if (!window.confirm(`Delete ${collection.name} and all associated context?`)) return;
+    setCollectionDeletingId(collection.id);
+    setCollectionMessage(null);
+    try {
+      const res = await gatewayFetchRaw(`/v1/context/collections/${collection.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to delete collection"));
+      const body = await res.json() as {
+        deleted: { sources: number; documents: number; blocks: number; canonicalBlocks: number; reviewEvents: number };
+      };
+      const deletedCanonicalIds = new Set(
+        state.canonicalBlocks
+          .filter((block) => block.collectionId === collection.id)
+          .map((block) => block.id),
+      );
+      setState((prev) => ({
+        ...prev,
+        collections: prev.collections.filter((row) => row.id !== collection.id),
+        sources: prev.sources.filter((source) => source.collectionId !== collection.id),
+        canonicalBlocks: prev.canonicalBlocks.filter((block) => block.collectionId !== collection.id),
+      }));
+      setSelectedCanonicalIds((prev) => prev.filter((id) => !deletedCanonicalIds.has(id)));
+      setCollectionMessage(formatDeletedCollectionMessage(body.deleted));
+    } catch (err) {
+      setCollectionMessage(err instanceof Error ? err.message : "Failed to delete collection");
+    } finally {
+      setCollectionDeletingId(null);
+    }
+  }
+
   async function createCredential() {
     if (!credentialDraft.name.trim() || !credentialDraft.value.trim()) return;
     setCredentialSubmitting(true);
@@ -1092,11 +1156,12 @@ export function ContextOptimizerPanel() {
   }
 
   async function createGitHubSource() {
-    if (!firstCollection || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()) return;
+    if (!sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()) return;
     setSourceSubmitting(true);
     setSourceMessage(null);
     try {
-      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+      const collection = await ensureSourceCollection();
+      const res = await gatewayFetchRaw(`/v1/context/collections/${collection.id}/sources`, {
         method: "POST",
         body: JSON.stringify({
           name: sourceDraft.name.trim(),
@@ -1138,11 +1203,12 @@ export function ContextOptimizerPanel() {
   }
 
   async function createS3Source() {
-    if (!firstCollection || !s3Draft.name.trim() || !s3Draft.bucket.trim() || !s3Draft.region.trim() || !s3Draft.credentialId) return;
+    if (!s3Draft.name.trim() || !s3Draft.bucket.trim() || !s3Draft.region.trim() || !s3Draft.credentialId) return;
     setS3Submitting(true);
     setS3Message(null);
     try {
-      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+      const collection = await ensureSourceCollection();
+      const res = await gatewayFetchRaw(`/v1/context/collections/${collection.id}/sources`, {
         method: "POST",
         body: JSON.stringify({
           name: s3Draft.name.trim(),
@@ -1177,11 +1243,12 @@ export function ContextOptimizerPanel() {
   }
 
   async function createConfluenceSource() {
-    if (!firstCollection || !confluenceDraft.name.trim() || !confluenceDraft.baseUrl.trim() || !confluenceDraft.spaceKey.trim() || !confluenceDraft.credentialId) return;
+    if (!confluenceDraft.name.trim() || !confluenceDraft.baseUrl.trim() || !confluenceDraft.spaceKey.trim() || !confluenceDraft.credentialId) return;
     setConfluenceSubmitting(true);
     setConfluenceMessage(null);
     try {
-      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+      const collection = await ensureSourceCollection();
+      const res = await gatewayFetchRaw(`/v1/context/collections/${collection.id}/sources`, {
         method: "POST",
         body: JSON.stringify({
           name: confluenceDraft.name.trim(),
@@ -1238,7 +1305,10 @@ export function ContextOptimizerPanel() {
       ...prev,
       sources: prev.sources.map((source) => source.id === body.source.id ? body.source : source),
       collections: body.collection
-        ? prev.collections.map((collection) => collection.id === body.collection?.id ? body.collection as ContextCollection : collection)
+        ? [
+          body.collection,
+          ...prev.collections.filter((collection) => collection.id !== body.collection?.id),
+        ]
         : prev.collections,
     }));
   }
@@ -1250,11 +1320,12 @@ export function ContextOptimizerPanel() {
   }
 
   async function createFileUploadSource() {
-    if (!firstCollection || !fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()) return;
+    if (!fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()) return;
     setFileSubmitting(true);
     setFileMessage(null);
     try {
-      const res = await gatewayFetchRaw(`/v1/context/collections/${firstCollection.id}/sources`, {
+      const collection = await ensureSourceCollection();
+      const res = await gatewayFetchRaw(`/v1/context/collections/${collection.id}/sources`, {
         method: "POST",
         body: JSON.stringify({
           name: fileDraft.name.trim(),
@@ -1483,6 +1554,7 @@ export function ContextOptimizerPanel() {
                     <th className="px-4 py-3 text-right font-medium">Tokens</th>
                     <th className="px-4 py-3 text-left font-medium">Status</th>
                     <th className="px-4 py-3 text-left font-medium">Updated</th>
+                    <th className="px-4 py-3 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-800">
@@ -1516,6 +1588,17 @@ export function ContextOptimizerPanel() {
                       </td>
                       <td className="whitespace-nowrap px-4 py-3 text-zinc-400">
                         {formatTimestamp(collection.updatedAt)}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          aria-label={`Delete collection ${collection.name}`}
+                          className="rounded-md border border-red-900 bg-red-950/30 px-3 py-1.5 text-xs font-medium text-red-100 hover:bg-red-900/40 disabled:cursor-not-allowed disabled:opacity-50"
+                          disabled={collectionDeletingId === collection.id}
+                          onClick={() => void deleteCollection(collection)}
+                        >
+                          {collectionDeletingId === collection.id ? "Deleting..." : "Delete"}
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -1762,7 +1845,7 @@ export function ContextOptimizerPanel() {
               <button
                 type="button"
                 className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={fileSubmitting || !firstCollection || !fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()}
+                disabled={fileSubmitting || !fileDraft.name.trim() || !fileDraft.filename.trim() || !fileDraft.content.trim()}
                 onClick={() => void createFileUploadSource()}
               >
                 {fileSubmitting ? "Creating..." : "Create File Source"}
@@ -1862,7 +1945,7 @@ export function ContextOptimizerPanel() {
               <button
                 type="button"
                 className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={s3Submitting || !firstCollection || !s3Draft.name.trim() || !s3Draft.bucket.trim() || !s3Draft.region.trim() || !s3Draft.credentialId}
+                disabled={s3Submitting || !s3Draft.name.trim() || !s3Draft.bucket.trim() || !s3Draft.region.trim() || !s3Draft.credentialId}
                 onClick={() => void createS3Source()}
               >
                 {s3Submitting ? "Creating..." : "Create S3 Source"}
@@ -1962,7 +2045,7 @@ export function ContextOptimizerPanel() {
               <button
                 type="button"
                 className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={confluenceSubmitting || !firstCollection || !confluenceDraft.name.trim() || !confluenceDraft.baseUrl.trim() || !confluenceDraft.spaceKey.trim() || !confluenceDraft.credentialId}
+                disabled={confluenceSubmitting || !confluenceDraft.name.trim() || !confluenceDraft.baseUrl.trim() || !confluenceDraft.spaceKey.trim() || !confluenceDraft.credentialId}
                 onClick={() => void createConfluenceSource()}
               >
                 {confluenceSubmitting ? "Creating..." : "Create Confluence Source"}
@@ -2071,7 +2154,7 @@ export function ContextOptimizerPanel() {
               <button
                 type="button"
                 className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={sourceSubmitting || !firstCollection || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()}
+                disabled={sourceSubmitting || !sourceDraft.name.trim() || !sourceDraft.owner.trim() || !sourceDraft.repo.trim()}
                 onClick={() => void createGitHubSource()}
               >
                 {sourceSubmitting ? "Creating..." : "Create Source"}

@@ -114,6 +114,7 @@ Managed collection APIs:
 ```text
 GET /v1/context/collections
 POST /v1/context/collections
+DELETE /v1/context/collections/{id}
 POST /v1/context/collections/{id}/documents
 GET /v1/context/collections/{id}/sources
 POST /v1/context/collections/{id}/sources
@@ -129,6 +130,8 @@ PATCH /v1/context/canonical-blocks/bulk-review
 GET /v1/context/canonical-review-events
 GET /v1/context/collections/{id}/export
 ```
+
+`DELETE /v1/context/collections/{id}` removes the collection and its associated context sources, documents, raw blocks, canonical blocks, and canonical review events. Connector credentials are tenant-level records, so deleting a collection does not delete stored GitHub, AWS, or Confluence credential metadata.
 
 Collections are tenant-scoped containers for reusable context. The document ingestion endpoint accepts plain text, source labels, source URIs, and metadata, then deterministically chunks the text into stored blocks with content hashes, token estimates, source provenance, and collection counters.
 
@@ -276,7 +279,7 @@ It shows five summary cards:
 
 The Configuration section lets operators draft optimizer settings for `dedupeMode`, `rankMode`, `freshnessMode`, `conflictMode`, `compressionMode`, `scanRisk`, and related thresholds. The draft is stored in browser local storage and can be copied as a `POST /v1/context/optimize` JSON payload.
 
-The Managed Collections section can create and list persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, AWS access-key credentials, Confluence API-token credentials, list credential metadata without secret values, create text file upload sources, create S3 bucket sources, create Confluence space sources, create GitHub repository sources for the first managed collection, and bind external sources to stored credentials. The Collection Sources section shows manual, file upload, GitHub, S3, and Confluence sources for the first managed collection, including source URI, filename metadata, repo/branch/path, bucket/prefix/region, or Confluence base URL/space/labels, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history. Manual source ingestion, distillation, review, and export are available through the API in this release; richer in-dashboard collection management remains a follow-up.
+The Managed Collections section can create, list, and delete persisted context collections, including document count, stored block count, canonical block count, approved block count, estimated token count, status, and last update time. The Connector Management section can create GitHub token credentials, AWS access-key credentials, Confluence API-token credentials, list credential metadata without secret values, create text file upload sources, create S3 bucket sources, create Confluence space sources, create GitHub repository sources for the first managed collection, auto-create a default collection for the first source when needed, and bind external sources to stored credentials. The Collection Sources section shows manual, file upload, GitHub, S3, and Confluence sources for the first managed collection, including source URI, filename metadata, repo/branch/path, bucket/prefix/region, or Confluence base URL/space/labels, auth-configured status, sync status, document count, last synced time, update time, and last sync error. Operators can manually sync a source row from the dashboard. The Canonical Review Queue shows draft canonical blocks from the first managed collection with content, source count, token count, policy status, policy evidence, review status, and update time. Reviewers can select visible rows, run bulk policy checks, and approve or reject selected draft blocks from the dashboard. The Alerts dashboard surfaces context policy failures and stale review queue alerts alongside existing operational alert history.
 
 The Recent Events table shows:
 

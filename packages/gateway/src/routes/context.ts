@@ -32,6 +32,7 @@ import {
   createContextCollection,
   createContextConnectorCredential,
   createContextSource,
+  deleteContextCollection,
   distillContextCollection,
   exportApprovedContextBlocks,
   getContextCanonicalBlock,
@@ -666,6 +667,23 @@ export function createContextRoutes(db: Db, registry?: ProviderRegistry, routeOp
       return c.json(
         { error: { message, type: message.includes("already exists") ? "conflict_error" : "store_error" } },
         message.includes("already exists") ? 409 : 500,
+      );
+    }
+  });
+
+  app.delete("/collections/:id", async (c) => {
+    const tenantId = getTenantId(c.req.raw);
+    const collectionId = c.req.param("id");
+
+    try {
+      const result = await deleteContextCollection(db, tenantId, collectionId);
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete context collection";
+      const notFound = message.includes("not found");
+      return c.json(
+        { error: { message, type: notFound ? "not_found" : "store_error" } },
+        notFound ? 404 : 500,
       );
     }
   });

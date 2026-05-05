@@ -518,6 +518,36 @@ paths:
         "409":
           description: Collection name already exists.
 
+  /v1/context/collections/{id}:
+    delete:
+      tags: [Context Optimizer]
+      summary: Delete a managed context collection
+      description: Deletes the collection and all associated context sources, documents, raw blocks, canonical blocks, and review events.
+      operationId: deleteContextCollection
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted collection and context row counts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collection, deleted]
+                properties:
+                  collection:
+                    $ref: "#/components/schemas/ContextCollection"
+                  deleted:
+                    $ref: "#/components/schemas/DeletedContextCollectionCounts"
+        "402":
+          $ref: "#/components/responses/InsufficientTier"
+        "404":
+          description: Collection not found.
+
   /v1/context/collections/{id}/documents:
     post:
       tags: [Context Optimizer]
@@ -3304,6 +3334,21 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    DeletedContextCollectionCounts:
+      type: object
+      required: [sources, documents, blocks, canonicalBlocks, reviewEvents]
+      properties:
+        sources:
+          type: integer
+        documents:
+          type: integer
+        blocks:
+          type: integer
+        canonicalBlocks:
+          type: integer
+        reviewEvents:
+          type: integer
 
     ContextDocument:
       type: object

@@ -1111,7 +1111,7 @@ describe("ContextOptimizerPanel", () => {
     expect(await screen.findByText("R2 document write failed (403)")).toBeInTheDocument();
   });
 
-  it("creates the first managed collection before enabling file and GitHub sources", async () => {
+  it("auto-creates the first managed collection when creating a source", async () => {
     mockedFetch.mockImplementation((path, init) => {
       if (path === "/v1/context/summary") {
         return Promise.resolve(jsonResponse({
@@ -1188,15 +1188,14 @@ describe("ContextOptimizerPanel", () => {
       if (path === "/v1/context/collections" && init?.method === "POST") {
         const parsed = JSON.parse(String(init.body)) as Record<string, unknown>;
         expect(parsed).toMatchObject({
-          name: "Support KB",
-          description: "Support documentation",
+          name: "Default Context Collection",
         });
         return Promise.resolve(jsonResponse({
           collection: {
             id: "collection-1",
             tenantId: "tenant-pro",
-            name: "Support KB",
-            description: "Support documentation",
+            name: "Default Context Collection",
+            description: "Auto-created for connector sources.",
             status: "active",
             documentCount: 0,
             blockCount: 0,
@@ -1208,6 +1207,36 @@ describe("ContextOptimizerPanel", () => {
           },
         }, { status: 201 }));
       }
+      if (path === "/v1/context/collections/collection-1/sources" && init?.method === "POST") {
+        const parsed = JSON.parse(String(init.body)) as Record<string, unknown>;
+        expect(parsed).toMatchObject({
+          name: "Uploaded guide",
+          type: "file_upload",
+          content: "Uploaded guide content for context.",
+          file: {
+            filename: "guide.md",
+            contentType: "text/markdown",
+          },
+        });
+        return Promise.resolve(jsonResponse({
+          source: {
+            id: "source-file",
+            collectionId: "collection-1",
+            name: "Uploaded guide",
+            type: "file_upload",
+            externalId: "upload:guide",
+            sourceUri: "upload://guide.md",
+            status: "active",
+            syncStatus: "pending",
+            lastSyncedAt: null,
+            lastDocumentId: null,
+            documentCount: 0,
+            lastError: null,
+            metadata: { file: { filename: "guide.md", contentType: "text/markdown", sizeBytes: 35 } },
+            updatedAt: "2026-05-01T22:10:00.000Z",
+          },
+        }));
+      }
       if (path === "/v1/context/collections") {
         return Promise.resolve(jsonResponse({ collections: [] }));
       }
@@ -1216,6 +1245,40 @@ describe("ContextOptimizerPanel", () => {
       }
       if (path === "/v1/context/collections/collection-1/sources") {
         return Promise.resolve(jsonResponse({ sources: [] }));
+      }
+      if (path === "/v1/context/sources/source-file/sync") {
+        return Promise.resolve(jsonResponse({
+          synced: true,
+          collection: {
+            id: "collection-1",
+            tenantId: "tenant-pro",
+            name: "Default Context Collection",
+            description: "Auto-created for connector sources.",
+            status: "active",
+            documentCount: 1,
+            blockCount: 1,
+            canonicalBlockCount: 0,
+            approvedBlockCount: 0,
+            tokenCount: 10,
+            createdAt: "2026-05-01T20:00:00.000Z",
+            updatedAt: "2026-05-01T22:11:00.000Z",
+          },
+          source: {
+            id: "source-file",
+            collectionId: "collection-1",
+            name: "Uploaded guide",
+            type: "file_upload",
+            externalId: "upload:guide",
+            sourceUri: "upload://guide.md",
+            syncStatus: "synced",
+            lastSyncedAt: "2026-05-01T22:11:00.000Z",
+            lastDocumentId: "doc-file",
+            documentCount: 1,
+            lastError: null,
+            metadata: { file: { filename: "guide.md", contentType: "text/markdown", sizeBytes: 35 } },
+            updatedAt: "2026-05-01T22:11:00.000Z",
+          },
+        }));
       }
       return Promise.resolve(jsonResponse({ events: [] }));
     });
@@ -1233,20 +1296,147 @@ describe("ContextOptimizerPanel", () => {
     const upload = new File(["Uploaded guide content for context."], "guide.md", { type: "text/markdown" });
     fireEvent.change(screen.getByLabelText("File"), { target: { files: [upload] } });
     expect(await screen.findByText("File loaded.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("File Source Name"), { target: { value: "Uploaded guide" } });
     fireEvent.change(screen.getByLabelText("GitHub Source Name"), { target: { value: "Docs repo" } });
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });
     fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "docs" } });
-    expect(createFileSource).toBeDisabled();
-    expect(createGithubSource).toBeDisabled();
-
-    fireEvent.change(screen.getByLabelText("Collection Name"), { target: { value: "Support KB" } });
-    fireEvent.change(screen.getByLabelText("Collection Description"), { target: { value: "Support documentation" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create Collection" }));
-
-    expect(await screen.findByText("Collection created.")).toBeInTheDocument();
-    expect(screen.getByText("Support KB")).toBeInTheDocument();
     expect(createFileSource).toBeEnabled();
     expect(createGithubSource).toBeEnabled();
+
+    fireEvent.click(createFileSource);
+
+    expect(await screen.findByText("File uploaded and synced.")).toBeInTheDocument();
+    expect(screen.getByText("Default Context Collection")).toBeInTheDocument();
+  });
+
+  it("deletes a managed collection from the table", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockedFetch.mockImplementation((path, init) => {
+      if (path === "/v1/context/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            inputChunks: 0,
+            outputChunks: 0,
+            droppedChunks: 0,
+            nearDuplicateChunks: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            savedTokens: 0,
+            reductionPct: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            flaggedChunks: 0,
+            quarantinedChunks: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({ summary: { eventCount: 0, regressedCount: 0, avgRawScore: 0, avgOptimizedScore: 0, avgDelta: 0, latestAt: null } }));
+      }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({ summary: { eventCount: 0, avgUsedChunks: 0, avgUnusedChunks: 0, avgReuseRatePct: 0, latestAt: null } }));
+      }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({
+          collections: [
+            {
+              id: "collection-1",
+              tenantId: "tenant-pro",
+              name: "Disposable KB",
+              description: "Temporary context",
+              status: "active",
+              documentCount: 1,
+              blockCount: 1,
+              canonicalBlockCount: 1,
+              approvedBlockCount: 0,
+              tokenCount: 20,
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T21:00:00.000Z",
+            },
+          ],
+        }));
+      }
+      if (path === "/v1/context/collections/collection-1/sources") {
+        return Promise.resolve(jsonResponse({
+          sources: [
+            {
+              id: "source-1",
+              collectionId: "collection-1",
+              name: "Refund source",
+              type: "manual",
+              externalId: "manual:refunds",
+              sourceUri: "file://refunds.md",
+              syncStatus: "synced",
+              lastSyncedAt: "2026-05-01T21:00:00.000Z",
+              lastDocumentId: "doc-1",
+              documentCount: 1,
+              lastError: null,
+              metadata: {},
+              updatedAt: "2026-05-01T21:00:00.000Z",
+            },
+          ],
+        }));
+      }
+      if (path === "/v1/context/collections/collection-1/canonical-blocks?reviewStatus=draft") {
+        return Promise.resolve(jsonResponse({
+          canonicalBlocks: [
+            {
+              id: "canonical-1",
+              collectionId: "collection-1",
+              content: "Refunds require a receipt.",
+              tokenCount: 5,
+              sourceBlockIds: ["block-1"],
+              sourceDocumentIds: ["doc-1"],
+              sourceCount: 1,
+              reviewStatus: "draft",
+              reviewNote: null,
+              reviewedByUserId: null,
+              reviewedAt: null,
+              policyStatus: "unchecked",
+              policyCheckedAt: null,
+              policyDetails: [],
+              metadata: {},
+              updatedAt: "2026-05-01T21:00:00.000Z",
+            },
+          ],
+        }));
+      }
+      if (path === "/v1/context/credentials") {
+        return Promise.resolve(jsonResponse({ credentials: [] }));
+      }
+      if (path === "/v1/context/collections/collection-1" && init?.method === "DELETE") {
+        return Promise.resolve(jsonResponse({
+          collection: { id: "collection-1", name: "Disposable KB" },
+          deleted: { sources: 1, documents: 1, blocks: 1, canonicalBlocks: 1, reviewEvents: 0 },
+        }));
+      }
+      return Promise.resolve(jsonResponse({ events: [] }));
+    });
+
+    try {
+      render(<ContextOptimizerPanel />);
+
+      expect(await screen.findByText("Disposable KB")).toBeInTheDocument();
+      expect(screen.getByText("Refund source")).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: "Delete collection Disposable KB" }));
+
+      expect(await screen.findByText("Collection deleted. Removed 1 source, 1 document, 1 block, 1 canonical block.")).toBeInTheDocument();
+      expect(screen.queryByText("Disposable KB")).not.toBeInTheDocument();
+      expect(screen.queryByText("Refund source")).not.toBeInTheDocument();
+      expect(confirmSpy).toHaveBeenCalledWith("Delete Disposable KB and all associated context?");
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 
   it("updates and persists optimizer payload controls", async () => {

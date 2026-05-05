@@ -55,6 +55,7 @@ const apiGroups = [
     endpoints: [
       "GET /v1/context/collections",
       "POST /v1/context/collections",
+      "DELETE /v1/context/collections/{id}",
       "POST /v1/context/collections/{id}/documents",
       "GET /v1/context/collections/{id}/sources",
       "POST /v1/context/collections/{id}/sources",
@@ -166,9 +167,15 @@ export default function ContextOptimizerDocsPage() {
               <Section id="collections" title="Managed Collections">
                 <p>
                   Collections are tenant-scoped containers for reusable context. The dashboard can
-                  create the first collection, then file upload and external connector sources bind
-                  to that collection. Document ingestion stores deterministic blocks with content
-                  hashes, token estimates, source metadata, and collection counters.
+                  create the first collection explicitly or auto-create a default collection when
+                  the first file upload or external connector source is submitted. Document
+                  ingestion stores deterministic blocks with content hashes, token estimates,
+                  source metadata, and collection counters.
+                </p>
+                <p>
+                  Deleting a collection removes its sources, documents, raw blocks, canonical
+                  blocks, and canonical review events. Connector credentials are tenant-level
+                  records and remain available for other collections.
                 </p>
                 <p>
                   Raw document object storage is optional. When the gateway runs with
@@ -240,9 +247,10 @@ export default function ContextOptimizerDocsPage() {
                   policy-check actions.
                 </p>
                 <p>
-                  For a fresh tenant, create a managed collection first. File upload and GitHub
-                  source buttons stay disabled until a collection exists and the required source
-                  fields are filled.
+                  For a fresh tenant, file upload and connector source creation can auto-create
+                  a default managed collection once the required source fields are filled. The
+                  collection table includes a delete action for removing a collection and its
+                  associated context.
                 </p>
               </Section>
 
