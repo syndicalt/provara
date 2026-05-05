@@ -962,6 +962,293 @@ describe("ContextOptimizerPanel", () => {
     expect(screen.getAllByText("synced").length).toBeGreaterThan(0);
   });
 
+  it("surfaces backend connector errors when credential save and source sync fail", async () => {
+    mockedFetch.mockImplementation((path, init) => {
+      if (path === "/v1/context/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            inputChunks: 0,
+            outputChunks: 0,
+            droppedChunks: 0,
+            nearDuplicateChunks: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            savedTokens: 0,
+            reductionPct: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            flaggedChunks: 0,
+            quarantinedChunks: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            regressedCount: 0,
+            avgRawScore: null,
+            avgOptimizedScore: null,
+            avgDelta: null,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            retrievedChunks: 0,
+            usedChunks: 0,
+            unusedChunks: 0,
+            duplicateChunks: 0,
+            nearDuplicateChunks: 0,
+            riskyChunks: 0,
+            retrievedTokens: 0,
+            usedTokens: 0,
+            unusedTokens: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            efficiencyPct: 0,
+            duplicateRatePct: 0,
+            nearDuplicateRatePct: 0,
+            riskyRatePct: 0,
+            conflictRatePct: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({
+          collections: [
+            {
+              id: "collection-1",
+              tenantId: "tenant-pro",
+              name: "Support KB",
+              description: null,
+              status: "active",
+              documentCount: 0,
+              blockCount: 0,
+              canonicalBlockCount: 0,
+              approvedBlockCount: 0,
+              tokenCount: 0,
+              createdAt: "2026-05-01T20:00:00.000Z",
+              updatedAt: "2026-05-01T20:00:00.000Z",
+            },
+          ],
+        }));
+      }
+      if (path === "/v1/context/credentials" && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({
+          error: { message: "PROVARA_MASTER_KEY not set", type: "configuration_error" },
+        }, { status: 503 }));
+      }
+      if (path === "/v1/context/credentials") {
+        return Promise.resolve(jsonResponse({ credentials: [] }));
+      }
+      if (path === "/v1/context/collections/collection-1/sources" && init?.method === "POST") {
+        return Promise.resolve(jsonResponse({
+          source: {
+            id: "source-file",
+            collectionId: "collection-1",
+            name: "Uploaded guide",
+            type: "file_upload",
+            externalId: "upload:guide",
+            sourceUri: "upload://guide.md",
+            syncStatus: "pending",
+            lastSyncedAt: null,
+            lastDocumentId: null,
+            documentCount: 0,
+            lastError: null,
+            metadata: { file: { filename: "guide.md", contentType: "text/markdown", sizeBytes: 35 } },
+            updatedAt: "2026-05-01T22:10:00.000Z",
+          },
+        }));
+      }
+      if (path === "/v1/context/collections/collection-1/sources") {
+        return Promise.resolve(jsonResponse({ sources: [] }));
+      }
+      if (path === "/v1/context/sources/source-file/sync") {
+        return Promise.resolve(jsonResponse({
+          error: { message: "R2 document write failed (403)", type: "sync_error" },
+        }, { status: 500 }));
+      }
+      return Promise.resolve(jsonResponse({ events: [] }));
+    });
+
+    render(<ContextOptimizerPanel />);
+
+    expect(await screen.findByText("Connector Management")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show Connector Management" }));
+
+    fireEvent.change(screen.getByLabelText("Credential Name"), { target: { value: "Docs token" } });
+    fireEvent.change(screen.getByLabelText("Token"), { target: { value: "ghp_secret_token_123" } });
+    fireEvent.click(screen.getByText("Save Credential"));
+    expect(await screen.findByText("PROVARA_MASTER_KEY not set")).toBeInTheDocument();
+
+    const upload = new File(["Uploaded guide content for context."], "guide.md", { type: "text/markdown" });
+    fireEvent.change(screen.getByLabelText("File"), { target: { files: [upload] } });
+    expect(await screen.findByText("File loaded.")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Create File Source"));
+    expect(await screen.findByText("R2 document write failed (403)")).toBeInTheDocument();
+  });
+
+  it("creates the first managed collection before enabling file and GitHub sources", async () => {
+    mockedFetch.mockImplementation((path, init) => {
+      if (path === "/v1/context/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            inputChunks: 0,
+            outputChunks: 0,
+            droppedChunks: 0,
+            nearDuplicateChunks: 0,
+            inputTokens: 0,
+            outputTokens: 0,
+            savedTokens: 0,
+            reductionPct: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            flaggedChunks: 0,
+            quarantinedChunks: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/quality/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            regressedCount: 0,
+            avgRawScore: null,
+            avgOptimizedScore: null,
+            avgDelta: null,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/retrieval/summary") {
+        return Promise.resolve(jsonResponse({
+          summary: {
+            eventCount: 0,
+            retrievedChunks: 0,
+            usedChunks: 0,
+            unusedChunks: 0,
+            duplicateChunks: 0,
+            nearDuplicateChunks: 0,
+            riskyChunks: 0,
+            retrievedTokens: 0,
+            usedTokens: 0,
+            unusedTokens: 0,
+            avgRelevanceScore: null,
+            lowRelevanceChunks: 0,
+            rerankedChunks: 0,
+            avgFreshnessScore: null,
+            staleChunks: 0,
+            conflictChunks: 0,
+            conflictGroups: 0,
+            compressedChunks: 0,
+            compressionSavedTokens: 0,
+            compressionRatePct: 0,
+            efficiencyPct: 0,
+            duplicateRatePct: 0,
+            nearDuplicateRatePct: 0,
+            riskyRatePct: 0,
+            conflictRatePct: 0,
+            latestAt: null,
+          },
+        }));
+      }
+      if (path === "/v1/context/collections" && init?.method === "POST") {
+        const parsed = JSON.parse(String(init.body)) as Record<string, unknown>;
+        expect(parsed).toMatchObject({
+          name: "Support KB",
+          description: "Support documentation",
+        });
+        return Promise.resolve(jsonResponse({
+          collection: {
+            id: "collection-1",
+            tenantId: "tenant-pro",
+            name: "Support KB",
+            description: "Support documentation",
+            status: "active",
+            documentCount: 0,
+            blockCount: 0,
+            canonicalBlockCount: 0,
+            approvedBlockCount: 0,
+            tokenCount: 0,
+            createdAt: "2026-05-01T20:00:00.000Z",
+            updatedAt: "2026-05-01T20:00:00.000Z",
+          },
+        }, { status: 201 }));
+      }
+      if (path === "/v1/context/collections") {
+        return Promise.resolve(jsonResponse({ collections: [] }));
+      }
+      if (path === "/v1/context/credentials") {
+        return Promise.resolve(jsonResponse({ credentials: [] }));
+      }
+      if (path === "/v1/context/collections/collection-1/sources") {
+        return Promise.resolve(jsonResponse({ sources: [] }));
+      }
+      return Promise.resolve(jsonResponse({ events: [] }));
+    });
+
+    render(<ContextOptimizerPanel />);
+
+    expect(await screen.findByText("No managed context collections yet.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show Connector Management" }));
+
+    const createFileSource = screen.getByRole("button", { name: "Create File Source" });
+    const createGithubSource = screen.getByRole("button", { name: "Create Source" });
+    expect(createFileSource).toBeDisabled();
+    expect(createGithubSource).toBeDisabled();
+
+    const upload = new File(["Uploaded guide content for context."], "guide.md", { type: "text/markdown" });
+    fireEvent.change(screen.getByLabelText("File"), { target: { files: [upload] } });
+    expect(await screen.findByText("File loaded.")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("GitHub Source Name"), { target: { value: "Docs repo" } });
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "acme" } });
+    fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "docs" } });
+    expect(createFileSource).toBeDisabled();
+    expect(createGithubSource).toBeDisabled();
+
+    fireEvent.change(screen.getByLabelText("Collection Name"), { target: { value: "Support KB" } });
+    fireEvent.change(screen.getByLabelText("Collection Description"), { target: { value: "Support documentation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Collection" }));
+
+    expect(await screen.findByText("Collection created.")).toBeInTheDocument();
+    expect(screen.getByText("Support KB")).toBeInTheDocument();
+    expect(createFileSource).toBeEnabled();
+    expect(createGithubSource).toBeEnabled();
+  });
+
   it("updates and persists optimizer payload controls", async () => {
     mockedFetch.mockImplementation((path) => {
       if (path === "/v1/context/summary") {

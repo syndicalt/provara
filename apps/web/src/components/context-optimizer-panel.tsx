@@ -681,10 +681,21 @@ async function readJson<T>(res: Response): Promise<T | null> {
   }
 }
 
+async function readGatewayErrorMessage(res: Response, fallback: string): Promise<string> {
+  const body = await readJson<{ error?: { message?: unknown }; message?: unknown }>(res);
+  const nestedMessage = body?.error?.message;
+  if (typeof nestedMessage === "string" && nestedMessage.trim()) return nestedMessage;
+  if (typeof body?.message === "string" && body.message.trim()) return body.message;
+  return fallback;
+}
+
 export function ContextOptimizerPanel() {
   const [selectedCanonicalIds, setSelectedCanonicalIds] = useState<string[]>([]);
   const [bulkAction, setBulkAction] = useState<"policy" | "approve" | "reject" | null>(null);
   const [bulkMessage, setBulkMessage] = useState<string | null>(null);
+  const [collectionDraft, setCollectionDraft] = useState({ name: "", description: "" });
+  const [collectionSubmitting, setCollectionSubmitting] = useState(false);
+  const [collectionMessage, setCollectionMessage] = useState<string | null>(null);
   const [credentialDraft, setCredentialDraft] = useState({ name: "", value: "" });
   const [credentialSubmitting, setCredentialSubmitting] = useState(false);
   const [credentialMessage, setCredentialMessage] = useState<string | null>(null);
@@ -947,6 +958,36 @@ export function ContextOptimizerPanel() {
     });
   }
 
+  async function createCollection() {
+    if (!collectionDraft.name.trim()) return;
+    setCollectionSubmitting(true);
+    setCollectionMessage(null);
+    try {
+      const res = await gatewayFetchRaw("/v1/context/collections", {
+        method: "POST",
+        body: JSON.stringify({
+          name: collectionDraft.name.trim(),
+          description: collectionDraft.description.trim() || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to create collection"));
+      const body = await res.json() as { collection: ContextCollection };
+      setState((prev) => ({
+        ...prev,
+        collections: [
+          body.collection,
+          ...prev.collections.filter((collection) => collection.id !== body.collection.id),
+        ],
+      }));
+      setCollectionDraft({ name: "", description: "" });
+      setCollectionMessage("Collection created.");
+    } catch (err) {
+      setCollectionMessage(err instanceof Error ? err.message : "Failed to create collection");
+    } finally {
+      setCollectionSubmitting(false);
+    }
+  }
+
   async function createCredential() {
     if (!credentialDraft.name.trim() || !credentialDraft.value.trim()) return;
     setCredentialSubmitting(true);
@@ -960,7 +1001,7 @@ export function ContextOptimizerPanel() {
           value: credentialDraft.value,
         }),
       });
-      if (!res.ok) throw new Error("Failed to save credential");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to save credential"));
       const body = await res.json() as { credential: ContextConnectorCredential };
       setState((prev) => ({
         ...prev,
@@ -996,7 +1037,7 @@ export function ContextOptimizerPanel() {
           }),
         }),
       });
-      if (!res.ok) throw new Error("Failed to save AWS credential");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to save AWS credential"));
       const body = await res.json() as { credential: ContextConnectorCredential };
       setState((prev) => ({
         ...prev,
@@ -1031,7 +1072,7 @@ export function ContextOptimizerPanel() {
           }),
         }),
       });
-      if (!res.ok) throw new Error("Failed to save Confluence credential");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to save Confluence credential"));
       const body = await res.json() as { credential: ContextConnectorCredential };
       setState((prev) => ({
         ...prev,
@@ -1072,7 +1113,7 @@ export function ContextOptimizerPanel() {
           },
         }),
       });
-      if (!res.ok) throw new Error("Failed to create GitHub source");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to create GitHub source"));
       const body = await res.json() as { source: ContextSource };
       setState((prev) => ({
         ...prev,
@@ -1117,7 +1158,7 @@ export function ContextOptimizerPanel() {
           },
         }),
       });
-      if (!res.ok) throw new Error("Failed to create S3 source");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to create S3 source"));
       const body = await res.json() as { source: ContextSource };
       setState((prev) => ({
         ...prev,
@@ -1156,7 +1197,7 @@ export function ContextOptimizerPanel() {
           },
         }),
       });
-      if (!res.ok) throw new Error("Failed to create Confluence source");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to create Confluence source"));
       const body = await res.json() as { source: ContextSource };
       setState((prev) => ({
         ...prev,
@@ -1204,7 +1245,7 @@ export function ContextOptimizerPanel() {
 
   async function requestSourceSync(sourceId: string): Promise<{ source: ContextSource; collection?: ContextCollection; synced?: boolean }> {
     const res = await gatewayFetchRaw(`/v1/context/sources/${sourceId}/sync`, { method: "POST" });
-    if (!res.ok) throw new Error("Failed to sync source");
+    if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to sync source"));
     return await res.json() as { source: ContextSource; collection?: ContextCollection; synced?: boolean };
   }
 
@@ -1225,7 +1266,7 @@ export function ContextOptimizerPanel() {
           },
         }),
       });
-      if (!res.ok) throw new Error("Failed to create file upload source");
+      if (!res.ok) throw new Error(await readGatewayErrorMessage(res, "Failed to create file upload source"));
       const body = await res.json() as { source: ContextSource };
       setState((prev) => ({
         ...prev,
@@ -1388,6 +1429,38 @@ export function ContextOptimizerPanel() {
         <div className="mb-3">
           <h2 className="text-lg font-semibold text-zinc-100">Managed Collections</h2>
           <p className="mt-1 text-sm text-zinc-500">Persisted context collections for reusable knowledge blocks.</p>
+        </div>
+
+        <div className="mb-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto] md:items-end">
+            <div>
+              <label htmlFor="context-collection-name" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Collection Name</label>
+              <input
+                id="context-collection-name"
+                className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                value={collectionDraft.name}
+                onChange={(event) => setCollectionDraft((prev) => ({ ...prev, name: event.target.value }))}
+              />
+            </div>
+            <div>
+              <label htmlFor="context-collection-description" className="text-xs font-medium uppercase tracking-wider text-zinc-500">Collection Description</label>
+              <input
+                id="context-collection-description"
+                className="mt-1 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-blue-600"
+                value={collectionDraft.description}
+                onChange={(event) => setCollectionDraft((prev) => ({ ...prev, description: event.target.value }))}
+              />
+            </div>
+            <button
+              type="button"
+              className="rounded-md bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={collectionSubmitting || !collectionDraft.name.trim()}
+              onClick={() => void createCollection()}
+            >
+              {collectionSubmitting ? "Creating..." : "Create Collection"}
+            </button>
+          </div>
+          {collectionMessage && <div className="mt-3 text-xs text-zinc-400">{collectionMessage}</div>}
         </div>
 
         {state.loading ? (
